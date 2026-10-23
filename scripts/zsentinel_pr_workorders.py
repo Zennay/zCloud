@@ -1,0 +1,2431 @@
+#!/usr/bin/env python3
+"""Create private, actionable, source-bound zSentinel PR handoffs.
+
+This is an offline operator work order, never a claim, check rerun, merge,
+approval, or deployment request. Selected PRs are a bounded sample.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from html import escape
+import csv
+import hashlib
+import io
+import json
+import re
+import unicodedata
+
+from zsentinel_pr_scope_guard import coverage_reason_text, csv_formula_inert, edit_path
+from zsentinel_runner_queue import (
+    lines as runner_queue_lines, html as runner_queue_html, SCHEMA as RUNNER_QUEUE_SCHEMA,
+)
+from zsentinel_pr_gate_continuity import (
+    LABELS as HISTORICAL_CHANGE_LABELS, NEXT_STEP_LABELS,
+)
+
+SCHEMA = "zsentinel-private-pr-workorders-v1"
+BOARD = "zsentinel-portfolio-pr-collision-board-v1"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+PR = re.compile(r"^https://github\.com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})$")
+MAX_PRS = 4
+MAX_PATHS = 24
+MAX_CHECKS = 24
+MAX_ISSUE_HINTS = 12
+SOURCE_FRESHNESS_SECONDS = 6 * 60 * 60
+ATTENTION_LABELS = {
+    "refresh_source": "Herlees bron en huidige HEAD",
+    "defer_unchanged_hold": "HOLD ongewijzigd: ander werk oppakken",
+    "inspect_changed_evidence": "Nieuw gatebewijs: eigenaar laten beoordelen",
+    "await_required_gates": "Wacht op verplichte gates en onafhankelijke review",
+    "parallel_review_while_ci": "Vraag onafhankelijke review aan terwijl bestaande CI loopt",
+}
+
+# Existing GitHub/portfolio blocker categories, not new CI or review gates.
+# One human owner work list is more useful than treating every open PR as
+# another CI wait. These are read-only suggested action buckets.
+WORKSTREAM_LABELS = {
+    "owner_action_now": "Eigenaar kan bestaand probleem nu aanpakken",
+    "inspect_changed_source": "Nieuwe bron of wijziging onderzoeken",
+    "existing_external_wait": "Bestaande CI of onafhankelijke review afwachten",
+    "protected_merge_handoff": "Bestaande branchregels en releasebevoegdheid controleren",
+    "defer_unchanged_hold": "Ongewijzigde HOLD parkeren; ander werk kiezen",
+}
+WORKSTREAM_ORDER = tuple(WORKSTREAM_LABELS)
+OWNER_BLOCKERS = frozenset({
+    "failed_checks_or_legacy_context", "github_merge_conflict_observed",
+    "review_changes_requested", "draft_pr_needs_owner",
+    "independent_review_not_seen",
+})
+EXTERNAL_WAIT_BLOCKERS = frozenset({
+    "checks_still_running", "check_source_not_terminal",
+    "independent_review_requested_waiting",
+})
+RELEASE_BLOCKERS = frozenset({"branch_rules_ownership_and_release_not_verified"})
+
+
+def _operator_workstream(blocker, pinned, source_stale, history_state,
+                         defer_repeat, parallel_review=False):
+    """Actionable source interpretation, never admission or merge permission."""
+    if (source_stale or not pinned or history_state in (
+            "changed_or_uncertain_head", "incomplete_gate_source",
+            "newly_selected_not_new_pr")):
+        return "inspect_changed_source"
+    if parallel_review:
+        # Don't let a queued CI job hide the independent owner's review
+        # request that can be handled without rerunning that CI job.
+        return "owner_action_now"
+    if defer_repeat:
+        return "defer_unchanged_hold"
+    if blocker in OWNER_BLOCKERS:
+        return "owner_action_now"
+    if blocker in EXTERNAL_WAIT_BLOCKERS:
+        return "existing_external_wait"
+    if blocker in RELEASE_BLOCKERS:
+        return "protected_merge_handoff"
+    # Incomplete GitHub sources, missing checks or unknown mergeability are
+    # investigative work, not proof that anyone can safely merge.
+    return "inspect_changed_source"
+
+
+def _timestamp(value):
+    if type(value) is not str or len(value) > 48:
+        raise ValueError("missing bounded UTC source timestamp")
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("unparseable UTC source timestamp") from None
+    if instant.tzinfo is None or instant > datetime.now(timezone.utc):
+        raise ValueError("future or timezone-free source")
+    return instant.astimezone(timezone.utc).isoformat()
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _same_repo_url(value, repository):
+    if type(value) is not str or len(value) > 240:
+        raise ValueError("invalid PR URL")
+    match = PR.fullmatch(value)
+    if match is None or match.group(1) != repository:
+        raise ValueError("untrusted or external PR reference")
+    return value
+
+
+def _commit_link(card, sha):
+    """Canonical pinned source-only GitHub commit link, never merge clearance."""
+    _same_repo_url(card["url"], card["repository"])
+    if type(sha) is not str or SHA.fullmatch(sha) is None:
+        raise ValueError("invalid exact commit SHA in private work order")
+    return "https://github.com/" + card["repository"] + "/commit/" + sha
+
+
+def _article_anchor(card):
+    """Unique offline URL fragment across repositories with the same PR number."""
+    url = _same_repo_url(card["url"], card["repository"])
+    return "pr-" + url.removeprefix("https://github.com/").replace("/", "-")
+
+
+def _markdown(value):
+    """Render provider text inertly and make invisible Unicode controls visible."""
+    if type(value) is not str:
+        raise ValueError("operator text must be a string")
+    if len(value) > 500 or any(
+            unicodedata.category(char) in ("Cc", "Cs") for char in value):
+        raise ValueError("unsafe operator text")
+    visible = "".join(
+        "⟦U+%04X⟧" % ord(char)
+        if (unicodedata.category(char) in ("Cf", "Zl", "Zp")
+            or (char.isspace() and char != " "))
+        else char
+        for char in value
+    )
+    return re.sub(r"([\\\[\]_*`<>~|])", r"\\\1", visible)
+
+def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None):
+    """Return exact shared files and distinct file/directory scope conflicts."""
+    paths, related, hinted_issues = set(), set(), set()
+    scope_conflicts = []
+    paths_limited = False
+    # The portfolio view can expose up to 200 collision cards, while a
+    # single work order deliberately inspects only 80. A PR whose edges occur
+    # later in that bounded list must remain visibly incomplete rather than
+    # looking collision-free merely because its pairs were not scanned.
+    collision_pairs = view.get("shown_collision_pairs", [])
+    scope_collision_pairs = view.get("shown_path_scope_collision_pairs", [])
+    scan_omissions = {
+        "shared_file_pairs_hidden": 0,
+        "path_scope_pairs_hidden": 0,
+        "focused_overlap_receipts_hidden": 0,
+        "issue_mentions_hidden": 0,
+        "duplicate_issue_groups_hidden": 0,
+        "malformed_source_list": False,
+    }
+    if type(collision_pairs) is not list:
+        collision_pairs = []
+        scan_omissions["malformed_source_list"] = True
+        paths_limited = True
+    elif len(collision_pairs) > 80:
+        scan_omissions["shared_file_pairs_hidden"] = len(collision_pairs) - 80
+        paths_limited = True
+    if type(scope_collision_pairs) is not list:
+        scope_collision_pairs = []
+        scan_omissions["malformed_source_list"] = True
+        paths_limited = True
+    elif len(scope_collision_pairs) > 80:
+        scan_omissions["path_scope_pairs_hidden"] = len(scope_collision_pairs) - 80
+        paths_limited = True
+    # Focused overlaps are independently capped at 16 in this work order.
+    # Preserve explicit omitted counts if an upstream caller supplies more
+    # observations than this renderer can inspect.
+    if direct_overlaps is not None:
+        if type(direct_overlaps) is not list:
+            direct_overlaps = []
+            scan_omissions["malformed_source_list"] = True
+            paths_limited = True
+        elif len(direct_overlaps) > 16:
+            scan_omissions["focused_overlap_receipts_hidden"] = len(direct_overlaps) - 16
+            paths_limited = True
+    # An unstable before/after GitHub inventory is not evidence of a
+    # collision at the selected exact HEAD. Suppress *positive* edges,
+    # including focused older-PR overlaps, until a stable source exists.
+    stable_scope = view.get("open_pr_snapshot_stable") is True
+    if not stable_scope:
+        paths_limited = True
+    for pair in (collision_pairs[:80] if stable_scope else []):
+        if (type(pair) is not dict or type(pair.get("left")) is not dict
+                or type(pair.get("right")) is not dict):
+            raise ValueError("malformed observed PR collision")
+        left, right = pair["left"], pair["right"]
+        left_url = _same_repo_url(left.get("url"), repository)
+        right_url = _same_repo_url(right.get("url"), repository)
+        if left_url == pr_url:
+            selected_sha, peer_url = left.get("head_sha"), right_url
+        elif right_url == pr_url:
+            selected_sha, peer_url = right.get("head_sha"), left_url
+        else:
+            continue
+        # A collision graph can be sampled before an independently refreshed
+        # gate receipt sees a newer PR HEAD. Never ascribe the old graph's
+        # shared files or peers to this newly observed HEAD.
+        if head is None or selected_sha != head:
+            paths_limited = True
+            continue
+        related.add(peer_url)
+        for path in pair.get("shared_files", [])[:MAX_PATHS]:
+            paths.add(edit_path(path))
+    # A focused overlap receipt is only bound to an exact PR head when
+    # the second GitHub read confirmed the same head/base. On a drifted or
+    # missing HEAD, discard *all* positive links rather than letting the
+    # fallback sample impersonate a current collision.
+    if head is None and direct_overlaps:
+        paths_limited = True
+    if head is not None and stable_scope:
+        for source in (direct_overlaps or [])[:16]:
+            if type(source) is not dict:
+                raise ValueError("invalid older PR collision observation")
+            related.add(_same_repo_url(source.get("other_pr_url"), repository))
+            paths_limited |= (source.get("shared_paths_preview_truncated") is True or
+                              source.get("other_pr_file_list_incomplete") is True)
+            for path in source.get("shared_paths_preview", [])[:12]:
+                paths.add(edit_path(path))
+    # File/directory collisions are a separate relation from exact shared
+    # filenames. Bind every positive relation to the selected PR's exact HEAD.
+    relation_map = {
+        "left_file_conflicts_with_right_descendant":
+            "selected_file_conflicts_with_peer_descendant",
+        "right_file_conflicts_with_left_descendant":
+            "peer_file_conflicts_with_selected_descendant",
+    }
+    if stable_scope and head is not None:
+        for pair in scope_collision_pairs[:80]:
+            if (type(pair) is not dict or type(pair.get("left")) is not dict
+                    or type(pair.get("right")) is not dict
+                    or type(pair.get("path_conflicts")) is not list):
+                paths_limited = True
+                continue
+            left, right = pair["left"], pair["right"]
+            left_url = _same_repo_url(left.get("url"), repository)
+            right_url = _same_repo_url(right.get("url"), repository)
+            if left_url == pr_url:
+                selected, peer, selected_side = left, right, "left"
+            elif right_url == pr_url:
+                selected, peer, selected_side = right, left, "right"
+            else:
+                continue
+            if selected.get("head_sha") != head:
+                paths_limited = True
+                continue
+            peer_url = _same_repo_url(peer.get("url"), repository)
+            peer_head = peer.get("head_sha")
+            if peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                paths_limited = True
+                continue
+            related.add(peer_url)
+            if pair.get("path_conflicts_truncated") is True or (
+                    type(pair.get("path_conflict_count_observed")) is int and
+                    pair["path_conflict_count_observed"] > len(pair["path_conflicts"])):
+                paths_limited = True
+            for conflict in pair["path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    paths_limited = True
+                    continue
+                left_path, right_path = conflict.get("left_path"), conflict.get("right_path")
+                relation = conflict.get("relation")
+                try:
+                    left_path, right_path = edit_path(left_path), edit_path(right_path)
+                except (TypeError, ValueError):
+                    paths_limited = True
+                    continue
+                if relation not in relation_map:
+                    paths_limited = True
+                    continue
+                if selected_side == "left":
+                    selected_path, peer_path = left_path, right_path
+                    normalized_relation = relation_map[relation]
+                else:
+                    selected_path, peer_path = right_path, left_path
+                    normalized_relation = relation_map[
+                        "right_file_conflicts_with_left_descendant"
+                        if relation == "left_file_conflicts_with_right_descendant"
+                        else "left_file_conflicts_with_right_descendant"]
+                scope_conflicts.append({
+                    "peer_pr_url": peer_url, "peer_head_sha": peer_head,
+                    "selected_path": selected_path, "peer_path": peer_path,
+                    "scope_conflict_pairs_observed": pair.get(
+                        "path_conflict_count_observed", len(pair["path_conflicts"])),
+                    "relation": normalized_relation,
+                    "source": "stable_open_pr_scope_collision_sample",
+                })
+    # The explicit focused-PR gate read can also report ancestor collisions
+    # with a stable, separately pinned peer; retain its exact selected/peer paths.
+    if head is not None and stable_scope:
+        for source in (direct_overlaps or [])[:16]:
+            if type(source) is not dict:
+                paths_limited = True
+                continue
+            conflict_count = source.get("path_conflict_count_observed", 0)
+            examples = source.get("path_conflict_examples", [])
+            if (type(conflict_count) is not int or conflict_count < 0
+                    or type(examples) is not list):
+                paths_limited = True
+                continue
+            if not conflict_count:
+                continue
+            if conflict_count > len(examples):
+                paths_limited = True
+            peer_url = _same_repo_url(source.get("other_pr_url"), repository)
+            peer_head = source.get("other_pr_head_when_read")
+            if peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                paths_limited = True
+                continue
+            for conflict in source.get("path_conflict_examples", [])[:12]:
+                if type(conflict) is not dict:
+                    paths_limited = True
+                    continue
+                try:
+                    selected_path = edit_path(conflict.get("selected_path"))
+                    peer_path = edit_path(conflict.get("other_path"))
+                except (TypeError, ValueError):
+                    paths_limited = True
+                    continue
+                relation = {
+                    "target_file_conflicts_with_descendant_path":
+                        "selected_file_conflicts_with_peer_descendant",
+                    "changed_file_is_ancestor_of_target":
+                        "peer_file_conflicts_with_selected_descendant",
+                }.get(conflict.get("relation"))
+                if relation is None:
+                    paths_limited = True
+                    continue
+                related.add(peer_url)
+                scope_conflicts.append({
+                    "peer_pr_url": peer_url, "peer_head_sha": peer_head,
+                    "selected_path": selected_path, "peer_path": peer_path,
+                    "scope_conflict_pairs_observed": conflict_count,
+                    "relation": relation,
+                    "source": "focused_pr_overlap_with_stable_inventory",
+                })
+    deduped_scope = {}
+    for row in scope_conflicts:
+        key = (row["peer_pr_url"], row["peer_head_sha"], row["selected_path"],
+               row["peer_path"], row["relation"])
+        deduped_scope[key] = row
+    if len(deduped_scope) > 24:
+        paths_limited = True
+    scope_conflicts = [deduped_scope[key] for key in sorted(deduped_scope)[:24]]
+    # Every title/body issue mention is an operator search hint, even when
+    # no second PR mentions the same issue. Match exact observed PR HEAD to
+    # avoid attaching stale issue text from a changed source branch.
+    issue_mentions = view.get("observed_issue_to_pr_mentions_unverified", [])
+    duplicate_issue_groups = view.get("shown_duplicate_issue_groups", [])
+    if type(issue_mentions) is not list:
+        issue_mentions = []
+        scan_omissions["malformed_source_list"] = True
+    elif len(issue_mentions) > 512:
+        scan_omissions["issue_mentions_hidden"] = len(issue_mentions) - 512
+    if type(duplicate_issue_groups) is not list:
+        duplicate_issue_groups = []
+        scan_omissions["malformed_source_list"] = True
+    elif len(duplicate_issue_groups) > 80:
+        scan_omissions["duplicate_issue_groups_hidden"] = len(duplicate_issue_groups) - 80
+    for mention in (issue_mentions[:512] if stable_scope else []):
+        if (type(mention) is dict and mention.get("pr_url") == pr_url
+                and mention.get("pr_head_sha") == head):
+            n = mention.get("issue_number")
+            if type(n) is int and 0 < n < 100000000:
+                hinted_issues.add(n)
+    for issue in (duplicate_issue_groups[:80] if stable_scope else []):
+        if head is not None and any(
+                source.get("url") == pr_url and source.get("head_sha") == head
+                for source in issue.get("shown_pr_sources", [])):
+            n = issue.get("issue_number")
+            if type(n) is int and 0 < n < 100000000:
+                hinted_issues.add(n)
+    # A sampled list of paths is not a full repository clearance. Make
+    # project-level incomplete GitHub pagination, omitted collision pairs
+    # and focused peer-list truncation visible on each affected workorder.
+    project_scope_partial = (view.get("sample_complete") is not True or
+                             view.get("open_pr_snapshot_stable") is not True or
+                             view.get("source_truncated") is True)
+    # Return the bounded-scan candidates before the final card display cap;
+    # the caller records exact hidden counts and never silently drops peers.
+    return (sorted(paths)[:MAX_PATHS],
+            len(paths) > MAX_PATHS or paths_limited or project_scope_partial,
+            sorted(related), sorted(hinted_issues), scope_conflicts, scan_omissions)
+
+
+
+def _collision_peer_receipts(view, selected_url, selected_head, repository,
+                             focused_sources=None):
+    """Exact observed peer commits; never infer current ownership or mergeability.
+
+    The whole sampled inventory must be stable, and the selected PR must be
+    independently head-pinned by the gate read. If a peer is observed at
+    two incompatible HEADs, drop the peer instead of choosing one.
+    """
+    if selected_head is None or view.get("open_pr_snapshot_stable") is not True:
+        return [], True
+    peers, conflicted = {}, set()
+    partial = (view.get("sample_complete") is not True or
+               view.get("source_truncated") is True)
+    def accept(raw_url, raw_sha, count, preview, truncated, provenance):
+        nonlocal partial
+        url = _same_repo_url(raw_url, repository)
+        if url == selected_url:
+            partial = True
+            return
+        if type(raw_sha) is not str or SHA.fullmatch(raw_sha) is None:
+            partial = True
+            return
+        if type(count) is not int or not 1 <= count <= 10000:
+            partial = True
+            return
+        if type(preview) is not list or len(preview) > MAX_PATHS:
+            partial = True
+            return
+        paths = sorted({edit_path(path) for path in preview})
+        if not paths or len(paths) > count:
+            partial = True
+            return
+        row = {"url": url, "head_sha_at_observation": raw_sha,
+               "shared_file_count_observed": count,
+               "shared_files_preview": paths,
+               "preview_incomplete": bool(truncated or len(paths) < count),
+               "source": provenance,
+               "owner_verified": False, "merge_authorized": False}
+        if url in conflicted:
+            return
+        if url in peers:
+            # Two independent source windows may show different peer heads
+            # or incompatible file lists. Never stitch incompatible evidence.
+            old = peers[url]
+            if (old["head_sha_at_observation"] != raw_sha or
+                    old["shared_file_count_observed"] != count or
+                    old["shared_files_preview"] != paths):
+                partial = True
+                conflicted.add(url)
+                peers.pop(url)
+            return
+        peers[url] = row
+
+    for pair in view.get("shown_collision_pairs", [])[:80]:
+        if (type(pair) is not dict or type(pair.get("left")) is not dict
+                or type(pair.get("right")) is not dict):
+            partial = True
+            continue
+        left, right = pair["left"], pair["right"]
+        if left.get("url") == selected_url:
+            owner, peer = left, right
+        elif right.get("url") == selected_url:
+            owner, peer = right, left
+        else:
+            continue
+        if owner.get("head_sha") != selected_head:
+            partial = True
+            continue
+        accept(peer.get("url"), peer.get("head_sha"),
+               pair.get("shared_file_count_observed"),
+               pair.get("shared_files"), pair.get("shared_files_truncated"),
+               "stable_open_pr_collision_sample")
+
+    for item in (focused_sources or [])[:16]:
+        if type(item) is not dict:
+            partial = True
+            continue
+        accept(item.get("other_pr_url"), item.get("other_pr_head_when_read"),
+               item.get("shared_file_count_observed"),
+               item.get("shared_paths_preview"),
+               item.get("shared_paths_preview_truncated") is True or
+               item.get("other_pr_file_list_incomplete") is True,
+               "focused_pr_overlap_with_stable_inventory")
+
+    if len(peers) > 8 or len(view.get("shown_collision_pairs", [])) > 80 or (
+            focused_sources is not None and len(focused_sources) > 16):
+        partial = True
+    result = [peers[url] for url in sorted(peers)[:8]]
+    return result, partial
+
+
+
+def _coordination_groups(cards):
+    """Group selected PRs by pinned, observed file-scope collisions only.
+
+    Groups describe who should coordinate a human review, not merge waves.
+    The bounded source cannot prove that PRs outside this selection are free.
+    """
+    by_url = {card["url"]: card for card in cards}
+    if len(by_url) != len(cards):
+        raise ValueError("duplicate PR in coordination desk")
+    parent = {url: url for url in by_url}
+    edges = set()
+    external_peers = {url: set() for url in by_url}
+    partial_urls = set()
+    missing_or_partial = False
+
+    def root(url):
+        while parent[url] != url:
+            url = parent[url]
+        return url
+
+    def join(a, b):
+        left, right = root(a), root(b)
+        if left != right:
+            parent[max(left, right)] = min(left, right)
+
+    for card in cards:
+        if type(card) is not dict:
+            raise ValueError("invalid selected PR coordination card")
+        repository = card.get("repository")
+        source = _same_repo_url(card.get("url"), repository)
+        if (type(card.get("source_current")) is not bool
+                or type(card.get("peer_head_evidence_partial")) is not bool
+                or type(card.get("overlap_paths_hidden")) is not bool):
+            raise ValueError("invalid PR coordination freshness flags")
+        scan_omissions = card.get("collision_scan_omissions")
+        if scan_omissions is not None:
+            omission_counts = (
+                "shared_file_pairs_hidden",
+                "path_scope_pairs_hidden",
+                "focused_overlap_receipts_hidden",
+                "issue_mentions_hidden",
+                "duplicate_issue_groups_hidden",
+            )
+            if (type(scan_omissions) is not dict
+                    or set(scan_omissions) != set(omission_counts) | {"malformed_source_list"}
+                    or any(type(scan_omissions.get(key)) is not int
+                           or not 0 <= scan_omissions[key] <= 1000000
+                           for key in omission_counts)
+                    or type(scan_omissions.get("malformed_source_list")) is not bool):
+                raise ValueError("invalid collision scan omission receipt")
+        coverage_reasons = card.get("source_coverage_reasons", [])
+        recovery_steps = card.get("source_recovery_steps", [])
+        if (type(recovery_steps) is not list or len(recovery_steps) > 5
+                or any(type(step) is not str or not 1 <= len(step) <= 240
+                       or any(ord(char) < 32 or ord(char) == 127 for char in step)
+                       for step in recovery_steps)):
+            raise ValueError("invalid bounded source recovery actions")
+        page_count = card.get("source_open_pr_pages", 1)
+        window_complete = card.get("source_open_pr_window_complete", False)
+        if (type(page_count) is not int or not 1 <= page_count <= 3
+                or type(window_complete) is not bool):
+            raise ValueError("invalid PR source pagination receipt")
+        if (type(coverage_reasons) is not list or len(coverage_reasons) > 16
+                or any(type(reason) is not str or
+                       re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) is None
+                       for reason in coverage_reasons)):
+            raise ValueError("invalid bounded source coverage reasons")
+        peer_rows = card.get("peer_head_evidence")
+        scope_rows = card.get("scope_path_conflicts")
+        related_rows = card.get("related_prs")
+        if (type(peer_rows) is not list or len(peer_rows) > 200
+                or type(scope_rows) is not list or len(scope_rows) > 80
+                or type(related_rows) is not list or len(related_rows) > 200):
+            raise ValueError("unbounded PR coordination evidence")
+        if card["source_current"] and (
+                type(card.get("head_sha")) is not str
+                or SHA.fullmatch(card["head_sha"]) is None):
+            raise ValueError("current PR card has no pinned HEAD")
+        if (not card["source_current"] or card["peer_head_evidence_partial"]
+                or card["overlap_paths_hidden"]):
+            missing_or_partial = True
+            partial_urls.add(source)
+        observed = []
+        for peer in peer_rows:
+            if type(peer) is not dict:
+                raise ValueError("invalid pinned peer evidence")
+            peer_url = _same_repo_url(peer.get("url"), repository)
+            peer_sha = peer.get("head_sha_at_observation")
+            if type(peer_sha) is not str or SHA.fullmatch(peer_sha) is None:
+                raise ValueError("invalid pinned peer HEAD")
+            observed.append((peer_url, peer_sha))
+        for scope in scope_rows:
+            if type(scope) is not dict:
+                raise ValueError("invalid file/directory scope evidence")
+            peer_url = _same_repo_url(scope.get("peer_pr_url"), repository)
+            peer_sha = scope.get("peer_head_sha")
+            if type(peer_sha) is not str or SHA.fullmatch(peer_sha) is None:
+                raise ValueError("invalid file/directory peer HEAD")
+            observed.append((peer_url, peer_sha))
+        for related_url in related_rows:
+            _same_repo_url(related_url, repository)
+        for url, sha in observed:
+            other = by_url.get(url)
+            if other is None:
+                external_peers[source].add(url)
+                missing_or_partial = True
+                partial_urls.add(source)
+                continue
+            # Never join historical commits or a peer that moved since the
+            # collision sample. A changed HEAD is an operator recheck.
+            if (not card["source_current"] or not other["source_current"]
+                    or other["head_sha"] != sha or
+                    other["repository"] != card["repository"]):
+                missing_or_partial = True
+                partial_urls.update((source, url))
+                continue
+            edge = tuple(sorted((source, url)))
+            edges.add(edge)
+            join(*edge)
+        for peer_url in card["related_prs"]:
+            # Unpinned overlap hints cannot be treated as exact collisions.
+            if peer_url not in [row[0] for row in observed]:
+                if peer_url not in by_url:
+                    external_peers[source].add(peer_url)
+                # A related selected PR without a pinned pair is still an
+                # unresolved source gap, not an external PR or safe wave.
+                missing_or_partial = True
+                partial_urls.add(source)
+                if peer_url in by_url:
+                    partial_urls.add(peer_url)
+
+    components = {}
+    for card in cards:
+        components.setdefault(root(card["url"]), []).append(card)
+    groups = []
+    for members in components.values():
+        urls = {member["url"] for member in members}
+        linked = [edge for edge in edges if set(edge) <= urls]
+        external_group_peers = sorted(set().union(*(external_peers[url] for url in urls)))
+        group = {
+            "group_number": len(groups) + 1,
+            "members": [{
+                "url": member["url"], "project": member["project"],
+                "number": member["number"],
+                "head_sha_at_observation": member["head_sha"],
+            } for member in members],
+            "observed_selected_scope_collisions": len(linked),
+            "source_partial_or_unpinned": any(
+                member["url"] in partial_urls for member in members),
+            "external_peer_pr_urls_to_recheck": external_group_peers[:12],
+            "external_peer_preview_truncated": len(external_group_peers) > 12,
+            "owner_coordination_recommended": bool(linked) or bool(external_group_peers),
+            "all_project_claims_verified": False,
+            "merge_authorized": False,
+        }
+        for member in members:
+            member["coordination_group_number"] = group["group_number"]
+            member["coordination_selected_peer_urls"] = sorted(
+                url for url in urls if url != member["url"])
+            member["coordination_external_peer_urls"] = sorted(
+                external_peers[member["url"]])[:8]
+            member["coordination_group_source_partial"] = (
+                group["source_partial_or_unpinned"])
+        groups.append(group)
+    return {
+        "groups": groups,
+        "selected_prs": len(cards),
+        "observed_selected_scope_collision_pairs": len(edges),
+        "source_partial_or_unpinned": missing_or_partial,
+        "selection_not_full_inventory": True,
+        "cross_group_independence_verified": False,
+        "claim_authorized": False, "merge_authorized": False,
+    }
+
+
+def validate_coordination_receipt(bundle):
+    """Reject altered workorder hashes and collision groups that drift from cards.
+
+    SHA-256 here is a consistency checksum, not a signature or authorization.
+    """
+    if type(bundle) is not dict or bundle.get("schema") != SCHEMA:
+        raise ValueError("invalid private PR workorder receipt")
+    digest = bundle.get("source_digest_sha256")
+    if type(digest) is not str or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+        raise ValueError("missing private PR workorder checksum")
+    unsigned = dict(bundle)
+    unsigned.pop("source_digest_sha256", None)
+    try:
+        actual = _digest(unsigned)
+    except (TypeError, ValueError):
+        raise ValueError("unserializable private PR workorder receipt") from None
+    if actual != digest:
+        raise ValueError("private PR workorder checksum mismatch")
+    items = bundle.get("items")
+    if (type(items) is not list or len(items) > MAX_PRS
+            or any(type(card) is not dict for card in items)):
+        raise ValueError("invalid bounded PR workorder cards")
+    copies = [dict(card) for card in items]
+    try:
+        expected = _coordination_groups(copies)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("malformed PR coordination evidence") from None
+    if bundle.get("selected_pr_coordination") != expected:
+        raise ValueError("PR coordination receipt differs from selected cards")
+    for original, computed in zip(items, copies):
+        for key in ("coordination_group_number",
+                    "coordination_selected_peer_urls",
+                    "coordination_external_peer_urls",
+                    "coordination_group_source_partial"):
+            if original.get(key) != computed.get(key):
+                raise ValueError("per-PR coordination metadata mismatch")
+    return expected
+
+
+def collect_workorders(board):
+    if (type(board) is not dict or board.get("schema") != BOARD
+            or any(board.get(key) is not False for key in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("not a non-authorizing PR observation board")
+    desk = board.get("merge_first_attention")
+    if (type(desk) is not dict or type(desk.get("items")) is not list
+            or len(desk["items"]) > MAX_PRS
+            or any(desk.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("opt-in current merge-first gate inspection required")
+    views, project_ids = board.get("project_views"), board.get("projects")
+    if (type(views) is not list or type(project_ids) is not list
+            or not 1 <= len(views) <= 3 or len(views) != len(project_ids)
+            or any(type(view) is not dict or
+                   type(view.get("project")) is not str or
+                   type(view.get("repository")) is not str for view in views)
+            or any(type(project) is not str for project in project_ids)):
+        raise ValueError("missing bounded project source")
+    projects = {view["project"]: view for view in views}
+    if (len(projects) != len(views) or len(set(project_ids)) != len(project_ids)
+            or set(projects) != set(project_ids)):
+        raise ValueError("duplicate or drifting project source")
+    live = board.get("current_live_pr_gate_observation")
+    if (type(live) is not dict or type(live.get("items")) is not list
+            or len(live["items"]) > MAX_PRS):
+        raise ValueError("missing bounded live gate receipts")
+    gate_sources = {}
+    for source in live["items"]:
+        if (type(source) is not dict or type(source.get("url")) is not str or
+                source["url"] in gate_sources or
+                source.get("merge_authorized") is not False):
+            raise ValueError("duplicate, malformed or authorizing gate source")
+        gate_sources[source["url"]] = source
+    observed_at = _timestamp(desk.get("observed_at_utc"))
+    if _timestamp(live.get("observed_at_utc")) != observed_at:
+        raise ValueError("inconsistent live gate and action source times")
+    # Exact HEAD at the time of reading is not an assertion that the same
+    # PR is still current hours later. Preserve historical receipts, but
+    # withdraw their source-current label from the operator workbench.
+    source_stale = (
+        datetime.now(timezone.utc) -
+        datetime.fromisoformat(observed_at)).total_seconds() > SOURCE_FRESHNESS_SECONDS
+    # Reuse the bounded, already-computed before/after gate evidence.
+    # No additional GitHub reads or re-dispatch are necessary.
+    history_by_pr = {}
+    history = board.get("historical_gate_episodes")
+    if history is not None:
+        if (type(history) is not dict or type(history.get("items")) is not list
+                or len(history["items"]) > 2 * MAX_PRS
+                or history.get("merge_authorized") is not False
+                or history.get("writes_performed") is not False):
+            raise ValueError("invalid private historical gate source")
+        if history.get("comparison_status") == "two_bounded_observations":
+            # The saved two-snapshot comparator is stamped by the initial
+            # portfolio observation. A later live gate re-read has a separate
+            # observed_at_utc. Both are legitimate but not interchangeable.
+            if (_timestamp(history.get("current_observed_at_utc")) !=
+                    _timestamp(board.get("observed_at_utc"))):
+                raise ValueError("historical PR comparison observation drift")
+            for source in history["items"]:
+                if (type(source) is not dict or
+                        type(source.get("url")) is not str or
+                        source["url"] in history_by_pr):
+                    raise ValueError("invalid duplicate historical PR")
+                history_by_pr[source["url"]] = source
+        elif (history.get("comparison_status") !=
+              "one_or_both_gate_observations_absent" or history["items"]):
+            raise ValueError("invalid historical gate coverage")
+    if history is None:
+        history_status, previous_observed, history_interval = (
+            "not_requested", None, None)
+    else:
+        history_status = history["comparison_status"]
+        previous_observed = _timestamp(history["previous_observed_at_utc"])
+        history_interval = history["elapsed_seconds"]
+        if (type(history_interval) is not int or
+                not 0 <= history_interval <= 7 * 86400):
+            raise ValueError("invalid bounded historical time interval")
+    cards, seen = [], set()
+    for item in desk["items"]:
+        if (type(item) is not dict or item.get("merge_authorized") is not False
+                or item.get("owner_claim_verified") is not False
+                or item.get("required_branch_rules_verified") is not False
+                or item.get("project") not in projects):
+            raise ValueError("untrusted or owner-authorizing PR work item")
+        project, repo = item["project"], item["repository"]
+        if projects[project]["repository"] != repo:
+            raise ValueError("work order repository drift")
+        url = _same_repo_url(item["url"], repo)
+        if url in seen:
+            raise ValueError("duplicate selected PR")
+        seen.add(url)
+        head, base = item.get("head_sha"), item.get("base_sha")
+        base_ref = item.get("base_ref")
+        captured_base_ref = item.get("captured_base_ref")
+        observed_base_ref = item.get("base_ref_observed")
+        base_ref_stable = item.get("base_ref_stable_on_second_read")
+        for branch_value in (captured_base_ref, observed_base_ref):
+            if (branch_value is not None and
+                    (type(branch_value) is not str or not 1 <= len(branch_value) <= 255
+                     or any(not char.isprintable() or char.isspace()
+                            for char in branch_value))):
+                raise ValueError("invalid target-branch observation")
+        if base_ref_stable is not None and type(base_ref_stable) is not bool:
+            raise ValueError("invalid target-branch stability flag")
+        pinned = bool(type(head) is str and SHA.fullmatch(head) and
+                      type(base) is str and SHA.fullmatch(base) and
+                      type(base_ref) is str and 1 <= len(base_ref) <= 255 and
+                      not any(not char.isprintable() or char.isspace()
+                              for char in base_ref) and
+                      item.get("source_current_head_verified") is True)
+        if not pinned and (head is not None or base is not None):
+            raise ValueError("untrusted partial PR head/base receipt")
+        live_gate = gate_sources.get(url)
+        if live_gate is None:
+            raise ValueError("selected PR not in current bounded gate receipt")
+        if (live_gate.get("project") != project or live_gate.get("url") != url
+                or live_gate.get("human_gate_blocker") != item.get("blocker")):
+            raise ValueError("gate and operator action refer to different PR evidence")
+        if pinned:
+            if (live_gate.get("status") != "current_exact_pr_head_and_sample_match"
+                    or live_gate.get("head_sha_observed") != head
+                    or live_gate.get("base_sha_observed") != base
+                    or live_gate.get("base_ref_observed") != base_ref
+                    or captured_base_ref != base_ref
+                    or observed_base_ref != base_ref
+                    or base_ref_stable is not True):
+                raise ValueError("owner workorder exact-HEAD/base/target-branch mismatch")
+        elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
+            raise ValueError("current gate receipt lost exact HEAD in workorder")
+        # Reuse the current exact-head, double-read GitHub review-request
+        # receipt. A requested review is never an independent approval.
+        requests = None
+        if pinned:
+            person_count = live_gate.get("pending_individual_review_requests_observed")
+            team_count = live_gate.get("pending_team_review_requests_observed")
+            fingerprint = live_gate.get("pending_review_request_evidence_sha256")
+            if (type(person_count) is not int or not 0 <= person_count <= 100
+                    or type(team_count) is not int or not 0 <= team_count <= 100
+                    or type(fingerprint) is not str
+                    or re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None
+                    or live_gate.get("pending_review_requests_stable_on_second_read") is not True):
+                raise ValueError("incomplete exact-head requested-review source")
+            desk_requests = item.get("pending_review_requests")
+            if (type(desk_requests) is not dict or
+                    desk_requests.get("individuals") != person_count or
+                    desk_requests.get("teams") != team_count or
+                    desk_requests.get("not_an_approval") is not True):
+                raise ValueError("requested-review mismatch between live gate and work order")
+            requests = {
+                "individuals": person_count, "teams": team_count,
+                "evidence_sha256": fingerprint,
+                "requested_not_approved": True,
+            }
+        elif item.get("pending_review_requests") is not None:
+            raise ValueError("unverified reviewer requests cannot enter work order")
+        paths, paths_cut, related, hints, scope_conflicts, scan_omissions = _observed_overlap_paths(
+            projects[project], url, head if pinned else None, repo,
+            live_gate.get("sampled_file_overlaps_observed"))
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            paths_cut = True
+        peer_evidence, peer_partial = _collision_peer_receipts(
+            projects[project], url, head if pinned else None, repo,
+            live_gate.get("sampled_file_overlaps_observed"))
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            peer_partial = True
+        # The summary can include an earlier file-scope sample, not
+        # necessarily the second read's exact HEAD. Never surface those
+        # links as positive overlap when the current HEAD could not be pinned.
+        if pinned and projects[project].get("open_pr_snapshot_stable") is True:
+            for extra in item.get("observed_file_overlap_prs", [])[:8]:
+                related.append(_same_repo_url(extra, repo))
+        elif item.get("observed_file_overlap_prs"):
+            # These list-level hints are from the first GitHub snapshot,
+            # not the exact-head gate read; never resurrect stale peers.
+            paths_cut = True
+            peer_partial = True
+        related = sorted(set(related) - {url})
+        related_hidden = max(0, len(related) - 8)
+        related = related[:8]
+        hints = sorted(set(hints))
+        hints_hidden = max(0, len(hints) - MAX_ISSUE_HINTS)
+        hints = hints[:MAX_ISSUE_HINTS]
+        if related_hidden:
+            # Missing peer links can hide collision relationships, so this
+            # work order must not imply complete overlap coverage.
+            paths_cut = True
+        links = []
+        for job in item.get("non_green_jobs", [])[:MAX_CHECKS]:
+            if (type(job) is not dict or type(job.get("name")) is not str
+                    or type(job.get("url")) is not str
+                    or job.get("kind") not in ("check_run", "legacy_status")):
+                raise ValueError("untrusted GitHub check")
+            canonical = (re.fullmatch(
+                re.escape("https://github.com/" + repo + "/runs/") + r"[1-9][0-9]*",
+                job["url"]) is not None or
+                (pinned and job["url"] ==
+                 "https://github.com/" + repo + "/commit/" + head + "/checks"))
+            if not canonical:
+                raise ValueError("noncanonical direct check link")
+            queued_age = job.get("queued_age_seconds_observed")
+            queued_flag = job.get("queued_attention_30m", False)
+            if queued_age is not None and (
+                type(queued_age) is not int or not 0 <= queued_age <= 365 * 86400
+                or job["kind"] != "check_run" or job["state"] != "queued"):
+                raise ValueError("invalid queued Check Run age evidence")
+            if type(queued_flag) is not bool or (
+                queued_flag != (queued_age is not None and queued_age >= 1800)):
+                raise ValueError("inconsistent aged queue observation")
+            links.append({
+                "name": _markdown(job["name"]),
+                "state": _markdown(str(job.get("state", "unknown"))),
+                "url": job["url"], "kind": job["kind"],
+                "queued_age_seconds_observed": queued_age,
+                "queued_attention_30m": queued_flag,
+            })
+        num = int(PR.fullmatch(url).group(2))
+        if item.get("number") != num:
+            raise ValueError("mismatched PR identity")
+        category = item.get("attention_group")
+        blocker = item.get("blocker_text")
+        next_step = item.get("human_next_step")
+        for value in (category, blocker, next_step):
+            _markdown(value)
+        notes = []
+        if related_hidden:
+            notes.append(
+                f"{related_hidden} aanvullende peer-PR(s) buiten de acht zichtbare links; herlees de volledige actuele scope.")
+        if hints_hidden:
+            notes.append(
+                f"{hints_hidden} aanvullende onbevestigde issuehint(s) buiten de zichtbare lijst; herlees de actuele issue-/PR-tekst.")
+        if scan_omissions["shared_file_pairs_hidden"]:
+            notes.append(
+                f"{scan_omissions['shared_file_pairs_hidden']} aanvullende same-file botsingsparen buiten de 80-paren scan; overlapbron onvolledig.")
+        if scan_omissions["path_scope_pairs_hidden"]:
+            notes.append(
+                f"{scan_omissions['path_scope_pairs_hidden']} aanvullende file/directory botsingsparen buiten de 80-paren scan; overlapbron onvolledig.")
+        if scan_omissions["focused_overlap_receipts_hidden"]:
+            notes.append(
+                f"{scan_omissions['focused_overlap_receipts_hidden']} aanvullende gefocuste overlap-ontvangstbewijzen buiten de 16-item scan.")
+        if scan_omissions["issue_mentions_hidden"]:
+            notes.append(
+                f"{scan_omissions['issue_mentions_hidden']} aanvullende onbevestigde issue-PR-vermeldingen buiten de 512-item scan.")
+        if scan_omissions["duplicate_issue_groups_hidden"]:
+            notes.append(
+                f"{scan_omissions['duplicate_issue_groups_hidden']} aanvullende dubbele-issuegroepen buiten de 80-groep scan.")
+        if scan_omissions["malformed_source_list"]:
+            notes.append("Een overlapbronlijst had een ongeldige structuur; volledige scope is UNKNOWN.")
+        alias_view = projects[project]
+        alias_pairs = alias_view.get("shown_portable_path_alias_pairs", [])
+        alias_matches = []
+        if pinned and alias_view.get("open_pr_snapshot_stable") is True:
+            if type(alias_pairs) is not list:
+                notes.append("POTENTIËLE cross-platform padaliases: bronstructuur UNKNOWN; herlees scope.")
+            else:
+                for pair in alias_pairs[:80]:
+                    if (type(pair) is not dict or type(pair.get("left")) is not dict
+                            or type(pair.get("right")) is not dict
+                            or type(pair.get("path_aliases")) is not list):
+                        notes.append("POTENTIËLE cross-platform padaliasbron onvolledig; herlees scope.")
+                        continue
+                    left, right = pair["left"], pair["right"]
+                    if left.get("url") == url:
+                        selected, peer = left, right
+                    elif right.get("url") == url:
+                        selected, peer = right, left
+                    else:
+                        continue
+                    if selected.get("head_sha") != head:
+                        continue
+                    peer_url = _same_repo_url(peer.get("url"), repo)
+                    peer_head = peer.get("head_sha")
+                    if type(peer_head) is not str or SHA.fullmatch(peer_head) is None:
+                        notes.append("POTENTIËLE padalias-peer zonder stabiele HEAD; hercontrole nodig.")
+                        continue
+                    count = pair.get("path_alias_count_observed")
+                    if type(count) is not int or count < 1:
+                        notes.append("POTENTIËLE padalias-telling onbetrouwbaar; herlees scope.")
+                        continue
+                    example = "geen voorbeeld beschikbaar"
+                    if pair["path_aliases"]:
+                        first_alias = pair["path_aliases"][0]
+                        if (type(first_alias) is dict
+                                and first_alias.get("relation") in (
+                                    "case_or_unicode_normalization_alias",
+                                    "left_path_alias_conflicts_with_right_descendant",
+                                    "right_path_alias_conflicts_with_left_descendant")):
+                            left_raw = edit_path(first_alias.get("left_path"))
+                            right_raw = edit_path(first_alias.get("right_path"))
+                            example = (_markdown(left_raw[:48]) +
+                                       ("…" if len(left_raw) > 48 else "") +
+                                       " ↔ " + _markdown(right_raw[:48]) +
+                                       ("…" if len(right_raw) > 48 else "") +
+                                       (" (padfragmenten)" if
+                                        len(left_raw) > 48 or len(right_raw) > 48 else ""))
+                    peer_number = PR.fullmatch(peer_url).group(2)
+                    alias_matches.append(
+                        "POTENTIËLE cross-platform padalias met PR #" + peer_number +
+                        " (peer HEAD " + peer_head[:12] + "; " + str(count) +
+                        " aliasparen waargenomen; NFC/casefold-heuristiek, geen Git-mergeconflict): " +
+                        example)
+        elif alias_pairs:
+            notes.append("Historische of niet-stabiele padaliasbron; geen positieve alias aan actuele HEAD toegeschreven.")
+        for alias_note in alias_matches[:4]:
+            notes.append(alias_note)
+        if len(alias_matches) > 4:
+            notes.append("Meer potentiële padalias-peers buiten de vier zichtbare waarschuwingen.")
+        if alias_view.get("portable_path_alias_pairs_truncated") or alias_view.get("portable_path_alias_examples_truncated"):
+            notes.append("Padaliasinventaris onvolledig; controleer het portfolio-overzicht voordat bestanden worden gewijzigd.")
+        if source_stale:
+            notes.append(
+                "HISTORISCHE BRON: de opgeslagen GitHub/PR-gatewaarneming is "
+                "ouder dan zes uur. Herlees HEAD, reviews en verplichte checks "
+                "voordat een PR als actueel wordt behandeld.")
+        if not pinned:
+            notes.append("Geen stabiele actuele HEAD/basis bevestigd; eerst bij GitHub herlezen.")
+        elif requests and (requests["individuals"] or requests["teams"]):
+            notes.append("Onafhankelijke review is bij GitHub aangevraagd; "
+                         "dat is nog geen ingediende goedkeuring of mergevrijgave.")
+        elif requests is not None:
+            notes.append("Geen open reviewverzoek waargenomen op de exacte HEAD; "
+                         "controleer de reviewregels voordat een aanvraag wordt gedaan.")
+        # The existing portfolio CLI already computes bounded comparison
+        # receipts. Promote that *source* into the operator handoff instead
+        # of forcing an owner to read another JSON/Markdown section.
+        history_code = item.get("historical_gate_change")
+        history_step = item.get("historical_next_step")
+        history_new = item.get("new_evidence_since_previous_sample")
+        if type(history_new) is not bool:
+            raise ValueError("invalid historical new-evidence flag")
+        if history_code is None:
+            if history_step is not None or history_new:
+                raise ValueError("unsourced historical PR next step")
+            history_state, history_label, step_label = (
+                "not_compared", "Geen historische bronvergelijking", None)
+        else:
+            if (type(history_code) is not str
+                    or history_code not in HISTORICAL_CHANGE_LABELS
+                    or type(history_step) is not str
+                    or history_step not in NEXT_STEP_LABELS):
+                raise ValueError("malformed or unknown historical gate comparison")
+            history_state = {
+                "same_exact_head_and_gate_receipts_at_two_observations":
+                    "unchanged_two_snapshots",
+                "gate_receipt_changed_same_head":
+                    "changed_gate_receipt",
+                "head_changed_or_source_uncertain":
+                    "changed_or_uncertain_head",
+                "gate_source_incomplete_no_stability_claim":
+                    "incomplete_gate_source",
+                "newly_selected_in_current_sample_not_new_pr":
+                    "newly_selected_not_new_pr",
+            }.get(history_code)
+            if history_state is None:
+                raise ValueError("historical PR source no longer selected")
+            if history_new != (history_state != "unchanged_two_snapshots"):
+                raise ValueError("historical attention change flag mismatch")
+            history_label = HISTORICAL_CHANGE_LABELS[history_code]
+            step_label = NEXT_STEP_LABELS[history_step]
+            notes.append("Historische vergelijking: " +
+                         _markdown(history_label) +
+                         "; géén bewijs over de tijd tussen de opnames.")
+        historical_changed_checks, historical_changed_categories = [], []
+        historical_changed_checks_hidden = 0
+        historical_source = history_by_pr.get(url)
+        if historical_source is not None:
+            if (historical_source.get("project") != project
+                    or historical_source.get("change") != history_code
+                    or historical_source.get("operator_next_step") != history_step):
+                raise ValueError("historical PR receipt differs from owner action")
+            for category in historical_source.get(
+                    "observed_changed_gate_evidence_categories", [])[:6]:
+                historical_changed_categories.append(_markdown(category))
+            for change in historical_source.get(
+                    "observed_changed_non_green_checks", [])[:16]:
+                if (type(change) is not dict or
+                        type(change.get("kind")) is not str or
+                        type(change.get("label")) is not str or
+                        type(change.get("url")) is not str):
+                    raise ValueError("invalid changed GitHub job receipt")
+                link = change["url"]
+                if (re.fullmatch(re.escape(
+                        "https://github.com/" + repo + "/runs/") +
+                        r"[1-9][0-9]*", link) is None
+                        and not (pinned and link ==
+                                 "https://github.com/" + repo + "/commit/" +
+                                 head + "/checks")):
+                    historical_changed_checks_hidden += 1
+                    continue
+                historical_changed_checks.append({
+                    "kind": _markdown(change["kind"]),
+                    "label": _markdown(change["label"]),
+                    "url": link,
+                })
+            hidden = historical_source.get(
+                "observed_changed_non_green_checks_hidden", 0)
+            if type(hidden) is not int or not 0 <= hidden <= 200:
+                raise ValueError("invalid bounded historical job omission")
+            historical_changed_checks_hidden += hidden
+        elif history_code is not None:
+            raise ValueError("historical comparison missing PR gate row")
+        defer_repeat = (history_state == "unchanged_two_snapshots"
+                        and item["rank"] == 5)
+        if defer_repeat:
+            notes.append("Ongewijzigde waarneming: dezelfde HOLD niet "
+                         "opnieuw onderzoeken zonder nieuw bronbewijs; "
+                         "vervolg ander veilig werk.")
+        if history_state in ("incomplete_gate_source",
+                             "changed_or_uncertain_head",
+                             "newly_selected_not_new_pr"):
+            notes.append(
+                "Bron vraagt mogelijk herbeoordeling, maar bewijst niet "
+                "dat een PR-HEAD, merge of CI-status echt gewijzigd is.")
+        if paths_cut or item.get("non_green_jobs_hidden") or (
+                item.get("source_current_head_verified") is not True):
+            notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
+        if peer_partial:
+            notes.append("Peer-HEAD-vergelijking is onvolledig; overige "
+                         "open PRs, veranderde HEADs en ontbrekende paden "
+                         "kunnen niet worden uitgesloten.")
+        if paths_cut:
+            notes.append(
+                "Niet alle bestandsverbindingen zijn aan de exact waargenomen "
+                "PR-HEAD gebonden; een oude botsingssteekproef wordt niet "
+                "als actuele bestandsbotsing gepresenteerd.")
+        if live_gate.get("observed_in_recent_pr_collision_sample") is False:
+            notes.append(
+                "Dit is een expliciet geselecteerde oudere PR buiten het "
+                "recente overzicht. Bestandsbotsingen met andere PRs blijven "
+                "onvolledig, ook als geen overlap is gevonden.")
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            notes.append("Gerelateerde PRs buiten de bounded sample worden niet getoond.")
+        if not pinned:
+            notes.append("Verifieer HEAD en doelbranch voordat dit als huidige taak geldt.")
+        if source_stale or not pinned or history_state in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr"):
+            attention_status = "refresh_source"
+        elif defer_repeat:
+            attention_status = "defer_unchanged_hold"
+        elif history_state == "changed_gate_receipt":
+            attention_status = "inspect_changed_evidence"
+        else:
+            attention_status = "await_required_gates"
+        # Review can be requested while existing CI runs. This is an
+        # independent human action only when exact-head evidence is complete
+        # enough to avoid duplicating an already-pending review request.
+        parallel_review = bool(
+            pinned and not source_stale
+            and history_state not in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr")
+            and live_gate.get("github_mergeable_boolean_observed") is True
+            and live_gate.get("draft_at_read") is False
+            and live_gate.get("check_page_complete") is True
+            and live_gate.get("review_page_may_be_truncated") is False
+            and live_gate.get("legacy_status_source_may_be_truncated") is False
+            and live_gate.get("observed_checks_pending", 0) > 0
+            and live_gate.get("observed_checks_not_successful") == 0
+            and live_gate.get("observed_checks_unknown") == 0
+            and live_gate.get("observed_legacy_failure_or_error") == 0
+            and live_gate.get("observed_exact_head_changes_requested") == 0
+            and live_gate.get("observed_independent_exact_head_approvals") == 0
+            and requests is not None
+            and requests["individuals"] == 0 and requests["teams"] == 0)
+        workstream = _operator_workstream(
+            item.get("blocker"), pinned, source_stale, history_state,
+            defer_repeat, parallel_review)
+        # A real failing exact-head job can be opened directly. Do not send
+        # the owner back to a generic PR checks list if GitHub already
+        # supplied a canonical actionable job link in the pinned receipt.
+        failing_jobs = [
+            job for job in links if (
+                (job["kind"] == "check_run" and job["state"] == "completed") or
+                (job["kind"] == "legacy_status" and
+                 job["state"] in ("failure", "error")))]
+        direct_failure = (
+            failing_jobs[0] if item.get("blocker") ==
+            "failed_checks_or_legacy_context" and
+            pinned and not source_stale and failing_jobs else None)
+        overdue_queued_jobs = ([
+            {"name": job["name"], "url": job["url"],
+             "queued_minutes_at_read": job["queued_age_seconds_observed"] // 60}
+            for job in links if job["queued_attention_30m"]
+        ] if pinned and not source_stale and
+            live_gate.get("check_page_complete") is True else [])
+        overdue_queued_jobs.sort(
+            key=lambda job: (-job["queued_minutes_at_read"], job["name"]))
+        old_queued_action = bool(
+            overdue_queued_jobs and not direct_failure and not parallel_review
+            and history_state not in (
+                "changed_or_uncertain_head", "incomplete_gate_source",
+                "newly_selected_not_new_pr")
+            and item.get("blocker") == "checks_still_running"
+            and live_gate.get("observed_legacy_failure_or_error") == 0)
+        if old_queued_action:
+            workstream = "owner_action_now"
+            attention_status = "inspect_changed_evidence"
+            notes.append(
+                "Een exacte-HEAD GitHub-job staat minimaal 30 minuten queued. "
+                "Controleer runnerlabels en repositorytoegang met de eigenaar; "
+                "dit is geen bewijs van runneruitval en geen reden tot CI-rerun.")
+        if parallel_review:
+            attention_status = "parallel_review_while_ci"
+            notes.append(
+                "CI loopt al en er is geen reviewverzoek gezien. "
+                "De bevoegde PR-eigenaar kan parallel een onafhankelijke "
+                "review aanvragen na hercontrole van de actuele GitHub-HEAD. "
+                "Dit dossier vraagt niets automatisch aan.")
+        primary_step = (
+            "Open de bestaande falende exacte-HEAD job: " +
+            direct_failure["name"] + " (PR-eigenaar onderzoekt de oorzaak)."
+            if direct_failure else
+            "Onderzoek de lang queued exacte-HEAD job: " +
+            overdue_queued_jobs[0]["name"] +
+            " (controleer runnerroute; geen automatische herstart)."
+            if old_queued_action else
+            "Vraag onafhankelijke review aan bij huidige PR terwijl de "
+            "bestaande CI loopt (alleen bevoegde eigenaar, HEAD herlezen)."
+            if parallel_review else _markdown(next_step))
+        primary_link = (
+            direct_failure["url"] if direct_failure else
+            overdue_queued_jobs[0]["url"] if old_queued_action else
+            url if parallel_review else
+            url + "/checks" if item.get("blocker") in (
+                "failed_checks_or_legacy_context",
+                "checks_still_running", "check_source_not_terminal") else url)
+        coverage_reasons = projects[project].get("source_coverage_reasons", [])
+        if (type(coverage_reasons) is not list or len(coverage_reasons) > 16
+                or any(type(reason) is not str or
+                       re.fullmatch(r"[a-z0-9_:-]{1,120}", reason) is None
+                       for reason in coverage_reasons)):
+            raise ValueError("invalid project source coverage reasons")
+        coverage_reasons = list(dict.fromkeys(coverage_reasons))
+        if (projects[project].get("sample_complete") is not True or
+                projects[project].get("open_pr_snapshot_stable") is not True or
+                projects[project].get("source_truncated") is True) and not coverage_reasons:
+            coverage_reasons = ["open_pr_inventory_incomplete"]
+        recovery_steps = projects[project].get("source_recovery_steps", [])
+        if (type(recovery_steps) is not list or len(recovery_steps) > 5
+                or any(type(step) is not str or not 1 <= len(step) <= 240
+                       or any(ord(char) < 32 or ord(char) == 127 for char in step)
+                       for step in recovery_steps)):
+            raise ValueError("invalid project source recovery actions")
+        source_warnings = list(notes)
+        if coverage_reasons:
+            source_warnings.append("PR-overlapbrondekking onvolledig: " +
+                                   coverage_reason_text(coverage_reasons))
+        cards.append({
+            "attention_status": attention_status,
+            "attention_label": ATTENTION_LABELS[attention_status],
+            "workstream": workstream,
+            "workstream_label": WORKSTREAM_LABELS[workstream],
+            "operator_action_link": primary_link,
+            "operator_primary_step": _markdown(primary_step),
+            "operator_action_kind": (
+                "inspect_failing_exact_head_job" if direct_failure else
+                "investigate_aged_queued_job" if old_queued_action else
+                "request_parallel_independent_review" if parallel_review else
+                "inspect_existing_checks" if item.get("blocker") in (
+                    "failed_checks_or_legacy_context",
+                    "checks_still_running", "check_source_not_terminal") else
+                "inspect_existing_pr"),
+            "operator_action_authorized": False,
+            "aged_queued_job_attention": overdue_queued_jobs[:8],
+            "aged_queued_job_attention_hidden": (
+                max(0, live_gate.get("queued_check_attention_30m_observed", 0) -
+                       min(8, len(overdue_queued_jobs)))
+                if pinned and not source_stale else None),
+            "parallel_review_request_possible_at_observation": parallel_review,
+            "project": project, "repository": repo, "number": num,
+            "url": url, "files_url": url + "/files",
+            "checks_url": url + "/checks", "review_url": url,
+            "pending_review_requests": requests,
+            "head_sha": head if pinned else None,
+            "base_sha": base if pinned else None,
+            "base_ref": base_ref if pinned else None,
+            "captured_base_ref": captured_base_ref,
+            "observed_base_ref": observed_base_ref,
+            "base_ref_stable_on_second_read": base_ref_stable is True,
+            "category": _markdown(category), "blocker": _markdown(blocker),
+            "human_next_step": _markdown(next_step),
+            "source_current": pinned and not source_stale,
+            "source_exact_head_at_observation": pinned,
+            "rank": item["rank"], "check_links": links,
+            "change_since_previous_observation": history_state,
+            "historical_change_code": history_code,
+            "historical_change_label": history_label,
+            "historical_next_step": _markdown(step_label) if step_label else None,
+            "historical_changed_gate_evidence_categories":
+                historical_changed_categories,
+            "historical_changed_job_links": historical_changed_checks,
+            "historical_changed_job_links_hidden":
+                historical_changed_checks_hidden,
+            "new_evidence_since_previous_sample": history_new,
+            "repeat_hold_deferred": defer_repeat,
+            "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
+            "overlap_paths": [_markdown(p) for p in paths],
+            "overlap_paths_hidden": paths_cut,
+            "source_coverage_reasons": coverage_reasons,
+            "source_recovery_steps": recovery_steps,
+            "source_open_pr_pages": projects[project].get("open_pr_pages_read", 1),
+            "source_open_pr_window_complete": (
+                projects[project].get("open_pr_window_complete") is True),
+            "scope_path_conflicts": scope_conflicts,
+            "collision_scan_omissions": scan_omissions,
+            "related_prs": related, "related_prs_hidden": related_hidden,
+            "unverified_issue_hints": hints,
+            "unverified_issue_hints_hidden": hints_hidden,
+            "peer_head_evidence": peer_evidence,
+            "peer_head_evidence_partial": peer_partial,
+            "source_warnings": source_warnings,
+            "owner_claim_verified": False, "required_checks_verified": False,
+            "merge_authorized": False, "deploy_authorized": False,
+        })
+    # Action-first within existing bounded selected PRs. A human can address
+    # a concrete owner fix without repeatedly reopening an unchanged CI hold.
+    cards.sort(key=lambda x: (
+        WORKSTREAM_ORDER.index(x["workstream"]), x["rank"],
+        x["project"], x["number"]))
+    coordination = _coordination_groups(cards)
+    workstream_summary = {
+        "counts": {key: sum(card["workstream"] == key for card in cards)
+                   for key in WORKSTREAM_ORDER},
+        "selected_pr_count": len(cards),
+        "direct_failing_job_actions": sum(
+            card["operator_action_kind"] == "inspect_failing_exact_head_job"
+            for card in cards),
+        "parallel_independent_review_actions": sum(
+            card["operator_action_kind"] == "request_parallel_independent_review"
+            for card in cards),
+        "aged_queued_job_investigation_actions": sum(
+            card["operator_action_kind"] == "investigate_aged_queued_job"
+            for card in cards),
+        "all_actions_manual": True,
+        "source_only_no_execution_authority": True,
+    }
+    review_summary = {
+        "pending_review_requested_prs": sum(
+            bool(card["pending_review_requests"] and
+                 (card["pending_review_requests"]["individuals"] or
+                  card["pending_review_requests"]["teams"])) for card in cards),
+        "no_open_review_request_observed_prs": sum(
+            card["pending_review_requests"] is not None and
+            card["pending_review_requests"]["individuals"] == 0 and
+            card["pending_review_requests"]["teams"] == 0 for card in cards),
+        "review_request_source_unknown_prs": sum(
+            card["pending_review_requests"] is None for card in cards),
+        "review_requests_are_not_approvals": True,
+        "parallel_review_action_prs": sum(
+            card["parallel_review_request_possible_at_observation"]
+            for card in cards),
+    }
+    queue_sources = board.get("runner_queue_observations", {})
+    if type(queue_sources) is not dict or set(queue_sources) - set(projects):
+        raise ValueError("invalid runner queue project source")
+    for project, source in queue_sources.items():
+        if (type(source) is not dict or source.get("schema") != RUNNER_QUEUE_SCHEMA
+                or source.get("repository") != projects[project]["repository"]
+                or any(source.get(key) is not False for key in (
+                    "runner_health_verified", "claim_authorized",
+                    "merge_authorized", "restart_authorized", "writes_performed"))):
+            raise ValueError("untrusted runner assignment receipt")
+    receipt = {
+        "schema": SCHEMA, "source_observed_at_utc": observed_at,
+        "project_set": list(project_ids), "items": cards,
+        "repository_runner_queue_sources": queue_sources,
+        "selected_pr_coordination": coordination,
+        "review_request_worklist_summary": review_summary,
+        "workstream_summary": workstream_summary,
+        "source_observation_stale": source_stale,
+        "source_freshness_budget_seconds": SOURCE_FRESHNESS_SECONDS,
+        "historical_comparison_status": history_status,
+        "previous_source_observed_at_utc": previous_observed,
+        "historical_observation_interval_seconds": history_interval,
+        "selection_is_not_full_open_pr_backlog":
+            desk["source_not_a_complete_pr_inventory"],
+        "source": "bounded_read_only_github_pr_and_gate_observations",
+        "notion_and_worker_claims_checked": False,
+        "branch_protection_checked": False, "required_checks_checked": False,
+        "review_requirement_checked": False, "production_status_checked": False,
+        "claim_authorized": False, "merge_authorized": False,
+        "deploy_authorized": False, "writes_performed": False,
+    }
+    receipt["source_digest_sha256"] = _digest(receipt)
+    return receipt
+
+
+
+
+def render_csv(bundle):
+    """Bounded private owner worklist for manual spreadsheet/filter workflows.
+
+    Each line remains a sourced observation, never a merge instruction. A
+    potentially active Excel formula is made inert before csv.writer quotes it.
+    """
+    if (type(bundle) is not dict or bundle.get("schema") != SCHEMA
+            or type(bundle.get("items")) is not list
+            or len(bundle["items"]) > MAX_PRS
+            or any(bundle.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("invalid private owner CSV")
+    validate_coordination_receipt(bundle)
+    fields = (
+        "record_type", "project", "pr_number", "pr_url",
+        "coordination_group_number", "coordination_group_source_partial",
+        "observed_selected_scope_peers",
+        "external_peer_prs_to_recheck", "external_peer_prs_to_recheck_count",
+        "attention_status", "attention_label", "workstream", "workstream_label",
+        "operator_action_link", "operator_action_kind",
+        "head_sha_at_observation", "target_branch_at_observation",
+        "target_branch_capture", "target_branch_second_read", "target_branch_stable",
+        "current_source_verified", "source_open_pr_pages",
+        "source_open_pr_window_complete", "rank",
+        "category", "blocker", "human_next_step", "operator_primary_step",
+        "parallel_review_possible", "source_observed_at_utc",
+        "source_sha256", "link", "detail",
+        "pending_review_individuals", "pending_review_teams",
+        "pending_review_request_sha256",
+        "scope_conflict_peer_pr_url", "scope_conflict_peer_head_sha",
+        "scope_conflict_selected_path", "scope_conflict_peer_path",
+        "scope_conflict_pairs_observed", "scope_conflict_relation",
+        "change_since_previous_observation", "new_evidence_since_previous",
+        "repeat_hold_deferred", "historical_next_step",
+        "previous_source_observed_at_utc", "historical_comparison_status",
+        "historical_observation_interval_seconds",
+    )
+    def inert(value):
+        value = "" if value is None else str(value)
+        if any(ord(ch) < 32 and ch not in "\t\n\r" for ch in value):
+            raise ValueError("invalid private CSV cell")
+        if len(value) > 2000:
+            raise ValueError("oversized private CSV cell")
+        # Detect formulas after Unicode whitespace and invisible format marks,
+        # not only ASCII spaces/tabs. CSV quoting alone is not formula safety.
+        return csv_formula_inert(value)
+
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n", quoting=csv.QUOTE_ALL)
+    writer.writerow(fields)
+    observed = bundle["source_observed_at_utc"]
+    source_hash = bundle["source_digest_sha256"]
+    def add(kind, card=None, **extra):
+        row = {
+            "record_type": kind, "source_observed_at_utc": observed,
+            "source_sha256": source_hash,
+            "previous_source_observed_at_utc":
+                bundle["previous_source_observed_at_utc"],
+            "historical_comparison_status":
+                bundle["historical_comparison_status"],
+            "historical_observation_interval_seconds":
+                bundle["historical_observation_interval_seconds"],
+        }
+        if card is not None:
+            row.update({
+                "project": card["project"], "pr_number": card["number"],
+                "coordination_group_number": card["coordination_group_number"],
+                "coordination_group_source_partial": card[
+                    "coordination_group_source_partial"],
+                "observed_selected_scope_peers": len(card["coordination_selected_peer_urls"]),
+                "external_peer_prs_to_recheck": "; ".join(
+                    card["coordination_external_peer_urls"]),
+                "external_peer_prs_to_recheck_count": len(
+                    card["coordination_external_peer_urls"]),
+                "pr_url": _same_repo_url(card["url"], card["repository"]),
+                "head_sha_at_observation": card["head_sha"],
+                "target_branch_at_observation": card["base_ref"],
+                "target_branch_capture": card["captured_base_ref"],
+                "target_branch_second_read": card["observed_base_ref"],
+                "target_branch_stable": card["base_ref_stable_on_second_read"],
+                "current_source_verified": bool(card["source_current"]),
+                "source_open_pr_pages": card.get("source_open_pr_pages", 1),
+                "source_open_pr_window_complete": card.get(
+                    "source_open_pr_window_complete", False),
+                "rank": card["rank"], "category": card["category"],
+                "blocker": card["blocker"],
+                "human_next_step": card["human_next_step"],
+                "operator_primary_step": card["operator_primary_step"],
+                "parallel_review_possible": (
+                    card["parallel_review_request_possible_at_observation"]),
+                "attention_status": card["attention_status"],
+                "attention_label": card["attention_label"],
+                "workstream": card["workstream"],
+                "workstream_label": card["workstream_label"],
+                "operator_action_link": card["operator_action_link"],
+                "operator_action_kind": card["operator_action_kind"],
+                "change_since_previous_observation":
+                    card["change_since_previous_observation"],
+                "new_evidence_since_previous":
+                    card["new_evidence_since_previous_sample"],
+                "repeat_hold_deferred": card["repeat_hold_deferred"],
+                "historical_next_step": card["historical_next_step"],
+                "pending_review_individuals": (
+                    card["pending_review_requests"]["individuals"]
+                    if card["pending_review_requests"] is not None else ""),
+                "pending_review_teams": (
+                    card["pending_review_requests"]["teams"]
+                    if card["pending_review_requests"] is not None else ""),
+                "pending_review_request_sha256": (
+                    card["pending_review_requests"]["evidence_sha256"]
+                    if card["pending_review_requests"] is not None else ""),
+            })
+        row.update(extra)
+        writer.writerow([inert(row.get(key)) for key in fields])
+    for project, queue in bundle.get("repository_runner_queue_sources", {}).items():
+        # Validate canonical workflow links and the non-authorizing receipt in
+        # every export format, including CSV where the shared HTML renderer is
+        # not invoked.
+        runner_queue_lines(queue)
+        repo = queue["repository"]
+        status = queue.get("source_status", "sampled_nonatomic")
+        add("runner_queue_overview", project=project, detail=(
+            "GitHub Actions: " + status +
+            "; GitHub-reported run counts (NOT jobs): " +
+            ", ".join(window["status_requested"] + "=" +
+                      str(window["runs_reported_by_github"]) +
+                      " / sampled=" + str(window["rows_observed"])
+                      for window in queue.get("run_windows", [])) +
+            "; workflow wait coverage=" +
+            str(queue.get("workflow_wait_coverage", "unknown")) +
+            "; no runner health, workflow/claim, CI or merge authority."))
+        for wait in queue.get("workflow_waits", [])[:2]:
+            add("runner_queue_workflow_wait", project=project, link=wait["url"],
+                detail=("GitHub workflow status waiting · HEAD " +
+                        wait["head_sha"][:12] +
+                        " · no job/runner failure proven; owner only."))
+        for job in queue.get("sampled_jobs", [])[:64]:
+            add("runner_queue_job", project=project, link=job["job_url"],
+                detail=job["assignment"] + " · " + job["status_at_read"] +
+                       " · " + job["name"] +
+                       " · labels " + (",".join(job["labels_observed"]) or "UNKNOWN"))
+    add("receipt", detail=(
+        "BOUNDED READ-ONLY SOURCE; NOT a full PR inventory, ownership proof, "
+        "required-CI set, review, merge or deploy approval. "
+        "Historical observation=" +
+        str(bundle.get("source_observation_stale") is True) +
+        "; incomplete selection=" +
+        str(bundle.get("selection_is_not_full_open_pr_backlog") is True)))
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review summary")
+    add("review_request_overview", detail=(
+        "Already requested PRs=" + str(summary["pending_review_requested_prs"]) +
+        "; no request observed PRs=" +
+        str(summary["no_open_review_request_observed_prs"]) +
+        "; unknown PRs=" + str(summary["review_request_source_unknown_prs"]) +
+        "; requests are NOT approvals"))
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("missing read-only operator work queue")
+    for key in WORKSTREAM_ORDER:
+        add("operator_workstream_overview",
+            workstream=key, workstream_label=WORKSTREAM_LABELS[key],
+            detail=str(work["counts"][key]) + " existing PRs in sampled workstream; "
+                   "not owner claim or permission to merge")
+    add("direct_job_actions_overview",
+        detail="Direct GitHub failing-job links=" +
+               str(work["direct_failing_job_actions"]) +
+               "; aged queued-job investigation actions=" +
+               str(work["aged_queued_job_investigation_actions"]) +
+               "; parallel independent human review actions=" +
+               str(work["parallel_independent_review_actions"]) +
+               "; no automatic execution authorized")
+    for card in bundle["items"]:
+        repo = card["repository"]
+        pr_url = _same_repo_url(card["url"], repo)
+        add("pr", card, link=pr_url + "/files", detail=(
+            "CURRENT STATUS NOT VERIFIED" if not card["source_current"]
+            else "EXACT HEAD AT SOURCE MOMENT; NOT MERGE AUTHORITY"))
+        add("operator_next_action", card, link=card["operator_action_link"],
+            detail="Human-only next step: " + card["operator_primary_step"] +
+                   "; source is not a claim or merge clearance")
+        for queued_job in card["aged_queued_job_attention"]:
+            add("queued_job_investigation", card, link=queued_job["url"],
+                detail="GitHub job queued >=30m; " +
+                       str(queued_job["queued_minutes_at_read"]) + " minutes at source. "
+                       "Inspect labels/runner route; no outage or rerun proven. " +
+                       queued_job["name"])
+        if card["aged_queued_job_attention_hidden"]:
+            add("coverage_warning", card, detail="Additional aged queued jobs " +
+                str(card["aged_queued_job_attention_hidden"]) +
+                " outside the bounded preview")
+        add("open_existing_checks", card, link=card["checks_url"],
+            detail="Reopen GitHub PR Checks; verify required exact-head CI, do not retrigger")
+        add("open_existing_review", card, link=card["review_url"],
+            detail="Review GitHub PR; pending requests are NOT submitted approvals")
+        if card["pending_review_requests"] is not None:
+            add("requested_review_state", card, link=card["review_url"],
+                detail="Observed pending review requests, never approvals; source-time only")
+        if card["head_sha"] and card["base_sha"]:
+            add("observed_head_commit", card,
+                link=_commit_link(card, card["head_sha"]),
+                detail="PINNED AT SOURCE MOMENT ONLY; recheck before any merge")
+            add("observed_base_commit", card,
+                link=_commit_link(card, card["base_sha"]),
+                detail="OBSERVED TARGET BASE ONLY; branch may have moved")
+        if card["change_since_previous_observation"] != "not_compared":
+            add("observed_change", card,
+                link=pr_url,
+                detail=("BOUNDED HISTORICAL COMPARISON; NO UNINTERRUPTED "
+                        "STATE OR RELEASE CLEARANCE. Code: " +
+                        str(card["historical_change_code"])))
+        for category in card["historical_changed_gate_evidence_categories"]:
+            add("changed_gate_evidence", card, link=pr_url, detail=category)
+        for change in card["historical_changed_job_links"]:
+            add("changed_check", card, link=change["url"], detail=(
+                change["kind"] + " | " + change["label"] +
+                " | historical source; check current state directly"))
+        if card["historical_changed_job_links_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Historical check changes not shown: " +
+                str(card["historical_changed_job_links_hidden"])))
+        for check in card["check_links"][:MAX_CHECKS]:
+            link = check["url"]
+            if not (re.fullmatch(
+                    re.escape("https://github.com/" + repo + "/runs/") +
+                    r"[1-9][0-9]*", link) or
+                    (card["head_sha"] and link ==
+                     "https://github.com/" + repo + "/commit/" +
+                     card["head_sha"] + "/checks")):
+                raise ValueError("unsafe exact-head check link")
+            add("check", card, link=link, detail=(
+                check["kind"] + " | " + check["name"] + " | " + check["state"]))
+        if card["check_links_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Additional non-green checks not shown: " +
+                str(card["check_links_hidden"])))
+        for peer in card["peer_head_evidence"][:8]:
+            add("peer_head_collision", card,
+                link=_commit_link(card, peer["head_sha_at_observation"]),
+                detail=("Observed shared paths with " + peer["url"] +
+                        " | count=" + str(peer["shared_file_count_observed"]) +
+                        " | partial=" + str(peer["preview_incomplete"]) +
+                        " | source=" + peer["source"] +
+                        "; HEAD may have changed; ownership and merge UNKNOWN"))
+            for path in peer["shared_files_preview"][:MAX_PATHS]:
+                add("peer_shared_file", card,
+                    link=peer["url"], detail=edit_path(path))
+        if card["peer_head_evidence_partial"]:
+            add("coverage_warning", card,
+                detail="Pinned peer HEAD/collision coverage PARTIAL; no clearance")
+        for related in card["related_prs"][:8]:
+            add("related_pr", card, link=_same_repo_url(related, repo),
+                detail="Observed shared-file hint; Git merge conflict UNKNOWN")
+        for conflict in card["scope_path_conflicts"][:24]:
+            if type(conflict) is not dict:
+                raise ValueError("invalid file/directory scope conflict")
+            peer_url = _same_repo_url(conflict.get("peer_pr_url"), repo)
+            peer_head = conflict.get("peer_head_sha")
+            if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                    or conflict.get("relation") not in (
+                        "selected_file_conflicts_with_peer_descendant",
+                        "peer_file_conflicts_with_selected_descendant")):
+                raise ValueError("invalid file/directory peer receipt")
+            add("file_directory_scope_conflict", card, link=peer_url,
+                scope_conflict_peer_pr_url=peer_url,
+                scope_conflict_peer_head_sha=peer_head,
+                scope_conflict_selected_path=edit_path(conflict.get("selected_path")),
+                scope_conflict_peer_path=edit_path(conflict.get("peer_path")),
+                scope_conflict_pairs_observed=conflict["scope_conflict_pairs_observed"],
+                scope_conflict_relation=conflict["relation"],
+                detail="File/directory ancestor collision observed; not merge authority")
+        for path in card["overlap_paths"][:MAX_PATHS]:
+            add("overlap_path", card, detail=edit_path(path))
+        if card["overlap_paths_hidden"]:
+            add("coverage_warning", card, detail=(
+                "Open-PR scope and shared-file evidence incomplete; "
+                "absence is not clearance"))
+        for number in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+            if type(number) is not int or not 0 < number < 100000000:
+                raise ValueError("invalid issue hint")
+            add("issue_hint_unverified", card,
+                link="https://github.com/" + repo + "/issues/" + str(number),
+                detail="PR text only; link identity/status/fix unverified")
+        for action in card.get("source_recovery_steps", []):
+            add("source_recovery_action", card, detail=action)
+        for warning in card["source_warnings"][:16]:
+            add("source_warning", card, detail=warning)
+    data = "\ufeff" + stream.getvalue()
+    if len(data.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private workorder CSV exceeds limit")
+    return data
+
+def render_html(bundle):
+    """One-file, script-free private owner desk; never a live merge console."""
+    if (type(bundle) is not dict or bundle.get("schema") != SCHEMA
+            or type(bundle.get("items")) is not list
+            or len(bundle["items"]) > MAX_PRS
+            or any(bundle.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("invalid private owner desk")
+    validate_coordination_receipt(bundle)
+    def e(value):
+        return escape(str(value), quote=True)
+
+    parts = [
+        "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+        "<title>zSentinel · private PR werkopdrachten</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;background:#f8f9fb;"
+        "color:#17202b;max-width:960px;margin:auto;padding:1.25rem}"
+        "article{background:white;border:1px solid #cbd2dc;border-radius:12px;"
+        "padding:1.2rem;margin:1.1rem 0;overflow-wrap:anywhere}"
+        "a{color:#17529b}a:focus-visible{outline:3px solid #17529b}"
+        "h1,h2,h3{line-height:1.25}ul{padding-left:1.4rem}"
+        "code{overflow-wrap:anywhere}.notice{border-left:5px solid #606b7b;"
+        "padding:.7rem 1rem;background:#e9ecf0;margin:1rem 0}"
+        ".warning{border-left-color:#a34c20;background:#fff0df}"
+        ".meta{color:#425063;font-size:.92rem}"
+        "nav{border:1px solid #cbd2dc;border-radius:12px;padding:.8rem 1.2rem;"
+        "background:#fff;margin:1rem 0}nav ol{margin:.4rem 0;padding-left:1.6rem}"
+        ".tag{display:inline-block;padding:.1rem .45rem;border:1px solid #7a8594;"
+        "border-radius:.35rem;font-size:.85rem}"
+        "article:target{outline:3px solid #17529b;outline-offset:2px}"
+        "@media print{body{max-width:none;padding:0;background:white}"
+        "nav{display:none}article{break-inside:avoid;border-color:#777}"
+        "a{color:inherit;text-decoration:underline}}"
+        "</style></head><body>",
+        "<header><h1>zSentinel · private PR-werkopdrachten</h1>",
+        "<p class=\"meta\">Waargenomen (UTC): " + e(bundle["source_observed_at_utc"]) +
+        " · SHA256: <code>" + e(bundle["source_digest_sha256"]) + "</code></p>",
+        "<p class=\"notice\">Alle acties zijn handmatig. Dit offline dossier bewijst "
+        "geen huidige eigenaar, vereiste CI, onafhankelijke review of merge- en "
+        "deployrecht.</p></header>",
+    ]
+    for source in bundle.get("repository_runner_queue_sources", {}).values():
+        parts.append(runner_queue_html(source))
+    if bundle["previous_source_observed_at_utc"]:
+        parts.append("<p class=\"meta\">Vorige bronopname (UTC): " +
+                     e(bundle["previous_source_observed_at_utc"]) +
+                     " · tussenruimte: " +
+                     e(bundle["historical_observation_interval_seconds"]) +
+                     " seconden · dekking: " +
+                     e(bundle["historical_comparison_status"]) +
+                     "</p><p>Geen bewijs voor een ononderbroken toestand "
+                     "tussen beide meetmomenten.</p>")
+    elif bundle["historical_comparison_status"] == "not_requested":
+        parts.append("<p class=\"meta\">Geen eerder bronbestand ter "
+                     "vergelijking meegegeven.</p>")
+    if bundle.get("source_observation_stale") is True:
+        parts.append("<p class=\"notice warning\"><strong>HISTORISCHE BRON "
+                     "(&gt;6 uur).</strong> HEAD, reviews en CI opnieuw bekijken; "
+                     "geen actuele status bewezen.</p>")
+    if bundle.get("selection_is_not_full_open_pr_backlog") is True:
+        parts.append("<p class=\"notice warning\">ONVOLLEDIGE SELECTIE: "
+                     "meer open PRs en bestandsbotsingen mogelijk.</p>")
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review worklist overview")
+    parts.append(
+        "<section class=\"notice\" aria-label=\"Reviewverzoeken overzicht\">"
+        "<strong>Reviewverzoeken in geselecteerde PRs (geen approvals)</strong>"
+        "<p>Reeds aangevraagd: " + e(summary["pending_review_requested_prs"]) +
+        " · geen open verzoek gezien: " +
+        e(summary["no_open_review_request_observed_prs"]) +
+        " · bron onbekend: " +
+        e(summary["review_request_source_unknown_prs"]) +
+        " · parallel review aan te vragen terwijl CI loopt: " +
+        e(summary["parallel_review_action_prs"]) +
+        ". Controleer GitHub voordat je iets aanvraagt of samenvoegt.</p></section>")
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("invalid operator work queue")
+    parts.append("<section class=\"notice\" aria-label=\"Actie-eerst werkvoorraad\">"
+                 "<strong>Wat is nu uitvoerbaar? (maximaal vier bron-PRs)</strong>"
+                 "<ol>")
+    for key in WORKSTREAM_ORDER:
+        parts.append("<li>" + e(WORKSTREAM_LABELS[key]) + ": <strong>" +
+                     e(work["counts"][key]) + "</strong> PRs</li>")
+    parts.append("</ol><p>Directe falende joblinks: <strong>" +
+                 e(work["direct_failing_job_actions"]) +
+                 "</strong> · ≥30m queued jobs te onderzoeken: <strong>" +
+                 e(work["aged_queued_job_investigation_actions"]) +
+                 "</strong> · vrije menselijke reviewstappen naast CI: <strong>" +
+                 e(work["parallel_independent_review_actions"]) +
+                 "</strong>. Gebaseerd op bronmomenten, niet op actuele eigenaarclaims; "
+                 "geen automatische merge of workflowherstart.</p></section>")
+    coordination = bundle.get("selected_pr_coordination")
+    if (type(coordination) is not dict
+            or coordination.get("merge_authorized") is not False
+            or coordination.get("cross_group_independence_verified") is not False
+            or coordination.get("claim_authorized") is not False
+            or type(coordination.get("groups")) is not list
+            or len(coordination["groups"]) > MAX_PRS):
+        raise ValueError("missing bounded PR coordination groups")
+    parts.append("<section class=\"notice\" aria-label=\"PR scope coördinatie\">"
+                 "<h2>PR-coördinatie op basis van waargenomen bestandscope</h2>"
+                 "<p>Dit zijn GEEN onafhankelijke mergegolven of vrije claims. "
+                 "Overige PRs en branchregels kunnen buiten de bron liggen.</p><ol>")
+    for group in coordination["groups"]:
+        links = [
+            "<a href=\"#" + e(_article_anchor(
+                {"url": member["url"],
+                 "repository": member["url"].split("/pull/")[0]
+                 .removeprefix("https://github.com/")})) + "\">" +
+            e(member["project"]) + " #" + e(member["number"]) + "</a>"
+            for member in group["members"]
+        ]
+        external_links = [
+            "<a href=\"" + e(_same_repo_url(
+                url, PR.fullmatch(group["members"][0]["url"]).group(1))) +
+            "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
+            e("PR #" + PR.fullmatch(url).group(2)) + "</a>"
+            for url in group["external_peer_pr_urls_to_recheck"]
+        ]
+        # Keep the origin of each external hint visible. A union-only list can
+        # hide which selected PR produced the hint when a component has peers.
+        card_by_url = {card["url"]: card for card in bundle["items"]}
+        external_references = []
+        seen_external_references = set()
+        for member in group["members"]:
+            source_card = card_by_url.get(member["url"])
+            if source_card is None:
+                raise ValueError("coordination member has no selected PR card")
+            source_anchor = _article_anchor(source_card)
+            for raw_peer_url in source_card["coordination_external_peer_urls"]:
+                peer_url = _same_repo_url(
+                    raw_peer_url, source_card["repository"])
+                pair = (member["url"], peer_url)
+                if pair in seen_external_references:
+                    continue
+                seen_external_references.add(pair)
+                external_references.append(
+                    "<li><a href=\"#" + e(source_anchor) + "\">" +
+                    e(source_card["project"]) + " #" +
+                    e(source_card["number"]) + "</a> → " +
+                    "<a href=\"" + e(peer_url) +
+                    "\" target=\"_blank\" rel=\"noopener noreferrer\">" +
+                    e("PR #" + PR.fullmatch(peer_url).group(2)) + "</a></li>")
+        parts.append("<li>Groep " + e(group["group_number"]) + ": " +
+                     ", ".join(links) + " · " +
+                     e(group["observed_selected_scope_collisions"]) +
+                     " vastgepinde botsingsrelaties" +
+                     (" · <strong>eigenaren afstemmen</strong>"
+                      if group["owner_coordination_recommended"] else
+                      " · geen onderlinge botsing waargenomen, niet bewezen vrij") +
+                     (" · BRON ONVOLLEDIG: hercontrole nodig"
+                      if group["source_partial_or_unpinned"] else "") +
+                     (" · andere PRs opnieuw controleren: " + ", ".join(external_links)
+                      if external_links else "") +
+                     (" (aanvullende PRs verborgen)" if group[
+                         "external_peer_preview_truncated"] else "") +
+                     ("<ul class=\"external-peer-provenance\">" +
+                      "".join(external_references[:16]) + "</ul>"
+                      if external_references else "") +
+                     ("<p>Meer herkomstrelaties verborgen; bekijk de CSV per PR.</p>"
+                      if len(external_references) > 16 else "") + "</li>")
+    parts.append("</ol>" +
+                 ("<p>Bron deels onvolledig of peer-HEAD niet gelijk: "
+                  "hercontrole noodzakelijk.</p>"
+                  if coordination["source_partial_or_unpinned"] else "") +
+                 "</section>")
+    if bundle["items"]:
+        change_labels = {
+            "changed_gate_receipt": "Gatebewijs gewijzigd bij dezelfde HEAD",
+            "changed_or_uncertain_head": "HEAD veranderd of bron onzeker",
+            "incomplete_gate_source": "Vergelijking onvolledig",
+            "newly_selected_not_new_pr": "Nieuw in selectie, niet bewezen nieuwe PR",
+            "unchanged_two_snapshots": "Zelfde HEAD/gates in twee opnames",
+            "not_compared": "Geen historische vergelijking",
+        }
+        counts = {key: 0 for key in change_labels}
+        for card in bundle["items"]:
+            state = card["change_since_previous_observation"]
+            if state not in counts:
+                raise ValueError("untrusted comparison state")
+            counts[state] += 1
+        parts.append("<section class=\"notice\" aria-label=\"Historische wijzigingen\">"
+                     "<strong>Veranderingen sinds vorige opname (maximaal "
+                     "twee momentopnames; geen continu toezicht)</strong><ul>")
+        for state, label in change_labels.items():
+            parts.append("<li>" + e(label) + ": <strong>" +
+                         str(counts[state]) + "</strong></li>")
+        parts.append("</ul><p>Een ongewijzigde HOLD hoeft niet direct opnieuw "
+                     "onderzocht te worden, maar is geen releasevrijgave; "
+                     "een ontbrekende vergelijking is geen bewijs van rust.</p>"
+                     "</section>")
+        attention_counts = {key: 0 for key in ATTENTION_LABELS}
+        for card in bundle["items"]:
+            state = card["attention_status"]
+            if state not in attention_counts:
+                raise ValueError("unknown operator action disposition")
+            attention_counts[state] += 1
+        parts.append("<section aria-label=\"Werkvolgorde op basis van bron\" class=\"notice\">"
+                     "<strong>Wat nu aandacht vraagt (bronobservatie, geen vrijgave)</strong><ul>")
+        for state, label in ATTENTION_LABELS.items():
+            parts.append("<li>" + e(label) + ": <strong>" +
+                         str(attention_counts[state]) + "</strong></li>")
+        parts.append("</ul></section>")
+        parts.append("<nav aria-label=\"Inhoud PR-werkopdrachten\"><strong>"
+                     "Werkvolgorde · " + str(len(bundle["items"])) +
+                     " geselecteerde PRs (geen volledige repositorydekking)"
+                     "</strong>")
+        for workstream in WORKSTREAM_ORDER:
+            group = [row for row in bundle["items"]
+                     if row["workstream"] == workstream]
+            if not group:
+                continue
+            parts.append("<h3>" + e(WORKSTREAM_LABELS[workstream]) +
+                         " (" + str(len(group)) + ")</h3><ol>")
+            for summary in group:
+                parts.append("<li><a href=\"#" + e(_article_anchor(summary)) + "\">" +
+                             e(summary["project"]) + " · PR #" +
+                             e(summary["number"]) + "</a> — " +
+                             e(summary["category"]) + "</li>")
+            parts.append("</ol>")
+        parts.append("</nav><main>")
+    for card in bundle["items"]:
+        repo = card["repository"]
+        url = _same_repo_url(card["url"], repo)
+        files = url + "/files"
+        branch_observation = ""
+        if ((not card["source_current"] or not card["base_ref_stable_on_second_read"])
+                and (card["captured_base_ref"] or card["observed_base_ref"])):
+            branch_observation = (
+                "<br>Doelbranch capture → tweede read: <code>" +
+                e(card["captured_base_ref"] or "ONBEKEND") + "</code> → <code>" +
+                e(card["observed_base_ref"] or "ONBEKEND") +
+                "</code> · branch stabiel: " +
+                ("ja" if card["base_ref_stable_on_second_read"] else "nee"))
+        parts += [
+            "<article id=\"" + e(_article_anchor(card)) + "\"><h2>" +
+            e(card["project"]) + " · <a target=\"_blank\" "
+            "rel=\"noopener noreferrer\" href=\"" + e(url) + "\">PR #" +
+            e(card["number"]) + "</a></h2>",
+            "<p><span class=\"tag\">" +
+            ("HISTORISCH of HEAD ONBEKEND" if not card["source_current"]
+             else "HEAD vastgepind bij recente bronopname") +
+            "</span> · rang " + e(card["rank"]) + "</p>",
+            "<p><strong>PR-inventaris:</strong> " +
+            e(card.get("source_open_pr_pages", 1)) +
+            " opeenvolgende pagina('s) · lijstbron: " +
+            ("VOLLEDIG" if card.get("source_open_pr_window_complete") is True
+             else "ONVOLLEDIG/ONBEKEND") +
+            ". Claims en mergegates apart controleren.</p>",
+            "<p><strong>Vergelijking:</strong> " +
+            e(card["historical_change_label"]) +
+            (" · <strong>Ongewijzigde HOLD: laat liggen tot nieuw bewijs</strong>"
+             if card["repeat_hold_deferred"] else "") +
+            "</p>",
+            "<p><strong>Operatorwerk:</strong> " + e(card["workstream_label"]) +
+            " (handmatig; bronobservatie)</p>" +
+            "<p><strong>Bestaande gatevervolgstap:</strong> " +
+            e(card["attention_label"]) + "</p>" +
+            "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
+            "<strong>Menselijke vervolgstap volgens bron:</strong> " +
+            e(card["human_next_step"]) + "</p>" +
+            ("<p><strong>Nu onafhankelijk uitvoerbaar:</strong> " +
+             e(card["operator_primary_step"]) +
+             " (geen automatische reviewaanvraag)</p>"
+             if card["parallel_review_request_possible_at_observation"]
+             else ""),
+            "<p><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["operator_action_link"]) + "\">Bekijk volgende menselijke actie bij GitHub</a></p>",
+            "<p><strong>GitHub bron bekijken:</strong> " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["review_url"]) + "\">PR en reviews</a> · " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(card["checks_url"]) + "\">Huidige checks</a> · " +
+            "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+            e(files) + "\">Gewijzigde bestanden</a></p>",
+            ("<p><strong>Bij bronmoment aangevraagde reviews:</strong> " +
+             e(card["pending_review_requests"]["individuals"]) +
+             " personen, " +
+             e(card["pending_review_requests"]["teams"]) +
+             " teams. <strong>Een verzoek is géén approval.</strong></p>"
+             if card["pending_review_requests"] is not None else
+             "<p>Reviewverzoeken: onbekend (geen betrouwbare exact-HEAD bron).</p>"),
+            "<p class=\"meta\">Categorie: " + e(card["category"]) +
+            " · HEAD bij observatie: <code>" + e(card["head_sha"] or "ONBEKEND") +
+            "</code><br>Doelbranch: <code>" + e(card["base_ref"] or "ONBEKEND") +
+            "</code><br>Doelbasis: <code>" + e(card["base_sha"] or "ONBEKEND") +
+            "</code>" + branch_observation + " · <a target=\"_blank\" rel=\"noopener noreferrer\" "
+            "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
+        ]
+        if card["head_sha"] and card["base_sha"]:
+            parts.append("<p class=\"meta\">Bronlinks: "
+                         "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                         e(_commit_link(card, card["head_sha"])) +
+                         "\">Geobserveerde HEAD-commit</a> · "
+                         "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                         e(_commit_link(card, card["base_sha"])) +
+                         "\">Geobserveerde doelbranchbasis</a>. "
+                         "Historische links, geen gatevrijgave.</p>")
+        if card.get("historical_next_step"):
+            parts.append("<p><strong>Vervolg op bronvergelijking:</strong> " +
+                         e(card["historical_next_step"]) +
+                         "</p><p class=\"meta\">Momentopnames bewijzen niet wat "
+                         "tussen de opnames gebeurde.</p>")
+        if card["historical_changed_gate_evidence_categories"]:
+            parts.append("<h3>Gewijzigde gatebewijssoorten</h3><ul>")
+            for evidence in card["historical_changed_gate_evidence_categories"]:
+                parts.append("<li>" + e(evidence) + "</li>")
+            parts.append("</ul>")
+        if card["historical_changed_job_links"]:
+            parts.append("<h3>Checkverschillen tussen twee bronmomenten</h3><ul>")
+            for change in card["historical_changed_job_links"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(change["url"]) + "\">" +
+                             e(change["label"]) + "</a> · " +
+                             e(change["kind"]) + "</li>")
+            parts.append("</ul>")
+        if card["historical_changed_job_links_hidden"]:
+            parts.append("<p class=\"notice warning\">Nog " +
+                         e(card["historical_changed_job_links_hidden"]) +
+                         " historische checkverschillen niet getoond; geen "
+                         "volledige gate-inventaris.</p>")
+        if card.get("aged_queued_job_attention"):
+            parts.append("<h3>Lang queued GitHub-jobs · controleer runnerroute</h3><ul>")
+            for job in card["aged_queued_job_attention"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(job["url"]) + "\">" + e(job["name"]) + "</a> · " +
+                             e(job["queued_minutes_at_read"]) +
+                             " minuten queued bij bronopname; geen runneruitval bewezen</li>")
+            parts.append("</ul>")
+        if card.get("check_links"):
+            parts.append("<h3>Niet-groene checkbronnen</h3><ul>")
+            for check in card["check_links"]:
+                link = check["url"]
+                # The collector admits only canonical check-run or pinned
+                # commit-check links. Recheck before HTML interpolation.
+                if not (re.fullmatch(
+                        re.escape("https://github.com/" + repo + "/runs/") +
+                        r"[1-9][0-9]*", link) or
+                        (card["head_sha"] and link ==
+                         "https://github.com/" + repo + "/commit/" +
+                         card["head_sha"] + "/checks")):
+                    raise ValueError("unsafe private check link")
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(link) + "\">" + e(check["name"]) +
+                             "</a> · " + e(check["state"]) + "</li>")
+            parts.append("</ul>")
+        if card.get("check_links_hidden"):
+            parts.append("<p class=\"notice warning\">Nog " +
+                         e(card["check_links_hidden"]) +
+                         " niet-groene checkbronnen buiten deze preview; "
+                         "dit is geen volledige CI-inventaris.</p>")
+        if card.get("peer_head_evidence"):
+            parts.append("<h3>Gedeelde bestanden met exacte geobserveerde peer-HEAD</h3>"
+                         "<p class=\"meta\">Een snapshot van bronbestanden; "
+                         "geen Git-conflict-, eigenaar- of mergevrijgave.</p><ul>")
+            for peer in card["peer_head_evidence"][:8]:
+                peer_url = _same_repo_url(peer["url"], repo)
+                peer_sha = peer["head_sha_at_observation"]
+                peer_commit = _commit_link(card, peer_sha)
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(peer_url) + "\">" + e(peer_url) + "</a> · "
+                             "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+                             e(peer_commit) + "\">HEAD " + e(peer_sha[:12]) +
+                             "</a> · waargenomen gedeeld: " +
+                             str(peer["shared_file_count_observed"]) +
+                             (" · padenpreview onvolledig" if peer["preview_incomplete"] else "") +
+                             "<ul>")
+                for path in peer["shared_files_preview"][:MAX_PATHS]:
+                    parts.append("<li><code>" + e(path) + "</code></li>")
+                parts.append("</ul></li>")
+            parts.append("</ul>")
+        if card.get("peer_head_evidence_partial"):
+            parts.append("<p class=\"notice warning\">Peer-HEAD-brondekking "
+                         "ONVOLLEDIG; ontbrekende botsingen niet uitgesloten.</p>")
+        if card.get("related_prs"):
+            parts.append("<h3>Gerelateerde bron-PRs (geen mergeconflictbewijs)</h3><ul>")
+            for related in card["related_prs"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(_same_repo_url(related, repo)) +
+                             "\">" + e(related) + "</a></li>")
+            parts.append("</ul>")
+        if card.get("scope_path_conflicts"):
+            parts.append("<h3>Bestand/map-ancestorconflicten (geen mergevrijgave)</h3><ul>")
+            for conflict in card["scope_path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    raise ValueError("invalid HTML file/directory scope conflict")
+                peer_url = _same_repo_url(conflict.get("peer_pr_url"), repo)
+                peer_head = conflict.get("peer_head_sha")
+                relation = conflict.get("relation")
+                if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                        or relation not in ("selected_file_conflicts_with_peer_descendant",
+                                            "peer_file_conflicts_with_selected_descendant")):
+                    raise ValueError("invalid HTML file/directory peer receipt")
+                selected_path = edit_path(conflict.get("selected_path"))
+                peer_path = edit_path(conflict.get("peer_path"))
+                parts.append("<li><a rel=\"noopener noreferrer\" href=\"" + e(peer_url) +
+                             "\">Peer PR</a> · HEAD <code>" + e(peer_head[:12]) +
+                             "</code> · <code>" + e(selected_path) + "</code> ↔ <code>" +
+                             e(peer_path) + "</code> · " + e(relation) + "</li>")
+            parts.append("</ul><p class=\"notice\">Dit is een bestand/map-scopeconflict, geen bewijs van een Git-mergeconflict of eigenaar.</p>")
+        if card.get("overlap_paths"):
+            parts.append("<h3>Waargenomen gedeelde paden</h3><ul>")
+            for path in card["overlap_paths"]:
+                parts.append("<li><code>" + e(path) + "</code></li>")
+            parts.append("</ul>")
+        if card.get("unverified_issue_hints"):
+            parts.append("<h3>Ongeverifieerde issuevermeldingen</h3>"
+                         "<p>Nummers uit PR-tekst, niet uit gecontroleerde "
+                         "issuebron. Link kan ook een PR of ontbrekend nummer "
+                         "openen.</p><ul>")
+            for n in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+                if type(n) is not int or not 1 <= n < 100000000:
+                    raise ValueError("untrusted issue number hint")
+                issue_url = "https://github.com/" + repo + "/issues/" + str(n)
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(issue_url) + "\">Controleer nummer #" +
+                             str(n) + "</a> (onbevestigd)</li>")
+            parts.append("</ul>")
+        if card.get("overlap_paths_hidden"):
+            parts.append("<p class=\"notice warning\">"
+                         "Niet alle mogelijke gedeelde bestandspaden zijn "
+                         "getoond. Geen conflictvrije conclusie.</p>")
+        parts.append("<details><summary>Controlepunten vóór eventuele merge"
+                     " (altijd handmatig)</summary><ol>"
+                     "<li>Herlees exacte HEAD en basis en controleer actieve "
+                     "claim/werkafspraak.</li>"
+                     "<li>Controleer alle werkelijk verplichte exact-HEAD "
+                     "CI-checks, niet alleen deze steekproef.</li>"
+                     "<li>Vereiste onafhankelijke review en beschermde branchregels "
+                     "moeten voldaan zijn.</li>"
+                     "<li>Bevoegde releaser beslist over merge/deploy; geen "
+                     "automatische acties vanuit dit dossier.</li>"
+                     "</ol></details>")
+        if card.get("source_recovery_steps"):
+            parts.append("<h3>Veilige volgende bronacties</h3><ul>")
+            for action in card["source_recovery_steps"]:
+                parts.append("<li>" + e(action) + "</li>")
+            parts.append("</ul><p class='meta'>Geen wijziging van claims, CI of mergebeleid.</p>")
+        if card.get("source_warnings"):
+            parts.append("<h3>Bronwaarschuwingen</h3><ul>")
+            for warning in card["source_warnings"]:
+                parts.append("<li>" + e(warning) + "</li>")
+            parts.append("</ul>")
+        parts.append("<p class=\"meta\">Geen claim, workflowherstart, merge of "
+                     "deploy geautoriseerd.</p></article>")
+    if bundle["items"]:
+        parts.append("</main>")
+    else:
+        parts.append("<p>Geen geselecteerde brongebonden PR-werkopdrachten.</p>")
+    parts.append("</body></html>\n")
+    output = "".join(parts)
+    if len(output.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private workorder HTML exceeds limit")
+    return output
+
+
+def render_markdown(bundle):
+    if (type(bundle) is not dict or bundle.get("schema") != SCHEMA
+            or any(bundle.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("invalid owner workorder bundle")
+    validate_coordination_receipt(bundle)
+    lines = [
+        "# zSentinel · privé-werkopdrachten bestaande product-PRs",
+        "",
+        "Bronmoment (UTC): " + bundle["source_observed_at_utc"],
+        ("Vorige bronmoment (UTC): " +
+         (bundle["previous_source_observed_at_utc"] or "niet meegegeven") +
+         " · vergelijkingsdekking: " + bundle["historical_comparison_status"]),
+        "Bronbewijs SHA256: `" + bundle["source_digest_sha256"] + "`",
+        "",
+        "**Dit is uitsluitend een handmatige overdracht.** Opgeslagen GitHub-bewijs "
+        "is niet live, geen worker-claim, review, CI-required-set, "
+        "branch protection, merge- of deploytoestemming.",
+        "",
+    ]
+    for project, source in bundle.get("repository_runner_queue_sources", {}).items():
+        lines.extend(["", "## Runnerwachtrij · " + project] +
+                     ["- " + line for line in runner_queue_lines(source)])
+    if bundle.get("source_observation_stale") is True:
+        lines.append(
+            "**HISTORISCHE BRON (>6 uur):** geen actuele PR-/HEAD-/"
+            "review-/CI-toestand bewezen. Bronlinks zijn voor hercontrole, "
+            "niet voor mergebesluit.\n")
+    if bundle["selection_is_not_full_open_pr_backlog"]:
+        lines.append("**ONVOLLEDIGE SELECTIE:** overige open PRs/botsingen onbekend.\n")
+    summary = bundle.get("review_request_worklist_summary")
+    if type(summary) is not dict or summary.get("review_requests_are_not_approvals") is not True:
+        raise ValueError("missing source-bound review worklist overview")
+    lines += [
+        "## Reviewverzoeken in bestaande PRs",
+        "Aangevraagd bij reviewers: " + str(summary["pending_review_requested_prs"]) +
+        " PRs · geen open verzoek gezien: " +
+        str(summary["no_open_review_request_observed_prs"]) +
+        " PRs · onbekende bron: " +
+        str(summary["review_request_source_unknown_prs"]) + " PRs.",
+        "Parallelle reviewactie beschikbaar naast bestaande CI: " +
+        str(summary["parallel_review_action_prs"]) + " PRs (alleen eigenaar).",
+        "Een aangevraagde review is nooit een onafhankelijke goedkeuring.",
+        "",
+    ]
+    work = bundle.get("workstream_summary")
+    if (type(work) is not dict or work.get("all_actions_manual") is not True or
+            work.get("source_only_no_execution_authority") is not True):
+        raise ValueError("missing operator action queue")
+    lines += ["## Werkvoorraad: eerst uitvoerbare acties"]
+    for key in WORKSTREAM_ORDER:
+        lines.append("- " + WORKSTREAM_LABELS[key] + ": **" +
+                     str(work["counts"][key]) + "** bestaande PRs")
+    lines += [
+        "Directe links naar falende exacte-HEAD jobs: " +
+        str(work["direct_failing_job_actions"]) +
+        " · ≥30m queued jobs te onderzoeken: " +
+        str(work["aged_queued_job_investigation_actions"]) +
+        " · aparte handmatige reviewacties naast CI: " +
+        str(work["parallel_independent_review_actions"]) + ".",
+        "Acties zijn adviezen uit begrensde GitHub-bronwaarnemingen; "
+        "actieve claims, verplichte review en mergebevoegdheid blijven onbekend.",
+        ""]
+    coordination = bundle.get("selected_pr_coordination")
+    if (type(coordination) is not dict or
+            coordination.get("cross_group_independence_verified") is not False):
+        raise ValueError("invalid owner coordination worklist")
+    lines += ["## Geselecteerde PR-coördinatie · geen mergegolven", ""]
+    for group in coordination["groups"]:
+        mentions = ", ".join(
+            "[" + member["project"] + " #" + str(member["number"]) + "](" +
+            member["url"] + ")" for member in group["members"])
+        lines.append("- Groep " + str(group["group_number"]) + ": " +
+                     mentions + " · " +
+                     str(group["observed_selected_scope_collisions"]) +
+                     " geobserveerde scopebotsingen; " +
+                     ("BRON ONVOLLEDIG, hercontrole nodig; " if group[
+                         "source_partial_or_unpinned"] else "") +
+                     ("afstemmen met eigenaren" if group[
+                         "owner_coordination_recommended"] else
+                      "geen botsing in geselecteerde bron, niet bewezen vrij"))
+        if group["external_peer_pr_urls_to_recheck"]:
+            lines.append("  - Externe PR-kandidaten buiten selectie: " +
+                         ", ".join("[" + url.rsplit("/", 1)[-1] + "](" + url + ")"
+                                   for url in group["external_peer_pr_urls_to_recheck"]) +
+                         (" (extra bronnen verborgen)" if group[
+                             "external_peer_preview_truncated"] else "") +
+                         ". Actuele HEAD/claim blijft onbekend.")
+    lines += [
+        ("Bron onvolledig of peer-HEAD gewijzigd; aanvullende hercontrole nodig."
+         if coordination["source_partial_or_unpinned"] else
+         "Geselecteerde bron bevat geen bewijs over PRs buiten de steekproef."),
+        "Geen actieve claim, PR-onafhankelijkheid, merge of deploy geautoriseerd.", "",
+    ]
+    change_counts = {
+        "changed_gate_receipt": 0, "changed_or_uncertain_head": 0,
+        "incomplete_gate_source": 0, "newly_selected_not_new_pr": 0,
+        "unchanged_two_snapshots": 0, "not_compared": 0,
+    }
+    for card in bundle["items"]:
+        state = card["change_since_previous_observation"]
+        if state not in change_counts:
+            raise ValueError("untrusted historical PR comparison state")
+        change_counts[state] += 1
+    lines += [
+        "## Veranderingen sinds voorgaande PR-opname",
+        "Gatebewijs gewijzigd: " + str(change_counts["changed_gate_receipt"]) +
+        " · HEAD onzeker: " + str(change_counts["changed_or_uncertain_head"]) +
+        " · onvolledige gatebron: " + str(change_counts["incomplete_gate_source"]) +
+        " · nieuw geselecteerd: " + str(change_counts["newly_selected_not_new_pr"]) +
+        " · ongewijzigd in twee opnames: " +
+        str(change_counts["unchanged_two_snapshots"]) +
+        " · niet vergeleken: " + str(change_counts["not_compared"]),
+        "Twee momentopnames, geen doorlopend toezicht of CI-/reviewvrijgave.", "",
+    ]
+    for card in bundle["items"]:
+        lines += [
+            "## " + card["project"] + " · [PR #" + str(card["number"]) +
+            "](" + card["url"] + ")",
+            "",
+            "**Huidige blokkade:** " + card["blocker"],
+            "**Open-PR-bronvenster:** " +
+            str(card.get("source_open_pr_pages", 1)) + " pagina('s); " +
+            ("volledig" if card.get("source_open_pr_window_complete") is True
+             else "onvolledig/onbekend") +
+            " (niet hetzelfde als claim-/mergeautorisatie)",
+            "**Eerstvolgende menselijke actie:** " + card["operator_primary_step"],
+            "**Brongebaseerde gateactie:** " + card["human_next_step"],
+            "**Werkstroom:** " + card["workstream_label"] +
+            " (uitvoeren alleen na eigenaarstoestemming)",
+            "**Open menselijke actie bij GitHub:** " + card["operator_action_link"],
+            "**Open huidige GitHub-checks:** " + card["checks_url"],
+            "**Open PR/reviews:** " + card["review_url"],
+            "**Aangevraagde onafhankelijke reviews op bronmoment:** " +
+            (str(card["pending_review_requests"]["individuals"]) +
+             " personen, " + str(card["pending_review_requests"]["teams"]) +
+             " teams (geen approval)" if card["pending_review_requests"] is not None
+             else "ONBEKEND (geen exact-HEAD bron)"),
+            "**Werkvolgorde volgens bronopname:** " + card["attention_label"] +
+            " (geen merge-/claimtoestemming)",
+            "**Categorie:** " + card["category"],
+            "**Wijziging sinds vorige opname:** " +
+            card["historical_change_label"] +
+            (" · HOLD pas herbeoordelen bij nieuw bewijs"
+             if card["repeat_hold_deferred"] else "") +
+            (" · herbeoordelen; geen bewezen wijziging"
+             if card["change_since_previous_observation"] in (
+                 "changed_or_uncertain_head", "incomplete_gate_source",
+                 "newly_selected_not_new_pr") else ""),
+            "**Exact PR HEAD:** " + (
+                "[`" + card["head_sha"] + "`](" +
+                _commit_link(card, card["head_sha"]) + ")" if card["head_sha"]
+                else "ONBEKEND"),
+            "**Doelbranch:** " + (card["base_ref"] or "ONBEKEND"),
+            "**Exact doelbranchbasis:** " + (
+                "[`" + card["base_sha"] + "`](" +
+                _commit_link(card, card["base_sha"]) + ")" if card["base_sha"]
+                else "ONBEKEND"),
+            "**Bestandsdiff:** " + card["files_url"],
+            "",
+            "### Verifieer vóór verandering of merge",
+            "1. Open de PR, verifieer opnieuw de HEAD en huidige eigenaar/lease.",
+            "2. Inspecteer de bestaande verplicht gestelde exacte-HEAD CI en onafhankelijke review.",
+            "3. Respecteer branch protection, bron-/onderzoekintegriteit en de release-autorisatie.",
+            "4. Bewaar de bestaande workerclaim; neem geen werk van een andere eigenaar over.",
+            "",
+        ]
+        if ((not card["source_current"] or not card["base_ref_stable_on_second_read"]) and
+                (card["captured_base_ref"] or card["observed_base_ref"])):
+            lines.append("**Doelbranch capture → tweede read:** " +
+                         (card["captured_base_ref"] or "ONBEKEND") + " → " +
+                         (card["observed_base_ref"] or "ONBEKEND") +
+                         " (doelbranch stabiel: " +
+                         ("ja" if card["base_ref_stable_on_second_read"] else "nee") +
+                         "; volledige PR-bron niet mergeklaar).")
+        if card["historical_next_step"]:
+            lines.append("**Historische vervolgstap:** " +
+                         card["historical_next_step"] +
+                         " (geen bewijs over tussenliggende periode).\n")
+        if card["historical_changed_gate_evidence_categories"]:
+            lines.append("### Veranderd gatebewijs")
+            for category in card["historical_changed_gate_evidence_categories"]:
+                lines.append("- " + category)
+            lines.append("")
+        if card["historical_changed_job_links"]:
+            lines.append("### Historisch waargenomen checkverschillen")
+            for change in card["historical_changed_job_links"]:
+                lines.append("- " + change["kind"] + ": [" + change["label"] +
+                             "](" + change["url"] + ")")
+            lines.append("")
+        if card["historical_changed_job_links_hidden"]:
+            lines.append("Meer historische checkverschillen buiten voorvertoning: " +
+                         str(card["historical_changed_job_links_hidden"]) +
+                         " (geen volledige gatebron).\n")
+        if card["aged_queued_job_attention"]:
+            lines.append("### Lang queued GitHub-jobs · onderzoek de runnerroute")
+            for job in card["aged_queued_job_attention"]:
+                lines.append("- [" + job["name"] + "](" + job["url"] + ") · " +
+                             str(job["queued_minutes_at_read"]) +
+                             " minuten op het bronmoment; geen runneruitval bewezen")
+            lines.append("")
+        if card["check_links"]:
+            lines.append("### Directe niet-groene check-/statusbronnen")
+            for check in card["check_links"]:
+                lines.append("- " + check["kind"] + ": [" + check["name"] +
+                             "](" + check["url"] + ") · " + check["state"])
+            lines.append("")
+        if card["check_links_hidden"]:
+            lines.append("Extra checks buiten huidige bronvoorvertoning: " +
+                         str(card["check_links_hidden"]) + "\n")
+        if card["peer_head_evidence"]:
+            lines.append("### Geobserveerde botsende PR-commits (geen actuele vrijgave)")
+            for peer in card["peer_head_evidence"][:8]:
+                lines.append("- [" + peer["url"] + "](" + peer["url"] + ")" +
+                             " · [HEAD `" + peer["head_sha_at_observation"][:12] +
+                             "`](" + _commit_link(card, peer["head_sha_at_observation"]) +
+                             ") · " + str(peer["shared_file_count_observed"]) +
+                             " gedeelde bestandspaden in bron" +
+                             (" (preview onvolledig)" if peer["preview_incomplete"] else ""))
+                for path in peer["shared_files_preview"][:MAX_PATHS]:
+                    lines.append("  - `" + path.replace("`", "\\`") + "`")
+            lines.append("")
+        if card["peer_head_evidence_partial"]:
+            lines.append("**ONVOLLEDIGE peer-HEAD bron:** geen conflictvrije conclusie.\n")
+        if card.get("scope_path_conflicts"):
+            lines.append("### Bestand/map-ancestorconflicten (geen mergevrijgave)")
+            for conflict in card["scope_path_conflicts"][:24]:
+                if type(conflict) is not dict:
+                    raise ValueError("invalid Markdown file/directory scope conflict")
+                peer_url = _same_repo_url(conflict.get("peer_pr_url"), card["repository"])
+                peer_head = conflict.get("peer_head_sha")
+                relation = conflict.get("relation")
+                if (peer_url is None or type(peer_head) is not str or SHA.fullmatch(peer_head) is None
+                        or relation not in ("selected_file_conflicts_with_peer_descendant",
+                                            "peer_file_conflicts_with_selected_descendant")):
+                    raise ValueError("invalid Markdown file/directory peer receipt")
+                selected_path = edit_path(conflict.get("selected_path"))
+                peer_path = edit_path(conflict.get("peer_path"))
+                lines.append("- [Peer PR](" + peer_url + ") · HEAD `" + peer_head[:12] +
+                             "` · `" + selected_path.replace("`", "\\`") + "` ↔ `" +
+                             peer_path.replace("`", "\\`") + "` · " + relation)
+            lines.append("Geen eigenaar-, lease- of mergeautorisatie volgt uit deze padrelatie.\n")
+        if card["overlap_paths"] or card["related_prs"]:
+            lines.append("### Bestandscope-overlap (geen bevestigd Git-conflict)")
+            for path in card["overlap_paths"]:
+                lines.append("- `" + path.replace("`", "\\`") + "`")
+            for other in card["related_prs"]:
+                lines.append("- Mogelijk gerelateerde PR: " + other)
+            lines.append("")
+        if card["unverified_issue_hints"]:
+            issue_links = []
+            for n in card["unverified_issue_hints"][:MAX_ISSUE_HINTS]:
+                if type(n) is not int or not 1 <= n < 100000000:
+                    raise ValueError("untrusted issue number hint")
+                issue_links.append("[nummer #" + str(n) + "](" +
+                                   "https://github.com/" + card["repository"] +
+                                   "/issues/" + str(n) + ")")
+            lines.append("**Ongeverifieerde issuevermeldingen:** " +
+                         ", ".join(issue_links) +
+                         " (tekstverwijzingen, link kan naar PR of ontbrekend "
+                         "nummer leiden; geen fixbewijs).\n")
+        for action in card.get("source_recovery_steps", []):
+            lines.append("**Volgende bronactie (handmatig):** " + action)
+        for warning in card["source_warnings"]:
+            lines.append("**Let op:** " + warning)
+        lines += ["", "---", ""]
+    if not bundle["items"]:
+        lines.append("Geen geselecteerde brongebonden PR-werkopdrachten.\n")
+    lines.append("Geen automatische claim, CI-dispatch, check-bypass, merge of deploy.\n")
+    result = "\n".join(lines)
+    if len(result.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private workorder Markdown exceeds limit")
+    return result

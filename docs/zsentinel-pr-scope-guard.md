@@ -1,0 +1,3670 @@
+# zSentinel — live PR-bestandsscope bij projectherstel
+
+## 22 oktober · afgekapt redenoverzicht blijft expliciet onvolledig
+
+De scope-guard toont maximaal 16 bronbeperkingen per samenvatting. Als de bron meer redenen bevat, vermeldt de tekst nu hoeveel items buiten de weergavelimiet vallen en dat de volledige actuele bron moet worden geïnspecteerd. Ongeldige redenitems worden apart geteld in plaats van stilzwijgend te verdwijnen.
+
+De eigenaaracties verwerken maximaal 64 reden-codes. Zodra de lijst groter is dan de weergavelimiet, komt er een expliciete waarschuwing vóór de specifieke herstelacties; boven 64 items vermeldt de uitvoer dat niet alle codes zijn verwerkt. De actie-uitvoer is zelf ook begrensd op vijf regels: wanneer extra herstelacties daardoor wegvallen, meldt de uitvoer hoeveel niet zijn getoond. De begrenzing houdt verwerking en uitvoer eindig, maar een afgekapt overzicht kan nooit als bewijs van een conflictvrije PR of als mergevrijgave gelden. De onderliggende bronvolledigheid wordt niet opgewaardeerd door deze weergavefix.
+
+## 22 oktober · volledige PR-dekking is óók volledige conflictvoorvertoning
+
+De bestaande live scopegraph kon een **volledige PR-steekproef** melden
+terwijl het aantal waargenomen bestand/map-ancestorpaden de maximale
+24 voorbeelden per PR-paar overschreed. De volledige waarneming van PR's en
+filenames was dan wel beschikbaar, maar de operator kon een deel van de
+daadwerkelijk gevonden conflictparen niet zien. De oude
+`pr_file_scope_sample_complete=true` verhulde die grens.
+
+De productfix behandelt nu iedere afgekapt-geobserveerde padvoorvertoning
+als **ONVOLLEDIGE operatorbron**. De bron geeft een begrensde lijst
+`source_coverage_reasons` terug met de concrete oorzaak: verschoven
+PR-window, onvolledige gewijzigde bestanden, afgekapt gedeelde-bestandpaar,
+afgekapt padpaar of padvoorbeeld, afgekapt Unicode/case-alias of een
+veranderde/gedupliceerde PR-bron. Een 'vrij' lijkende ongepaarde PR wordt
+niet geadverteerd wanneer de bron onvolledig is.
+
+Dezelfde redenen staan nu in de directe tekst-, Markdown- en offline
+HTML-graph; het portfolio-board neemt ze per project over, maakt
+`source_status=partial_open_pr_sample` expliciet en toont een concrete
+menselijke inspectieactie. Het portfolio suggereert dus niet langer dat
+alleen **andere PRs** ontbreken: ook al bekende conflictdetails kunnen
+afgekapt zijn. Wanneer de bron volledig is, blijven de normale
+bestaande waarnemingen behouden.
+
+Dit is alleen een read-only herstel van de operatorweergave: ook volledige
+PR-dekking bewijst geen actieve Notion/workerlease, branch protection,
+independent review, echte Git-mergeconflicten of release-autorisatie.
+Deze wijzigingen starten geen CI, claim, queuewrite, workflow, merge,
+runnerrestart of deploy. Verplichte exact-head CI/reviews blijven bestaan.
+
+
+
+## 22 oktober · cross-platform padaliaswaarschuwingen in de bestaande PR-scopewerkbak
+
+De bestaande PR-scopecollector maakt nu een **afzonderlijke, begrensde
+NFC/casefold-aliaswaarneming** naast de bestaande exacte Git-pad- en
+bestand/map-ancestorrelaties. Daarmee worden twee verschillende Git-paden
+zoals `src/Config.py` en `src/config.py`, of canoniek-equivalente Unicode
+bestandsnamen, zichtbaar als potentiële aliassen op case-insensitive of
+Unicode-normaliserende ontwikkelaarsbesturingssystemen.
+
+Dit is bewust een heuristiek, niet de bewering dat elk filesystem die paden
+gelijk behandelt. Aliasrelaties worden niet als echte Git-mergeconflicten,
+actieve owners of mergegolven geteld. De collector bewaart maximaal 80
+PR-paren en acht padvoorbeelden per paar; totale waargenomen aantallen en
+afkappingsvlaggen blijven apart zichtbaar. Als het aliasbewijs of een ander
+scopevenster is afgekapt, wordt de volledige PR-scope-steekproef niet als
+compleet aangemerkt. Een echte gedeelde Git-pad- of bestand/map-ancestorbotsing behoudt exitcode
+`2`. Een alias-only waarneming krijgt exitcode `3` (menselijke hercontrole nodig),
+zodat de heuristiek niet ten onrechte als bewezen Git-conflict wordt gebruikt
+maar ook nooit als een schone scope eindigt.
+
+Dezelfde observatie verschijnt in:
+- de directe scope-CLI bij zowel `--audit-open-prs` als een expliciet `--path`/`--source-pr`, in tekst, JSON, Markdown, HTML en private create-only CSV;
+- het portfolio-overzicht in tekst, Markdown, HTML en private CSV;
+- de bestaande merge-first eigenaarwerkbak als een HEAD-gebonden menselijke
+  waarschuwing, met peer-PR en peer-HEAD, zonder de alias als Git-conflict te
+  behandelen.
+
+Voor een nieuwe, read-only momentopname:
+
+```sh
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project zcloud --audit-open-prs --format html
+
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project zcloud --format html
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project zcloud --path 'src/Config.py' --format html
+```
+
+De eerste opdracht toont de begrensde PR-grafiek; de tweede brengt dezelfde
+aliaswaarschuwingen naar de projectbrede conflictbalie. De bron blijft een
+GitHub-PR-steekproef: Notion-claims, PR-loze branches, workerbestandsleases,
+branch protection en release-eigenaarschap worden hiermee niet geverifieerd.
+Er is geen QA-suite geschreven of uitgevoerd, geen CI handmatig gestart en
+geen claim, queue, runner, merge of deployment aangepast.
+
+
+## 22 oktober · historische vergelijking van cross-platform padaliaswaarschuwingen
+
+De bestaande `scripts/zsentinel_pr_scope_delta.py` vergelijkt nu ook de
+NFC/casefold-padaliaswaarschuwingen uit twee private portfolio-snapshots.
+Een vergelijking wordt alleen als volledig getoond wanneer beide snapshots
+stabiel zijn, de open-PR-inventaris volledig is, alle aliasparen en
+padvoorbeelden binnen de weergavelimieten vallen en elk aliaspaar aan de
+beide snapshots' exacte HEAD, base-SHA en doelbranch is gebonden.
+
+- Nieuwe aliaswaarschuwingen zijn heuristische hints, geen bewezen Git-conflict.
+- Een verdwenen aliaswaarschuwing bewijst geen merge, oplossing of release.
+- Als een snapshot ouder is dan de aliasvelden, de PR-inventaris onvolledig is
+  of aliasvoorbeelden zijn afgekapt, toont de delta uitsluitend
+  steekproefverschillen met expliciet "niet bewezen nieuw/opgelost", of
+  "ONBEKEND" als de oude bronvelden ontbreken.
+- JSON, tekst, Markdown en HTML gebruiken dezelfde uitkomst; geen claim,
+  merge- of deploybevoegdheid wordt verleend.
+
+De historie wordt read-only uit opgeslagen bronnen afgeleid. Er is geen
+QA-suite geschreven of uitgevoerd en geen CI, claim, queue, runner of
+deployment gestart of gewijzigd.
+
+## 22 oktober · bestand/map-ancestorconflicten over opgeslagen PR-vensters
+
+De bestaande `scripts/zsentinel_pr_saved_graph_merge.py` detecteert nu ook
+cross-window bestand/map-ancestorrelaties, zoals een PR met het bestandspad
+`src` en een andere PR met `src/app.py`. Dit staat los van de bestaande
+exacte bestandsnaam-overlap: een scope-relatie is een waarschuwing, geen
+bewezen Git-mergeconflict of bewijs van eigenaarschap.
+
+- De scan vergelijkt alleen PR's uit verschillende opgeslagen bronvensters.
+- Per PR-paar worden maximaal acht padvoorbeelden weergegeven; de werklijst
+  en private CSV nemen de scopeparen en hun padrelaties apart op.
+- De ancestor-prefixscan heeft een vaste limiet van 2.000.000 padvergelijkingen.
+  Als die grens of de weergavelimiet wordt bereikt, wordt de dekking expliciet
+  als onvolledig gemarkeerd en zijn niet-gescande PR-paren **ONBEKEND**.
+  Getoonde tellingen uit een afgebroken paar zijn alleen waargenomen
+  ondergrenzen.
+- De tekst-, Markdown-, HTML-, JSON- en private CSV-uitvoer blijven
+  niet-autoriserend. Geen merge-, claim-, CI-, runner- of deployactie wordt
+  uitgevoerd.
+
+Dit sluit een productgat tussen de live scopegrafiek en de offline
+multi-window-handoff zonder historische steekproeven als atomair te behandelen.
+Geen QA-suite geschreven of uitgevoerd.
+
+## 22 oktober · sluiting, merge en live-oplevering zijn drie verschillende feiten
+
+De bestaande `scripts/zsentinel_pr_gate_now.py` en
+`scripts/zsentinel_pr_gate_batches.py` hebben nu ook een **GitHub-lifecycle**
+als productuitkomst van een actuele of opgeslagen PR-bron.
+
+1. **Open PR:** de bestaande exacte-HEAD check-, review- en
+   eigenaarwerkbak blijft actief, zonder autonome releaseautorisatie.
+2. **Closed zonder merge:** GitHub meldt `state=closed, merged=false`.
+   De PR is **niet** geleverd op de default branch. Actie is een bevoegde
+   eigenaarbeslissing over heropenen of passende opvolging.
+3. **Merged naar andere branch:** GitHub meldt `merged=true` en een
+   exact geldig `merge_commit_sha`, maar de PR-doelbranch komt niet
+   overeen met de door de canonieke GitHub-repository aangewezen
+   `default_branch`. Dit **telt niet** als levering op default/main.
+4. **Merged naar default branch:** GitHub meldt `merged=true`,
+   exacte `merge_commit_sha` en een doelbranch identiek aan
+   `default_branch` vanuit de canonieke repository-API. Dezelfde PR
+   wordt twee keer gelezen met gebonden PR-nummer, head, target-repo,
+   target-ref, status en mergecommit. Een automatisch voortgeschoven
+   basis-SHA na een merge blokkeert dit bewijs niet. De nieuwe
+   default-branch mergecommit is vastgelegd; de actuele branch-tip
+   en live deployment blijven **niet** vastgesteld.
+
+Bij onbereikbare of veranderende bron blijft de waarneming **ONBEKEND**
+en wordt niet gegokt of een PR gemerged is. Extra repositorymetadata
+wordt uitsluitend read-only opgehaald via het canonieke endpoint
+`GET /repos/{owner}/{repo}` en alleen bij een GitHub-bevestigde merge.
+
+In de live tekst-/Markdown-/HTML-werkbak en de historische batchwerkbak
+zijn de lifecycle-uitkomsten afzonderlijk zichtbaar. Historische
+momentopnamen worden expliciet als historisch gelabeld. Uit de
+multi-PR bron verdwijnen gemergede PRs daardoor niet langer stilzwijgend
+als 'bron onbereikbaar' of 'nog een open CI-HOLD'; ook een gesloten
+maar niet-gemergede PR kan niet onterecht als `DONE` worden aangemerkt.
+
+**Niet geïmplementeerd / niet toegestaan:** claims, GitHub-writes,
+automatische merges, deploys, CI-retries, runnerrestarts of omzeilen van
+branch protection, onafhankelijke review en andere bestaande gates.
+Een GitHub-merge bewijst nooit dat de nieuwe code draait.
+
+### GitHub-HTTP-fouten vanaf de echte bron
+
+De canonieke `github_json`-transportlaag gooit voor HTTP-fouten nu een
+`GitHubSourceError(ValueError)`. Alleen de bounded HTTP-status en
+`x-ratelimit-remaining` / `retry-after` worden bewaard; geen token,
+URL, responsebody of ongefilterde fouttekst. Oude readers die
+`ValueError` afvangen blijven fail-closed, terwijl de PR-gate en
+portfolio-incidentpanel eindelijk het échte verschil tussen auth,
+rate-limit en netwerkuitval kunnen tonen.
+
+## 22 oktober · directe foutlinks en bronoorzaken in bestaande herstelwerkbak
+
+De **bestaande** merge-first PR-gate- en portfoliowerkbakken blijven read-only,
+maar maken nu twee onduidelijke situaties daadwerkelijk opvolgbaar.
+
+### Directe GitHub-joblinks voor de bevoegde eigenaar
+
+`scripts/zsentinel_pr_gate_now.py --format markdown` vermeldt voortaan,
+naast de actuele HEAD en volgende eigenaaractie, expliciete canonieke
+GitHub-Check-Run-links voor de aangetroffen **mislukte**, **queued ≥30 min**
+en **in_progress ≥60 min** checks. Een falende legacy-commitstatus krijgt
+een aparte exacte-HEAD-commitchecklink. Namen en provider-supplied URLs
+worden niet als vrije Markdown-links overgenomen; alleen gebonden numerieke
+Check Run IDs worden verwerkt. De uitvoer blijft begrensd en meldt extra
+verborgen checks. Een link is nooit een autorisatie om de workflow opnieuw
+te starten of werkclaims over te nemen.
+
+`scripts/zsentinel_pr_gate_batches.py` neemt deze brongebonden
+links alleen over als de opgeslagen receipt een specifieke PR én exacte HEAD
+bevriest. De HTML en Markdown eigenaarwerkbak maken de oorspronkelijke
+Check Run bereikbaar vanuit de geprioriteerde reparatiekaart. **Elke link
+blijft historisch** en vereist een actuele bronread voordat een herstelbesluit
+mag worden genomen. Ongeldige repo/checkidentiteiten worden geweigerd.
+
+### Veilige bronfoutclassificatie in plaats van één onduidelijke HOLD
+
+De live broncollector onderscheidt nu zonder ruwe HTTP- of exceptionstrings:
+
+- GitHub-401 (authenticatie) of 403 (rechten, beleidsblokkade óf
+  secundaire limieten: niet zonder bronbewijs één oorzaak aannemen);
+- GitHub-rate limiting bij 429, of bij 403 met door GitHub geleverde
+  `x-ratelimit-remaining: 0` / `retry-after` header;
+- niet-gevonden PR of API-bron (404/410);
+- netwerk-/GitHub-serverprobleem;
+- aantoonbaar wisselende HEAD/basis, conceptstatus of reviewaanvraag
+  gedurende de read;
+- overige onvolledige of onbruikbare brondata (ONBEKEND).
+
+De categorie wordt zichtbaar in actuele HTML, tekst en Markdown;
+bovendien volgt hij via bestaande **historische batchrapporten** naar de
+multi-PR eigenaarwerkbak en via het **portfolio-sourceboard** naar de
+incidentweergave. Er wordt **geen** onbereikbaar PR als gemerged, hersteld,
+claimvrij of gesloten bestempeld. De tool bewaart geen geheime responsebody,
+token of auth-header in de rapportage.
+
+Uitvoervoorbeeld (privé `0600` create-only bestand via bestaande writer):
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format markdown \
+  --output /eigen/private/actuele-pr-gates.md
+```
+
+Deze implementatie maakt P0-runnertriage of GitHub-rechten nog niet
+automatisch hersteld. Bestaande claim- en producteigenaren, verplicht
+exact-HEAD CI-bewijs, onafhankelijke review, protected main en release gates
+zijn ongewijzigd. Geen QA-suite, service-restart, workflowretrigger,
+queuewrite, force merge of live deploy.
+
+## 22 oktober · actieve CI-wacht en parallel review zichtbaar in PR-geschiedenis
+
+De eerdere live exact-HEAD PR-collector had al brongebonden operatoracties
+voor `queued ≥30 min`, `in_progress ≥60 min` en een onafhankelijk
+reviewverzoek naast CI. De source-bridge gaf die signalen echter niet allemaal
+door aan de bestaande twee-snapshot historische PR-vergelijker.
+
+Dezelfde bestaande product-PR integreert nu:
+
+- `zsentinel_pr_scope_portfolio.py` geeft vier CI-leeftijdssignalen,
+  `parallel_independent_review_step` en de uitgefilterde botreviewtelling
+  vanuit de huidige read-only GitHub-bron door aan het opgeslagen board.
+- `zsentinel_pr_gate_continuity.py` neemt die expliciete signalen mee in
+  twee bronmomenten, valideert dat leeftijdtellingen begrensde niet-negatieve
+  gehele getallen zijn en accepteert alleen bekende read-only
+  eigenaaradviezen als parallelle reviewactie.
+- Oudere snapshots zonder deze velden worden **niet** ineens een betrouwbaar
+  'ongewijzigde HOLD' bewijs; voor een stabiele vergelijking zijn twee
+  complete, consistente bronvensters vereist.
+- Een actuele waargenomen langdurige queued of in-progress check leidt
+  in het historie-dossier tot **gericht onderzoek door de runner-eigenaar**,
+  niet langer uitsluitend tot een algemeen 'wacht op CI'-bericht.
+
+Dit is uitsluitend historische **observatie**, geen bewijs van werkelijke
+runneruitval, continuïteit tussen twee bronmomenten of toestemming tot
+herdispatch. Geen QA-suite, extra workflow-run, bronclaim, serverwrite,
+privilege-omweg, force merge of deploy.
+
+## 22 oktober · CI-stilstand is nu uitvoerbaar eigenaarwerk, geen blind wachten
+
+Een samenhangende correctie verbindt de nieuwe **actuele exact-head
+gatecollector** en de **opgeslagen multi-PR eigenaarwerkbak**:
+
+- Bij exact-head bronbewijs dat expliciet
+  `owner_triage_observed_slow_current_head_checks` vraagt, verdwijnt een
+  PR niet meer ten onrechte in de passieve 'CI wacht'-bak. Hij verschijnt
+  onder de aparte **CI-/runnertoewijzing onderzoeken**-categorie, zonder
+  automatisch te herstarten of runnerfalen te claimen.
+- Wanneer de actuele collector nog geen onafhankelijke review ziet en
+  `request_independent_current_head_review` als concrete actie teruggeeft,
+  blijft dit een **reviewaanvraag voor de bevoegde eigenaar**, ook wanneer
+  andere checks nog queued zijn.
+- Een apart gevalideerde `parallel_independent_review_step` uit de
+  actuele gatebron blijft behouden in opgeslagen rapporten en wordt nu ook
+  zichtbaar in de HTML- en teksteigenaarselecties. Daardoor verdwijnt
+  parallel uitvoerbaar werk niet meer door historische batchreconciliatie.
+- De oorspronkelijke bronmanifestvolgorde en de afzonderlijke P0/P1-prioriteit
+  blijven ongewijzigd; de werkbak groepeert alleen het uitgevoerde
+  **menselijke vervolgwerk**. Verouderde en onvolledige bronnen eisen nog
+  steeds een nieuwe GitHub-/Notion-read.
+
+Geen nieuwe releasegates, reviews, automatiseringsrechten, GitHub-writes,
+testwerk of workflow-herstarts. Dit is bronlogica op de bestaande PR:
+pas na actuele exact-HEAD verplichte CI, echte onafhankelijke review,
+branch protection en bevoegde releasebeslissing kan iets naar `main`.
+
+## 22 oktober · portable exacte-HEAD Markdown eigenaarsoverdracht
+
+De bestaande read-only huidige PR-gatecollector heeft een vierde, makkelijk
+deelbare outputvorm naast JSON, tekst en HTML:
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format markdown \
+  --output /eigen/private/zsentinel-pr-overdracht.md
+```
+
+Per geselecteerde PR wordt de actuele bron-HEAD als canonieke GitHub-commitlink
+gepresenteerd, met **maximaal drie vaste hoofdregels**: **Probleem**, **Actie**
+en **Status**. Een afzonderlijke parallelle reviewactie verschijnt alleen
+als de gatecollector die heeft onderbouwd. Lang queued of lopende checks
+krijgen uitsluitend door de collector geconstrueerde canonieke checklinks
+(maximaal acht). Een wisselende of ontbrekende HEAD levert **ONBEKEND**.
+
+De bron bevat nooit PR-prompts, gegenereerde workertekst, sleutels of externe
+providerlinks. Bij `--from-review` worden batchnummer en beide herkomsthashes
+getoond; bij directe `--pr`-selectie staat expliciet dat Notion-claims niet
+zijn onderzocht. Zowel `--format markdown` als HTML zijn informatief,
+niet autoriserend: de GitHub branchregels, exact-head verplichte checks,
+onafhankelijke menselijke review, claimownership en live verificatie gelden
+nog steeds. Een deelbaar Markdown-bestand is geen bewijs van merge.
+
+## 22 oktober · veilige opgeslagen gatebatches en directe eigenaarwerkbak
+
+De al bestaande merge-first batchroute combineert maximaal 75 door de
+zSentinel-gatecollector gemaakte JSON-receipts uit een lokaal opgeslagen
+reviewmanifest. De ontvangst is nu aanzienlijk strikter:
+
+- `--receipt` wordt uitsluitend als eigen, regulier, privébestand gelezen
+  (geen pipes, symlinks of vreemde bestandsowners). `O_NOFOLLOW`,
+  `O_NONBLOCK`, bestandsgroottegrens en dezelfde inode/mtime/size-identiteit
+  vóór, tijdens en na openen voorkomen blokkeren en gemengde bronbytes.
+- Een bestand met groeps-/wereldleesrechten, dubbele JSON-sleutels,
+  niet-eindige getallen, invalide UTF-8, of escaped lone surrogate wordt
+  geweigerd. Ontvangstruimte blijft beperkt tot één MiB per receipt.
+  De bestaande aparte manifestlezer blijft de manifestbron valideren.
+- Het **eigenaaractiepaneel** splitst historische PRs in vijf categorieën:
+  bron opnieuw lezen, bestaand product/gate herstellen, reviewer aanvragen,
+  externe CI/review-wacht parkeren en beschermde release-overdracht.
+  De uitkomsten worden in zowel offline HTML als tekst/Markdown weergegeven.
+- Binnen elke categorie blijft de oorspronkelijke manifestvolgorde intact.
+  De aparte oorspronkelijke, P0/P1-gerangschikte merge-first-lijst blijft
+  daarnaast zichtbaar, zodat een actiegerichte sortering nooit als een
+  nieuwe bronprioriteit wordt aangezien.
+- De werkbak toont een maximum van 24 actiekaarten met expliciete
+  verborgen aantallen. Bronobservaties ouder dan 15 minuten worden
+  uitsluitend als historie behandeld. Een ontbrekende batch of claimbron
+  kan nooit een lege open-PR-backlog of vrijgave bewijzen.
+
+Bestaande gebruikswijze (read-only, output altijd nieuw en privé):
+
+```bash
+python3 scripts/zsentinel_pr_gate_batches.py \
+  --from-review /eigen/private/merge-first-review.json \
+  --receipt /eigen/private/gate-batch-1.json \
+  --format html \
+  --output /eigen/private/merge-first-werkbak.html
+```
+
+Als een receipt eerder met onveilige bestandsrechten is opgeslagen, maak
+eerst een nieuw expliciet privébestand via de bestaande collector;
+**verruim de lezer niet** en sla verplichte GitHub-gates niet over.
+Geen QA-suites, autonome CI-dispatch, queue/claimwrite, reviewer- of
+runner-actie is onderdeel van deze offline productroute.
+
+## 22 oktober · één direct bruikbare privé-HTML-werkbak voor actuele PR-gates
+
+De bestaande GitHub exact-HEAD bronobserver in
+`scripts/zsentinel_pr_gate_now.py` levert naast machineleesbare JSON en
+Nederlandse tekst nu ook een **responsief offline HTML eigenaarsscherm**:
+
+```bash
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1567' \
+  --format html \
+  --output /eigen/prive-map/zsentinel-pr-gates.html
+```
+
+- `--output` maakt uitsluitend een **nieuw** privébestand met `0600`
+  via de bestaande create-only writer; nooit een stilzwijgende overschrijving.
+  Zonder `--output` verschijnt dezelfde HTML op stdout. Het scherm laadt
+  geen externe styles, scripts of fonts en heeft een restrictieve CSP.
+- In combinatie met `--from-review /eigen/private/merge-first-review.json`
+  toont de HTML-werkbak nadrukkelijk de **geselecteerde reviewbatch**, het
+  aantal kandidaat-PRs in het opgeslagen manifest, en de exacte SHA256 van
+  het privémanifest én oorspronkelijke board. Dit voorkomt dat een
+  vier-PR-venster wordt aangezien voor complete portfoliodekking. Andere
+  batches moeten apart worden gelezen met `--batch N`. Directe `--pr`
+  selectie wordt expliciet als onvolledige, claim-ongeverifieerde subset
+  weergegeven.
+- Per PR: actuele herlezen HEAD en doelbranch, expliciete mergeability-status,
+  lopende/falende checks, historische statuscontexten, onafhankelijke
+  exact-HEAD reviews, de concrete eerstvolgende bevoegde eigenaaractie en
+  maximaal twaalf directe GitHub-checklinks. Een ontbrekende/gewijzigde
+  bron maakt een waarschuwing, nooit een positieve releaseclaim.
+- GitHub-**queued** checks langer dan 30 minuten en
+  **in_progress** checks langer dan 60 minuten worden als verschillende
+  triagesignalen getoond. Ontbrekende of toekomstige tijdstippen worden
+  als ONBEKEND onderscheiden. Langdurig betekent nadrukkelijk niet
+  automatisch een vastgelopen runner of herdispatch-toestemming.
+  De begrensde checklijst toont deze signalen voor gewone pending items.
+- Wanneer checkbron en mergeability geldig zijn, maar een onafhankelijke
+  review nog **niet is aangevraagd**, stelt de eigenaarwerkbak voor om die
+  *parallel* met bestaande CI aan te vragen. Ontbrekende checkbron,
+  mergeconflicten, afwijzingen en foutieve CI blijven hogere prioriteit.
+  Bij werkelijk waargenomen lange queued of in-progress checks krijgt de
+  bevoegde eigenaar **eerst concrete CI-/runnertoewijzingstriage**, met
+  daarnaast een **aparte parallelle reviewactie**. Een CI-wacht is niet meer
+  alleen een generiek passief HOLD; de tool geeft zelf geen restart, retry,
+  reviewaanvraag of deployment af.
+- GitHub-automatiseringsreviews, inclusief `[bot]`-gebruikers, worden
+  als activiteit verwerkt maar nooit als onafhankelijke menselijke
+  goedkeuring gerekend. Zelfreviews of hoofdlettervarianten evenmin.
+
+Dit is één read-only observatiewerkstroom: geen nieuwe API-rechten,
+autoclaim, GitHub-write, workflowdispatch, QA-suite, stop/restart,
+automatische merge of deploy. GitHub-hosted pending CI, protected main,
+actuele Notion-claim, bronouderdom, onafhankelijke review en werkelijke
+releasebevoegdheid blijven apart te controleren. Een HTML-bestand is
+**geen** live VPS- of `main`-oplevering.
+
+## 22 oktober · brongebonden botsingshistorie en onafhankelijke revieweridentiteit
+
+Twee productreparaties in dezelfde bestaande merge-eerst PR:
+
+- De historische **file-overlap** en **bestand/map-ancestor** vergelijkers
+  controleren nu per zijde de exacte `head_sha`, `base_sha` en
+  `base_ref` tegen de opgeslagen PR-inventaris. Een botsingskaart van een
+  andere HEAD of doelbranch wordt geweigerd; een stabiele PR-lijst alleen is
+  onvoldoende bewijs voor een botsing op die HEAD.
+- Onbeschikbare of niet-stabiele projectsnapshots hebben geen verifieerbare
+  botsingsparen. De vergelijker toont daarvoor ONBEKEND in plaats van oude
+  positieve signalen onder een nieuwe bronklok.
+- Bestandspaden met Unicode-controlekarakters, inclusief bidi-overschrijvingen,
+  worden geweigerd voordat zij in HTML of menselijke werkorders verschijnen.
+- De actuele PR-reviewwerkbak behandelt GitHub-logins hoofdletterongevoelig,
+  net als GitHub zelf. Een PR-auteur kan geen onafhankelijke goedkeuring
+  krijgen via een andere schrijfwijze van zijn login; hetzelfde account kan
+  niet dubbel tellen als twee onafhankelijke reviews.
+- Bot-accounts zoals `dependabot[bot]` blijven leesbaar als PR-auteur of
+  activiteitsschrijver. Hun ingediende reviewevents worden afzonderlijk
+  geteld als automatisering, nooit als onafhankelijke goedkeuring. Dit voorkomt
+  dat een botreactie de hele actuele GitHub-gatewerkbak laat uitvallen of
+  ten onrechte de menselijke reviewvoorwaarde invult.
+
+Deze broncontroles geven **nooit** toestemming om een workerclaim,
+PR-review, branchbescherming, verplichte exacte-HEAD CI of deploygate over
+te slaan. Bij een onvolledige bron moet de bevoegde eigenaar de actuele
+GitHub- en Notion-feiten opnieuw controleren. Er zijn geen QA-suites,
+workflow-reruns, VPS/queuewrites of automatische merges toegevoegd.
+
+## 22 oktober · fail-closed canonical project registry
+
+`registry()` now treats the canonical project list as an all-or-nothing
+source. A non-object row, malformed project ID or repository URL, whitespace
+or control characters in the URL, non-canonical GitHub URL, invalid repository
+slug, duplicate project ID, or duplicate repository identity (case-insensitive)
+stops the scope scan instead of silently skipping a row.
+
+This prevents a partial registry from being mistaken for a complete
+cross-project collision view and prevents one GitHub repository from being
+counted as multiple projects. Correct the canonical source before rerunning
+the existing read-only scan. No registry, queue, claim, CI, or runtime write
+is performed.
+
+## 21 oktober · P0/P1 issuegerichte eigenaarsoverdracht zonder remote acties
+
+De bestaande [merge-eerst PR #1567](https://github.com/Zennay/zCloud/pull/1567)
+biedt nu een complete issue-first route voor de vliegende keep, naast
+de bestaande PR- en projectwerkstromen:
+
+1. **Volgende open bronissue (P0 eerst)** loopt langs alle opgeslagen
+   issues met een lokale status anders dan `Opvolging genoteerd`, gesorteerd
+   op historisch waargenomen P0 → P1 → P2 → niet-geclassificeerd.
+   Een klik wist filters en PR-focus die het issue anders zouden verbergen,
+   maakt de issuekaart zichtbaar, scrollt erheen en zet toetsenbordfocus.
+   De teller gebruikt dezelfde queue; een lokaal afgehandeld item is
+   nadrukkelijk **niet** gelijk aan een opgelost GitHub-issue.
+2. **Download privé eigenaarsdossier voor dit issue** werkt op *iedere*
+   issuekaart, ook wanneer geen of slechts één bestaande PR in de
+   beperkte steekproef voorkomt. Dit brongebonden Markdown-dossier bevat
+   de originele bronissue-link, project/prioriteit, bronklokken,
+   activiteitssignaal, dekkingsgrenzen, menselijke vervolgstap,
+   lokale privé-opvolging, alle bekende PR-kandidaten, hun geobserveerde
+   HEAD/commitlink en historische gate, andere bij dezelfde PR genoemde
+   issues en afzonderlijke PR-/botsingsnotities. De bron-HEAD en gate
+   van een issue-eigen PR-kandidaat blijven in het dossier aanwezig, ook
+   als die PR-groep door de begrensde werkbakpagina niet getoond wordt.
+   Bij afwijkende HEADs wordt bewust **BRONCONFLICT** getoond in plaats
+   van een onbetrouwbare commitlink. PRs zonder betrouwbaar bronbewijs
+   en onvolledige bronvermeldingen blijven **ONBEKEND**.
+3. **Download open P0/P1 issue-overdracht** maakt een gebundelde,
+   P0-eerst gerangschikte overdracht van alle in deze bronpagina lokaal
+   nog open P0/P1-issues. De export negeert bewust schermfilters,
+   projectselectie en PR-focus, toont bronvenster en exact brontoken,
+   en behoudt per issue alle waargenomen kandidaat-PRs plus lokale
+   status-/afstemmingsnotities. Een lege selectie is geen bewijs van
+   een lege echte GitHub-backlog.
+
+De bestaande create-only, browser-lokale `Blob`-downloads worden
+hergebruikt. Geen API-fetch, claim, remote notitiesynchronisatie,
+runneropdracht, automatische retry, merge of deploy. Lokale opvolging
+is niet hetzelfde als onafhankelijke review. Controleer actuele
+claim-eigenaars, PR-HEAD, exact-head verplichte CI, review en
+branch protection opnieuw voor een echte merge.
+
+## 21 oktober · P0-eerst langs open projectopvolging navigeren
+
+De bestaande projectfilter heeft nu ook **Volgende project met open lokale
+opvolging**. Deze brongebonden bediening groepeert uitsluitend al
+opgeslagen PR-, issue- en meervoudig-PR-afstemmingsnotities per project.
+Alle items met status `Opvolging vastgelegd` worden voor deze reviewronde
+overgeslagen, **niet als opgelost, gemerged of vrijgegeven** gemarkeerd.
+De projecten worden geordend op hun hoogste nog open geobserveerde
+prioriteit (P0, P1, P2, niet geclassificeerd) en daarna projectnaam.
+De operator kan met één klik de projectfilter instellen en alle huidige
+zoek-/botsings-/PR-focusfilters wissen die het brondossier zouden verbergen.
+
+De aparte voortgangsregel toont zowel het aantal projecten met open
+lokale opvolging als het aantal nog te bekijken bronitems. Navigatie en
+voortgang gebruiken exact dezelfde lokale `openProjectQueue`-berekening
+om te voorkomen dat de teller iets anders bedoelt dan de knop. De
+huidige projectexport blijft beschikbaar om de volledige beperkte
+projectsubset op papier over te dragen; de export volgt niet de
+handmatige zoekfilters. Zo ontstaat één menselijke route van P0
+signaleren → lokaal bronproject openen → relevante bestaande PRs
+bekijken → privé afstemming exporteren. Er is geen live repo/Notion-
+raadpleging, automatische claim, uitrol of verandering van bronbewijs.
+
+## 21 oktober · één projectgerichte privé-overdracht uit bestaande merge-eerst werkbak
+
+De bestaande brongebonden offline werkbak heeft nu een knop **Download
+privéoverdracht voor project ...**. Kies eerst één van de projectwaarden
+uit de bestaande `Project`-filter. Dit is geen remote projectlookup of
+autoclaim: de filteropties komen alleen van gevalideerde issuekaarten in
+de opgeslagen, begrensde bronpagina. Zonder selectie is de knop uitgeschakeld.
+
+De nieuwe projectexport bevat uit **exact dezelfde opgeslagen bron-token**:
+- alle binnen de bronpagina zichtbare projectissues met prioriteit, bronroute,
+  originele issue-URL en aanbevolen menselijke vervolgstap;
+- alle bij diezelfde projectissues gegroepeerde bestaande PRs met bron-HEAD,
+  historische gatecode in mensentaal, overlappingssignalen, gekoppelde
+  bronissues en lokale menselijke PR-opvolging;
+- alle bronissues met meerdere PR-kandidaten, inclusief de handmatige
+  botsingsstatus en lokale privénotities, zonder bestandsbotsing/fix af te leiden;
+- issue/PR-bronmomenten, exacte privé brontoken, bronafkapping,
+  en een expliciete actuele claim/CI/review/branch-protection checklist.
+
+De inhoud **volgt niet** de actuele zoekfilters, PR-focus of
+botsingsfilters: de knop levert de complete *geselecteerde projectsubset*
+binnen dezelfde beperkte bronpagina. Issues buiten die pagina worden
+niet verzonnen en de export zegt expliciet dat het volledige echte project
+of de actuele GitHub/Notion-stand daarmee niet bevestigd is.
+De bestaande browser-lokale Markdown-download wordt hergebruikt; het
+pakket bevat geen live bronverzoeken, remote opslag, automatische owner
+change, CI-retry, QA-suite, merge of deploy. Alle lokale statusnotities
+blijven onderdeel van de export en mogen nooit als GitHub-review of
+werkelijk gesloten issue worden geïnterpreteerd.
+
+
+## 21 oktober · openstaande PR-eigenaarsopvolging als gerichte werkstroom
+
+De bestaande offline, source-token-gebonden merge-eerst werkbak heeft nu
+een aparte knop **Volgende PR zonder lokale opvolging**. Die loopt langs
+alle bestaande PR-groepen uit het opgeslagen bronvenster, slaat uitsluitend
+de handmatig op `Opvolging vastgelegd` gezette PRs over en brengt de
+operator rechtstreeks in de bestaande PR-focus met bijbehorende bronissues.
+De knop toont hoeveel PRs nog menselijke opvolging vragen en hoeveel nog
+helemaal niet bekeken zijn. Bronvolgorde blijft intact; huidige zoekfilters
+beïnvloeden deze volledige privé-inventaris niet. Dit is geen bewijs dat
+een overgeslagen PR gemerged, hersteld of door een echte reviewer beoordeeld
+is.
+
+De extra knop **Download open PR-eigenaaroverdracht** levert een lokaal
+Markdown-dossier van uitsluitend die PRs waarvoor nog geen lokale
+opvolging vastligt. Per PR: opgeslagen bron-HEAD en gatecode met menselijk
+label, waargenomen overlappings-/bewegingssignalen, project/prioriteit,
+link naar elk gekoppeld bronissue en eventuele andere bestaande PRs bij
+hetzelfde issue, lokale PR- en issuestatussen, privé PR-notitie, beperkte
+brondekking en exact bron-token. De export gebruikt de bestaande
+browser-lokale `Blob`-download, schrijft nooit remote en blijft
+beschikbaar ongeacht actieve zoekfilters of de gekozen PR.
+
+Iedere export vermeldt nadrukkelijk dat CI, onafhankelijke review,
+branch protection, actieve Notion-claims en huidig GitHub-HEAD opnieuw
+bij de bevoegde eigenaar moeten worden gecontroleerd. Alle bestaande
+sessie-JSON-uitwisselingen en hun source-token-binding blijven ongewijzigd.
+Er zijn geen QA-suites, backendrechten, GitHub/Notion-writes, nieuwe
+claims, CI-herstarts of automatische merge-/deployacties toegevoegd.
+
+## 21 oktober · open PR-botsingen gericht afhandelen
+
+**Bron-gates in mensentaal:** de werkbak noemt opgeslagen gatecodes niet
+meer alsof zij de actuele CI/reviewstatus zijn. Labels maken onderscheid
+tussen mislukte checks, wachtende checks, onvolledige bronvensters,
+verouderde issuebron en tegenstrijdige bronklokken. Individuele PR-
+overzichten en privé Markdown houden de originele broncode herkenbaar,
+maar geen van deze labels staat voor actuele exact-head mergevrijgave.
+
+Bij ieder meervoudig PR-bronissue staat bovendien **Download privéoverdracht
+voor dit issue**. Die knop maakt een lokaal Markdown-dossier van precies het
+gekozen, brongebonden issue, met alle bestaande PR-kandidaten uit diezelfde
+steekproef, hun waargenomen HEAD/gates, lokale afstemmingsstatus en notities.
+De bron-token en de omvang van de totale beperkte inventaris blijven vermeld;
+het dossier bewijst geen huidige eigenaar, fix of mergevrijgave. Dit maakt
+gerichte overdracht aan één project- of PR-eigenaar mogelijk zonder andere
+privénotities onnodig mee te sturen.
+
+De bestaande privé merge-eerst werkbak heeft een complete, **handmatige**
+botsingswerkstroom voor issues met meer dan één opgeslagen PR-vermelding.
+
+1. **Botsingsopvolging** filtert de afzonderlijke bronissues op
+   `Nog niet beoordeeld`, `Eigenaar bepalen`, `Afstemmen met PR-eigenaren`
+   en `Opvolging vastgelegd (niet opgelost)`. Dit staat los van de
+   issuestatus en de PR-opvolging; het verandert geen GitHub-status.
+2. Boven de werkbak staat een teller met totaal zichtbaar, nog niet
+   beoordeeld, lokaal vastgelegde opvolging en resterende **zichtbare**
+   vervolgacties. **Volgende open botsingsopvolging** springt met
+   zichtbare toetsenbordfocus naar de volgende nog niet als `followup`
+   gemarkeerde bronissuekaart. De knop is uitgeschakeld als er in het
+   huidige filter geen vervolgactie over is. `Wis filters` herstelt
+   alle bronissues en reset de navigatie.
+3. **Download PR-botsingsdossier (Markdown)** blijft de **volledige**
+   beperkte broninventaris exporteren. De nieuwe **Download open afstemming
+   (Markdown)** levert juist een af te werken eigenaarslijst van issues
+   die **niet lokaal op `Opvolging vastgelegd`** staan, onafhankelijk
+   van zoekfilters en geselecteerde PR. Het bestand vermeldt het
+   oorspronkelijke totale aantal, het aantal meegenomen issues en de
+   lokaal gemarkeerde/overgeslagen items. De laatste zijn **niet**
+   noodzakelijk opgelost.
+4. **Download overdracht voor deze PR** neemt nu per gekoppeld bronissue
+   ook de lokale meervoudige-PR coördinatiestatus en privé-notitie mee.
+   Bij focus op een PR worden ook botsingsfilters gewist, zodat
+   niet-botsende gekoppelde bronissues niet verborgen blijven. De
+   oorspronkelijke bronlinks en exacte HEADs blijven ongewijzigd.
+
+De aparte lokale JSON-sessie behoudt dezelfde bron-token, v1/v2
+importgrenzen en bronvolgorde; de nieuwe navigatie en filters vereisen
+geen migratie. Er zijn **geen** extra GitHub-/Notion-reads of writes,
+geen actieve eigenaarclaims, automatische merges, downloads naar een
+server, CI-dispatches, QA-suites of productieacties. De werkbak toont
+historische bronobservaties: actuele CI, HEAD, onafhankelijke review,
+branch protection en bevoegde eigenaar moeten apart worden vastgesteld.
+
+## 21 oktober · compleet botsingswerkblad voor PRs die hetzelfde issue noemen
+
+De bestaande offline privé **merge-eerst werkbak** bevat nu een afzonderlijk
+paneel **Issues met meerdere bestaande PRs**. Het is bedoeld voor bevoegde
+eigenaren die herhaald werk en verloren PR-context willen voorkomen:
+
+- Het paneel toont uitsluitend bronissues binnen de bestaande begrensde
+  `--worklist-limit`-pagina waarvoor twee of meer **verschillende
+  bestaande PR-kandidaten** zijn waargenomen. Iedere PR behoudt haar
+  canonieke GitHub-link, opgeslagen commit-HEAD (of ONBEKEND),
+  gatebron, bestandsoverlapindicator en bronbewegingindicator.
+  De indicatoren maken geen claims over daadwerkelijk opgeloste issues,
+  mergebevoegdheid, huidige leases of eigenaars.
+- Vanuit elke PR in het botsingspaneel kan de operator direct
+  **Open PR-werkbak** kiezen, met de al bestaande private PR→issue
+  drilldown en handmatige notities.
+- Zoekterm, project en prioriteit filteren ook het botsingspaneel.
+  **Alleen issues/PRs met meerdere PR-kandidaten** is een filter voor
+  de bestaande issuekaarten en PR-groepen. Het scherm toont expliciet
+  hoeveel botsingsgevallen van de beperkte bron nog zichtbaar zijn;
+  `Wis filters` herstelt het volledige lokale bronvenster.
+- Met **Download PR-botsingsdossier (Markdown)** exporteert de operator
+  **alle** botsingsgevallen uit het oorspronkelijk opgeslagen begrensde
+  bronvenster, ook als een UI-filter of individuele PR-focus actief is.
+  Ieder dossier vermeldt opgeslagen bronklokken en exacte private
+  `source_token`, issueprioriteit en originele links, alle betrokken
+  PR-links en opgeslagen HEAD/gates, en eventueel lokale handmatige
+  issue-/PR-statussen en privé-notities. Een lege lijst bewijst slechts
+  dat in dit **beperkte, opgeslagen venster** geen dubbele PR-vermelding
+  is aangetroffen. Het zegt niets over buitenbeeld/actuele bron.
+- Download is uitsluitend een lokale browser-Blob; geen GitHub
+  comment, Notion-mutation, claim, workflow-dispatch, merge of deploy.
+  De bestaande volledige bronoverdracht blijft compleet en de
+  aparte PR-dossiers blijven beschikbaar.
+
+De operator kan nu **per meervoudig PR-bronissue apart**
+kiezen tussen `Nog niet beoordeeld`, `Eigenaar bepalen`,
+`Afstemmen met PR-eigenaren` en `Opvolging vastgelegd
+(niet opgelost)`. Een optionele privé botsingsnotitie kan de
+betrokken contactpersoon, huidige afspraak of benodigde review
+vastleggen. Deze coördinatiegegevens zijn los van de status/notitie
+voor de PR zelf en voor het issue zelf; **geen** van deze opties
+verklaart een issue opgelost of een PR mergeklaar.
+
+De bestaande brongebonden privé v2 JSON-sessie heeft een optionele
+`collision_entries` lijst van exact dezelfde geobserveerde issuevolgorde.
+Bij import worden **alle** states, notities, lengtegrenzen, issue-URLs,
+groepslijsten en exact-source token eerst gecontroleerd; alleen dan
+worden lokale velden hersteld. Oudere v1/v2 sessies zonder deze optionele
+lijst blijven importeerbaar. Ook browser-wegnavigatie waarschuwt nu
+bij een nog niet opgeslagen botsingsnotitie of coördinatiestatus.
+
+Zowel **Download PR-botsingsdossier** als de bestaande **complete**
+Markdown-overdracht nemen alle lokale botsingsnotities en hun
+handmatige statussen mee — ook wanneer de operator gefilterd werkt.
+Deze bestanden zijn privé-downloads, geen remote audit of bewezen
+actuele wijzigingen.
+
+De werkbak gebruikt uitsluitend bestaande, vooraf toegelaten
+`zsentinel-merge-first-human-inbox-v1` bronkaarten. Geen extra
+GitHub-/Notion-/VPS-read, nieuw authorisatieritueel of QA-suite.
+
+## 21 oktober · één PR uit een brongebonden interactieve werkbak overdragen
+
+De bestaande offline HTML-werkbak ondersteunt nu een samenhangend traject
+bij issues met **meerdere bestaande PR-kandidaten**:
+
+1. Bij iedere alternatieve PR in **Andere bestaande PRs** staat
+   **Bekijk alle issues bij deze PR**. Daarmee opent dezelfde
+   PR-focus als vanuit het PR-groepspaneel. Filters die anders gekoppelde
+   issues verbergen worden bij focus gewist; geen netwerkrequests of
+   eigenaarsclaims.
+2. Binnen de focus op één bestaande PR toont de werkbak
+   **Download overdracht voor deze PR**. Dit schrijft alleen lokaal, via
+   een browserdownload, een afzonderlijk Markdown-dossier met canonieke
+   PR-link, opgeslagen bron-HEAD of expliciet **ONBEKEND**, de
+   immutable commitlink waar beschikbaar, gatebron, oorspronkelijk
+   menselijk vervolgadvies, bestandsoverlap/bronbeweging, bronklokken
+   en de bestaande privé `source_token`.
+3. **Alle gekoppelde bronissue-URLs** uit de vooraf gevalideerde
+   beperkte bron worden genoemd; voor issuekaarten binnen de huidige
+   `--worklist-limit` export staan ook de eigen lokale status,
+   privé-notitie en bron-next-action erbij. Ook andere bestaande PRs
+   die volgens de bron bij hetzelfde issue genoemd worden, blijven met
+   hun afzonderlijke URL en de eventueel beschikbare opgeslagen bron-HEAD
+   in het dossier staan. Daarmee verdwijnt een mogelijke PR-botsing niet
+   wanneer de operator maar één PR exporteert. Bronissues buiten het
+   beperkte venster worden nadrukkelijk **ONBEKEND** gelabeld,
+   niet genegeerd of als opgelost geteld. De afzonderlijke PR-notitie
+   en PR-status gaan mee.
+4. De bestaande **volledige Markdown-overdracht** bevat nu ook de
+   waargenomen PR-HEAD en commitlink per PR, plus het bron-token.
+   De volledige export blijft ondanks zoekfilter, PR-focus of lokaal
+   handmatige status **het complete geselecteerde bronvenster** bevatten.
+5. Een expliciet geselecteerde PR wordt nu mee bewaard in de bestaande
+   **privé JSON-sessie**. Bij import blijft de bron-token verplicht
+   exact gelijk en wordt de opgegeven PR eerst tegen de zichtbare
+   groepsinventaris gevalideerd. Oude v1- en v2-notities zonder deze
+   optionele selectie blijven bruikbaar; geen nieuwe autosave,
+   serverpersistence of sessie-vrijgave.
+
+Dezelfde minimale rechten blijven gelden: bronobservaties zijn **geen**
+huidige HEAD-, CI-, review-, branch-protection-, lease-, fix-, merge-
+of productiebewijzen. Een Markdown-export of heropende JSON-sessie
+verandert geen GitHub issue/PR, Notion-claim, CI-workflow, queue of VPS.
+
+## 21 oktober · vanuit bestaande PR alle gekoppelde issues afhandelen
+
+De privé, offline **merge-eerst werkbak** maakt een volledige lokale
+PR→issue-werkstroom mogelijk, zonder extra GitHub-tabbladen of netwerkcalls:
+
+1. Klik bij een bestaande PR-groep op **Bekijk gekoppelde issues in werkbak**,
+   of klik in een issuekaart op **Bekijk alle bronissues van deze PR**.
+   De werkbak maakt het gekozen bestaande PR-nummer zichtbaar en toont alleen
+   de issuekaarten die volgens de al bewaarde bron deze PR noemen — ook als
+   hij bij dat issue niet de primaire PR is.
+2. De andere zoek-/status-/projectfilters worden voor deze expliciete
+   PR-focus gewist zodat een eerder filter geen bronissues verbergt. Het
+   samenvattingspaneel toont hoeveel gekoppelde issues nog handmatig op
+   **Nog te bekijken** staan. Met **Volgende nog te bekijken issue** kun je
+   die kaarten één voor één openen; focus en schermpositie gaan mee, zonder
+   de daadwerkelijke issue-, PR-, queue- of GitHub-status te veranderen.
+3. Je kunt per issue en PR een aparte lokale notitie/status bewaren.
+   **Terug naar alle bronissues** of **Wis filters** schakelt de PR-focus uit.
+   Een export blijft uitdrukkelijk de **volledige broninventaris** bevatten,
+   inclusief verborgen kaarten; brongegevens en opmerkingen worden niet
+   stilzwijgend weggelaten bij een ingeschakelde UI-filter.
+
+De werkbak telt uitsluitend **issuevermeldingen in het reeds opgeslagen,
+begrensde bronvenster**. Een PR-link is geen bewezen fix voor al deze issues,
+geen actuele claim, geen CI-/reviewbewijs en geen merge- of deployrecht.
+Niet opgenomen issues/PRs zijn **ONBEKEND**, niet opgelost. De operator
+kan met het bestaande export-/herimportproces de menselijke voortgang
+bronvast bijhouden, zonder scripts, tests, externe APIs of runtime-mutaties.
+
+## 21 oktober · bron-HEAD direct in issue→PR-overdracht
+
+De bestaande **issue-first merge-werkbak** toont nu bij de primaire PR,
+iedere alternatieve bestaande PR en elke gegroepeerde PR één naar de originele
+GitHub-commit verwijzende **waargenomen bron-HEAD**, mits de tweede exacte
+PR-HEAD-bronlezing stabiel was, het SHA canoniek is en het issue-/bronvenster
+niet verouderd of onderling onsamenhangend is. Bij ontbrekende of onzekere
+bron blijft **Bron HEAD ONBEKEND** staan; er wordt geen veilige current-HEAD,
+CI-success of mergevrijgave geconstrueerd.
+
+Wanneer meerdere bronissues dezelfde PR noemen, moeten hun HEAD-receipts
+identiek zijn voordat de werkgroep één link mag tonen. Tegenstrijdige data
+faalt gesloten. Het privé export-/herimporttoken bindt nu tevens aan deze
+broncommits en aan alle bron-PR-kandidaten; een oude privé-opvolging kan niet
+stilzwijgend aan een andere bron-HEAD gekoppeld worden. Legacy-sessies
+behouden uitsluitend hun bestaande beperkte oude broncontract.
+
+Dit is uitsluitend **navigatie van opgeslagen, read-only GitHub-evidence**.
+De bron kan inmiddels gewijzigd zijn. Huidige claim, exact-head verplichte
+CI, onafhankelijke review, main-branch protection en release-eigenaarschap
+blijven afzonderlijk bij GitHub/Notion te controleren. De functie wijzigt
+geen claims, workflows, PRs, runner, live queue of productie; er zijn geen
+handmatige QA- of regressiesuites geschreven of gedraaid.
+
+## Wat dit voor de operator oplevert
+
+Voor een voorgestelde codewijziging toont het programma uit welke **momenteel open GitHub-pullrequests** dezelfde bestandspaden worden aangepast. Het is een read-only broncontrole **vóór** de eigenlijke implementatie: je kunt de bestaande PR openen en een overlap gericht afstemmen. Dit is geen eigenaar-, claim-, release- of mergebesluit.
+
+Deze functie is **apart** van de bredere zSentinel herstelcockpit in PR #1563, de offline menselijke workbench in PR #1560 en het bestaande zCloud-specifieke PR-loze-branchonderzoek. In alle gevallen blijven actieve Notion-claims en het werkelijke bestandsleasebeheer de autoritatieve bron voor eigenaarschap.
+
+## Eén commando, zonder VPS-rechten of live writers
+
+Vanaf de repository root:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project supa --path src/ --path server/app.mjs \
+  --format html > /secure/location/zsentinel-pr-scope.html
+```
+
+De uitvoer kan ook `--format text` (standaard) of `--format json` zijn. Een map wordt altijd aangeduid met afsluitende `/`, bijvoorbeeld `src/`. Zonder die slash is het een doel-bestandspad. De scanner meldt zowel exacte matches als bestand-/mapconflicten in beide richtingen: `src` botst bijvoorbeeld met `src/app.py`, omdat één Git-pad niet tegelijk bestand en map kan zijn. Segmentgrenzen voorkomen dat `src2` als overlap met `src/` wordt gezien. Eén project per run, 1–12 expliciete doelpaden. `--max-prs 24` bekijkt standaard maximaal de 24 recentst bijgewerkte open PR's, maximaal 48. Privérepositories zijn alleen toegankelijk als de GitHub-identiteit daarvoor bevoegd is; `GITHUB_TOKEN` is optioneel en wordt niet naar output geschreven.
+
+De code leest uitsluitend GitHub `GET /repos/{owner}/{repo}/pulls` en `GET /pulls/{number}/files`. De bron is beperkt tot de eerste maximaal 48 open PR's en maximaal 100 bestanden per PR; een bron die te groot is wordt als **onvolledig** gemarkeerd, niet als conflictvrij. De open-PR-heads worden vóór en na de bestandsscan opnieuw gelezen; elke verandering maakt de inventaris onvolledig. Ook hernoemde voormalige bestandspaden worden meegenomen.
+
+**Statuscodes:** `0` betekent geen overlap gevonden in een volledige stabiele open-PR-inventaris (nog steeds géén claimtoestemming); `2` betekent minstens één conflict gezien; `3` betekent onvolledige of geweigerde bron. Het JSON-resultaat heeft altijd `file_edit_authorized=false`, `claim_authorized=false`, `merge_authorized=false` en `writes_performed=false`.
+
+## Grenzen die niet mogen worden overschreden
+
+- Geen GitHub/Notion/SQLite-writes, claims, dispatch, workflow-reruns, runner-restarts, servicebeheer, releases of betaald runnergebruik.
+- Verifieert **niet**: actieve Notion-/zCloud-leases, PR-loze branches, lokale ongecommitte wijzigingen, tijdsgebonden eigenaarafspraken, de bevoegdheid voor een release of bestaande verplichte CI-/reviewgates.
+- Een afwezige botsing in de steekproef is nooit bewijs dat een pad vrij is. De operator moet de huidige claim, branches en bestandscope afzonderlijk controleren alvorens een wijziging te maken.
+- GitHub-prioriteiten en oude open PR's autoriseren geen overname van andermans taak. Bij onvoldoende netwerkrechten, bronwijziging tijdens de scan of teveel geopende PR's eindigt het programma conservatief.
+- Gebruik dit alleen als **standalone pre-edit observatie**; het is niet gekoppeld aan een automatisch werkdistributieproces en bevat geen planner- of scheduler-hook.
+
+Relateert aan het zSentinel-herstelwerk en GitHub collision/ownership-scope, maar **lost runner-P0 #1326, hosted billing #1523 of writer-conflict #677 niet op**. Deze P0's blijven uitsluitend bij de aangewezen bevoegde eigenaren.
+
+
+## Open PR als bron: automatisch alle gewijzigde bestanden vergelijken
+
+Een bestaand feature-PR kan ook rechtstreeks als bron dienen, zonder zelf 12 bestandspaden te kopiëren:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 \
+  --format html > /secure/location/vergelijk-pr-1567.html
+```
+
+De GitHub-bron-PR moet exact bestaan, open zijn en bij het gekozen canonieke project horen. De tool leest maximaal 80 gewijzigde bestandsnamen (inclusief hernoemde oude paden), sluit de bron-PR uit van de conflictregels, scant de andere open PR's en herbevestigt de bron-HEAD vóór de uitslag. Bij een veranderde bron-HEAD is de gegevensdekking **onvolledig**. De JSON bevat de exacte bron-PR URL en SHA. Het overzicht is nog steeds slechts een GitHub PR-steekproef, geen Notion-claim- of mergevrijgave. Met extra `--path` kunnen naast de PR ook geplande nieuwe bestanden worden vergeleken.
+
+De POSIX-padparser accepteert Unicode en routebestanden zoals `src/app/(dashboard)/page.tsx` en `src/routes/[slug].ts`. Absolute paden, `..`, control-tekens en backslashes worden geweigerd; HTML-links en bestandsnamen worden veilig ge-escaped. Een bestaand bestand met ongebruikelijke naam leidt dus niet automatisch tot een valse GitHub-bronstoring.
+
+GitHub's PR-bestandsscope kan óók veranderen wanneer alleen de doelbranch opschuift. Daarom pint de bron zowel `base_sha` als `head_sha` van alle bekeken PR's. Een afwijkende basis of head bij de tweede inventarislezing (of bij de expliciet geselecteerde PR) wordt als gewijzigde/onvolledige bron behandeld. Het resultaat blijft altijd niet-autoriserend.
+
+
+## Projectbrede open-PR-conflictkaart
+
+Het vorige werk vereiste een geselecteerde PR of bestandspad. Nu is er ook één commando om zonder handmatig invoerwerk de *huidige open PR's binnen één project onderling* te vergelijken:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --max-prs 48 --format html \
+  > /secure/location/zsentinel-pr-conflictkaart.html
+```
+
+De output toont paren met **dezelfde bestandsnamen**, de links naar beide bestaande PR's, de waargenomen aantallen en maximaal 24 gedeelde bestandspaden per paar. De resultaten worden op het aantal gedeelde bestanden gesorteerd, zodat de operator eerst potentieel grote overlap inspecteert. Dit is **geen Git-mergeconflict-analyse**, geen eigendomsbeslissing en geen automatisch instructie tot sluiting of merge.
+
+De bron is een begrensde GitHub-GET-steekproef: maximaal 48 open PR's worden geïnspecteerd, op elk maximaal 100 bestandspaden, en maximaal 200 botsende PR-paren weergegeven. De bron-HEAD en base-SHA van alle PR's worden in de vóór-/nalezing gepind; padhernoemingen tellen voor zowel oude als nieuwe naam. Een eerste pagina met precies 48 PR's, de ingestelde limiet, een bestandslijst met precies 100 records, veranderde PR-identiteit of afgekapte paarlijst zijn expliciet onvoldoende voor een volledige open-PR-inventaris. GitHub/Notion/workerclaims worden nooit gewijzigd.
+
+*Exitcode*: `2` betekent zichtbare bestandsoverlap, `3` onvolledige bron zonder overlap, `0` complete stabiele open-PR-steekproef zonder overlap. Ook code `0` geeft geen claim-, edit-, merge- of deployrechten.
+
+Deze conflictkaart maakt de grote open-PR backlog bespreekbaar voordat een worker bestaand werk dupliceert. Eventuele bronbotsingen moeten eerst langs de echte eigenaar/lease- en reviewprocedure. Een oude open PR is nooit op zichzelf bewijs van actuele eigenaarschap.
+
+
+## Portfoliooverzicht voor de vliegende keep: 1–3 projecten
+
+Dezelfde bestaande read-only GitHub-bron kan nu meerdere **verschillende canoniek geregistreerde** projecten in één run bekijken. Dit is vooral nuttig als zSentinel een geblokkeerde release moet parkeren en een andere onafhankelijke backlog wil inspecteren.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --project haxlab \
+  --max-prs 10 --format html \
+  > /secure/location/zsentinel-portfolio-pr-conflicten.html
+```
+
+Ook ondersteund: `--format markdown` (een direct leesbare, handmatig te delen PR-handoff), `--format text` en `--format json`. De Markdown-uitvoer is een privé-operatorresultaat op stdout: er wordt **niets** automatisch geüpload naar GitHub, Notion of het zCloud-portfoliosysteem.
+
+De maximale bronbelasting per run is **3 projecten × (16 open PR-file GET + 2 open PR-list GET) = 54 publieke GitHub GET-aanvragen**. Standaard bekijkt het programma 10 open PR's per project (maximaal 36 GET over drie projecten), zodat het onder de typische anonieme primaire GitHub API-uurgrens blijft. Rechten, huidige quota en latency kunnen alsnog een bron weigeren; een geweigerd project krijgt `source_status=unavailable` en blokkeert **niet** het onafhankelijke inzicht van een ander project. Dat geeft nooit een kunstmatige `0 conflicten` voor een geweigerde bron.
+
+Dit is **broninspectie, geen autonome werktoewijzing**: een botsing kan de operator helpen een bestaande PR te hergebruiken, maar deze tool mag geen claim-lease overnemen, merge doen of runner herstellen. Het portfoliorapport gebruikt uitsluitend `observed_*`-velden en zet alle autorisatieflags expliciet op `false`.
+
+De drie functies kunnen apart worden gebruikt:
+1. `zsentinel_pr_scope_guard.py --project PROJECT --path FILE`: gericht geplande bestanden vergelijken.
+2. `zsentinel_pr_scope_guard.py --project PROJECT --source-pr NUMMER`: één bestaande PR vergelijken met de rest.
+3. `zsentinel_pr_scope_portfolio.py --project PROJECT [--project ...]`: een read-only conflictkaart over meerdere projecten.
+
+
+## Onafhankelijke kandidaat-PR's: uitsluitend afwezigheid van bestandsbotsing
+
+De single-project-conflictkaart en de nieuwe portfolio-overzichten tonen óók een aparte lijst **"Geen gedeelde paden in de steekproef"**, met directe PR-links. Dit zijn bestaande open PR's die in de geraadpleegde PR-window geen exacte bestandsnaam delen met een andere bekeken open PR. Daardoor kan een operator gericht naar onafhankelijk *potentieel uitvoerbaar* productwerk kijken in plaats van alleen botsingen.
+
+Deze vermelding is **niet** gelijk aan "vrij", "claimbaar", "goed voor merge" of "geen git-mergeconflict". De volgende bewijzen ontbreken nog altijd: Notion en SQLite claim/lease-eigenaar, ongeregistreerde PR-loze branches, uncommitted work, upstream veranderingen, verplichte CI, onafhankelijke review en release-autorisatie. Zelfs bij `source_coverage_complete=true` blijven autorisatievelden false.
+
+Als een portfolio-uitvoer meer botsingskaarten oplevert dan de begrensde zichtbare selectie, toont de UI nu expliciet **"bronoverlap > uitvoerlimiet"** in plaats van een volledig verslag te suggereren. Andere projecten blijven leesbaar wanneer één GitHub-repository een fout retourneert.
+
+
+## Directe, brongebonden Markdown-overdracht
+
+Alle drie de ingangen ondersteunen nu `--format markdown`. Deze schrijft een operatorleesbare handoff op stdout met echte GitHub-PR-links, bronmoment, geobserveerde bestandsbotsingen, brononzekerheid en expliciete geen-autorisatie-waarschuwingen. Bijvoorbeeld:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --format markdown
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --format markdown
+```
+
+De handoff hoeft niet als JSON aan een eigenaar te worden uitgelegd. De tekst veroorzaakt geen issue-comment, Notion-update, claim, GitHub-merge, betaalde job of VPS-mutatie. Alle bestandsvergelijkingen blijven read-only; bij onvolledige GitHub-overzichten worden suggesties van ogenschijnlijk disjuncte PR's **onderdrukt**.
+
+
+## Werkend geïntegreerd productscherm: issues + bestaande PR's + bestandsscope
+
+Met het nieuwe `scripts/zsentinel_issue_scope_cockpit.py` combineert zSentinel **de reeds op main beschikbare Product Delivery Workbench-bron** met de verse read-only open-PR-bestandsscopecontrole. Geen aparte duplicerende GitHub-issuecrawler en geen aanpassing aan de nog niet gemergede herstelrouter (#1563).
+
+**Stap 1 —** maak een eigen `zsentinel-product-delivery-triage-v1` JSON-rapport via de bestaande, op main aanwezige `scripts/zsentinel_product_delivery_board.py`; gebruik de gedocumenteerde optionele lokale issue/retry/claims/PR-bronparameters van die module. Bewaar het als privébestand buiten de repository.
+
+**Stap 2 —** maak uit die bron **één actueel cockpitoverzicht** zonder opnieuw GitHub-issues te lezen:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --issue-board /secure/location/product-delivery-board.json \
+  --project cloud --project supa --max-prs 10 \
+  --format html > /secure/location/issues-en-bestandscope.html
+```
+
+Zonder `--project` kiest het programma automatisch maximaal drie projecten met P0 vóór P1 vóór P2 vóór ongespecificeerde issues (en vervolgens meer productissues). Dit is **weergaveprioriteit** en neemt nooit een Notion- of zCloud-claim over. Beschikbaar: `--format html`, `json`, `text` of `markdown`.
+
+Het programma hergebruikt `zsentinel_operator_workbench.read_source_and_sha` en `validated_view` uit het reeds gemergede hoofdproduct: dit is de bronvalidator, met gebonden SHA-256, veilige bounded/no-follow bestandstoegang, issueidentiteiten en niet-autoriserende schema-eisen. Vervolgens koppelt het de bestaande issue→PR-verwijzingen aan per-project beperkte live GitHub-bestandsscopewaarnemingen. Het product toont:
+
+- Prioriteit en issue-link; expliciet mensbevoegde P0 #1326 en #1523 **alleen** voor infra/billing-eigenaar.
+- Bestaande PR-kandidaten **eerst**, met eventuele geobserveerde bestandsbotsing met een tweede open PR; dat is niet gelijk aan een bewezen Git-mergeconflict.
+- Een *geen gedeelde paden*-indicatie uitsluitend wanneer de volledige open-PR-steekproef compleet en stabiel is, de PR daar echt in voorkomt en de twee bronmomenten hoogstens tien minuten uiteenliggen.
+- `source_unknown_or_uninspected` bij ontbrekende PR, brondegradatie, onvolledige file-inventaris of oud bronmoment. Afwezigheid van een issue in deze begrensde bron betekent nooit dat het opgelost is.
+- Alle outputs laten `claims_verified=false`, `may_take_ownership=false`, `merge_authorized=false`, `deploy_authorized=false` en `writes_performed=false`.
+
+Dit scherm is een **operatorintegratie**, geen automatische productiequeue-adapter. Het raakt geen `server.py`, worker/scheduler, GitHub Actions, tests, Notion of live SQLite, doet geen deployments en kan geen beschermde gates omzeilen. Het kan in bron worden geïntegreerd onafhankelijk van de wachtende PR #1563, waarna die herstelrouter op zijn eigen autorisatiepad blijft wachten.
+
+
+### Bestaande exacte PR-checks en onafhankelijke review als observatie
+
+Als de canonical `zsentinel_product_delivery_board.py` bij het vormen van de lokale triage-bron een optionele `--prs` exacte-head PR-receipt heeft gekregen, hergebruikt de nieuwe geïntegreerde cockpit deze **al aanwezige** historische status. Het nieuwe scherm toont bij de passende bestaande PR: geobserveerde bron-HEAD, of de toen geobserveerde native checks geslaagd waren en hoeveel approvals de opgeslagen bron meldde.
+
+Er worden hiervoor **geen nieuwe GitHub Actions gestart en geen extra API-calls gedaan**. Een opgeslagen checkstatus wordt expliciet als historisch getoond; niet-beschreven verplichte branchregels, actuele SHA, nieuwe pushes, review-freshness en productieautorisatie blijven **niet geverifieerd**. De PR blijft dus op HOLD voor merge totdat de normale actuele gates apart bevestigd zijn.
+
+
+## Snelle productstand zonder handmatig JSON-bundelwerk
+
+Dezelfde geïntegreerde Product Delivery Cockpit kan nu in **één opdracht** de actuele GitHub P0/P1/P2-productissues én open-PR-bestandsscope ophalen. Daarmee is er een directe bruikbare operatorflow wanneer geen eerder opgeslagen privéproductboard beschikbaar is:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --project supa \
+  --max-prs 10 --format html > /secure/location/zsentinel-live-product.html
+```
+
+De eerder beschreven `--issue-board`-modus blijft voor reproduceerbare, privé brongebonden handoffs; beide routes zijn exclusief, zodat één run niet heimelijk oud en nieuw issuebewijs verwart. Live gebruikt **uitsluitend** de al gemergede, canonieke `zsentinel_product_issue_inbox.collect` en `zsentinel_product_delivery_board.prepare` voor productissues en QA-uitsluiting; het maakt geen tweede issuecrawler, geen queue-mutatie en geen Notion-API-sleutel nodig. Het controleert ook dat de twee bestaande projectregisterlezers dezelfde canonieke repositories opleveren.
+
+Bronbelasting: maximaal 3×(2 issue-lijsten + 1 issue-gerelateerde open PR-lijst + 12 PR-bestandslijsten + 2 PR-lijstbevestigingen) = **51 GitHub GET-aanvragen** bij maximaal drie projecten en `--max-prs 12`. Standaard 10 PR's per project = maximaal 45 GET. Op 403/429 of incomplete hoofdbron worden onzekerheid en bronbeperkingen behouden; een ontbrekend issue is geen opgelost issue en een afwezige PR is geen eigenaarsvrijgave. Er zijn geen writes of CI-triggers.
+
+De live-variant toont een SHA-256 van het door de reeds bestaande triageproducer in het geheugen samengestelde JSON-resultaat als *rapportidentiteit*, **niet** als bewijs dat externe GitHub/Notion-werkelijkheid cryptografisch gepind of volledig was. Het controleert geen actuele officiële claims, bevoegdheden, releasegates of Watch/device-eisen.
+
+
+### Reuse van meer bestaande PR's uit hetzelfde project
+
+De canonieke GitHub productissue-inbox inspecteert uit kostenbeperking slechts een korte reeks actuele PR-beschrijvingen voor issueverwijzingen. De PR-bestandsscopecollector leest echter al een groter, begrensd venster van open PR's. Diezelfde **reeds opgehaalde** PR-beschrijvingen worden nu binnen maximaal 32 verwijzingen per PR uitgelegd als *onbevestigde tekstverwijzingen* naar hetzelfde repository-issue (`#123`).
+
+De geïntegreerde cockpit hergebruikt dergelijke bestaande PR-links alléén bij een compleet/stabiel PR-venster, dekkende bronbody en twee bronmomenten binnen 10 minuten. Per issue worden maximaal vijf PR-kandidaten getoond, met zichtbaar onderscheid tussen `existing_product_issue_board_reference` en `current_open_pr_text_mention_unverified`. Een vermelding is **nooit** bewijs van gefixte code, actieve eigenaar, sluiting of merge-authorisatie.
+
+De bestaande canonieke QA-only titelclassificatie blijft leidend: `QA`/`test`/`regression`/quality-only PR's worden niet als nieuwe productkandidaten voorgesteld (maar zijn nog wél zichtbaar in bestandsbotsingen wanneer zij dezelfde paden raken). Hiermee kan zSentinel meer bestaande echte product-PR's hergebruiken zonder extra GitHub-aanvragen, zonder claim-overname en zonder nieuwe tests.
+
+
+## 20 oktober: productbeslissingen bij overvolle PR-repositories en incidentcontext
+
+**Groot zichtbaar productprobleem opgelost:** bij een groot project als zCloud staan méér open PR's dan één veilige inspectiebatch bevat. Een gedeeltelijke maar **stabiele** open-PR-inventaris mag niet worden voorgesteld als volledig, maar de reeds positief gevonden bestaande PR→issue-koppelingen waren voorheen geheel verborgen. De integratie toont nu zulke **positieve, SHA-gebonden PR-vermeldingen uit de geïnspecteerde steekproef**, met het label `observed_current_open_pr_text_mention_partial_source`. Ongeziene PR's/afwezige vermeldingen worden nooit als onbestaand geïnterpreteerd. Aanbevelingen zonder bestandsoverlap blijven exclusief voor een **volledige** stabiele open-PR-inventaris.
+
+De Product Delivery Cockpit bewaart nu ook de **echte issuetitels, het oorspronkelijke productadvies en de concrete bronhiaten** van de al gemergede Workbench; het vervangt deze niet door korte mechanische routecodes. De operator krijgt praktische Nederlandstalige vervolgstappen, directe link(s) naar bestaande PR's en hun gevonden bestandsbotsingen. HTML is responsief en heeft een **lokale zoekbalk plus filters voor project en prioriteit**. Het filterscript werkt enkel op de reeds in het HTML-document weergegeven kaarten; CSP blokkeert netwerk/fetch, form posts en externe scripts. Er worden geen persoonsgegevens of notities opgeslagen of geüpload.
+
+**Echte bestaande incidentgegevens geïntegreerd zonder eigenaarschap over te nemen:** als een privé opgeslagen canonieke Product Delivery Board een eerder toegelaten read-only queue/retry-, claim- of PR-loze-branchwaarneming bevat, verschijnt een apart operationeel contextblok met geobserveerde hoge claimcycli, verlopen leases, bronadvies en recente branch-overlapkandidaten. De bronmomenten en opgeslagen versheidsvlaggen staan er expliciet bij. Zonder zulke gegevens is de uitkomst **ONBEKEND**, nooit `0` of `hersteld`. De live GitHub-issuenbron levert geen live SQLite/Notion-inventaris en claimt die ook niet.
+
+Voer de cockpit uit met `--live-issues` of exclusief met `--issue-board`. De JSON maakt dit verschil expliciet als `issue_source_mode=live_readonly_github_issues` versus `saved_local_snapshot` en bevat de werkelijke issue-/PR-waarnemingstijd. De brongeheugenhash is een rapportidentificatie, geen vervanging van externe SHA-/autorisatiecontrole.
+
+**Geen QA-workflow gestart of suites aangepast.** Exacte-HEAD verplichte bestaande CI, onafhankelijke review, Notion/zCloud eigenaar, branch protection, zSSH-rechten en production release gates blijven onaangetast; de HTML geeft geen rechten.
+
+
+### Bounded bronverkeer voor grote PR-beschrijvingen
+
+De open-PR-metadata gebruikt nu maximaal **48 PR's op de eerste pagina** in plaats van 100, omdat volledige PR-beschrijvingen bij een groot project de begrensde GitHub-response kunnen overschrijden. De bestandslijsten blijven begrensd tot 100 bestanden per PR. Bij precies 48 ontvangen PR's is de open-PR-inventaris **ONVOLLEDIG/UNKNOWN**, ook als 48 toevallig het werkelijke totaal is. Dit versnelt een bruikbare *positieve* gedeeltelijke PR→issue- en gedeelde-bestandsscopelezing in drukke projecten zonder valse 'geen overlap'-conclusies. Er is geen automatische paginering of tweede claimbron toegevoegd.
+
+
+## Eén bestaande blokkade gericht uitwerken
+
+De live-/offline Product Delivery Cockpit kan nu in dezelfde codebasis een **één-issue-herstelkaart** maken met `--focus-issue`. Hiermee hoeft de operator niet door een volledig portfolio-overzicht te zoeken wanneer al duidelijk is welk P0/P1-issue aangepakt moet worden:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud \
+  --focus-issue 'Zennay/zCloud#1326' \
+  --format markdown
+```
+
+De gefocuste kaart combineert issuetitel, prioriteit, originele Workbench-adviezen/bronhiaten, gevonden bestaande PR's (inclusief positieve vermeldingen uit een beperkte stabiele lijst), geobserveerde bestandsbotsingen en eventuele historische CI-/reviewbewijsverwijzingen. Voor eigenaar-only issues zoals zCloud #1326 of #1523 blijft de tekst expliciet **bevoegde menselijke eigenaar vereist**; er wordt nooit een restart/claim/merge/retry uitgevoerd.
+
+**Nu rechtstreeks opgehaalde live issuebron:** bij `--live-issues --focus-issue` en exact **één geregistreerd** `--project` wordt niet meer gezocht in de beperkte oudste/nieuwste issuewindow. Het programma leest het exacte open issue via de reeds bestaande canonical GitHub GET-helper en gebruikt daarna de ongewijzigde Product Delivery Board-classificatie voor prioriteit, QA-only uitsluiting, claims-unknown en PR-verwijzingen. Dit is zinvol bij oude urgente issues die anders niet in de steekproef voorkomen. De uitvoer krijgt `issue_source_mode=live_exact_selected_github_issue`, **1 directe issue-GET** en vervolgens het bestaande begrensde open-PR-overlaponderzoek. De uitkomst kan geen eigenaar/CI/review/mergegoedkeuring verlenen.
+
+Bij `--issue-board --focus-issue` geldt nog steeds het eerdere, strikte gedrag: het exacte issue moet in de **opgeslagen** board aanwezig zijn. Bij een 404, gesloten status, verwijderde source, of verkeerde repository in directe live-modus is de uitkomst *niet beschikbaar voor deze live open-issueinspectie*, **niet** automatisch "opgelost" of "vrij". QA-only geselecteerde issues worden overeenkomstig het gebruikersbeleid geweigerd; er worden geen tests gestart. Het selecteren verandert de originele private bron-SHA of observatietijd nooit.
+
+
+### Exacte P0-recovery zonder volle GitHub-backlogscan
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud \
+  --focus-issue 'Zennay/zCloud#1326' --max-prs 10 \
+  --format html > /secure/location/p0-runner-eigenaaroverdracht.html
+```
+
+Zonder `--focus-issue` blijft de reguliere productissue-inbox P0/P1/P2-prioriteit en onafhankelijke projecten ondersteunen. Met `--focus-issue` is het exact ene nog open GitHub-issue de bron en kan het veel oudere P0-probleem niet meer door paginering verdwijnen. Voor #1326 blijft de herstelactie bij de geautoriseerde VPS/runner-eigenaar; de browserkaart is bewijs-/overdrachtsinformatie, geen toestemming om de listener te herstarten.
+
+
+## 20 oktober · Bestaande integratiefouten opgelost
+
+De oorspronkelijk geïntegreerde Product Delivery Workbench gebruikt `validated_view()` om een veilige, **bewust verkleinde** lijst kaarten terug te geven. Dit object bevat géén ruwe `title`, `project_operations`, `source_times_utc` of `coverage.branches`. Daardoor verscheen het eerder beschreven productdeel met echte issuetitels en opgeslagen claim-/retry-/branchobservaties in werkelijkheid niet volledig. De cockpit koppelt nu de **volledige, al via de canonical validator gecontroleerde** bronkaart via exacte issue-identiteit, project, prioriteit, PR-verwijzingen, advies en bestaande no-authority-flags aan de verkleinde kaart. Ruwe externe brongegevens kunnen zich daardoor niet als een ander gevalideerd issue voordoen. `--focus-issue` beperkt alleen de weergegeven kaart en behoudt de oorspronkelijke volledige bron-SHA.
+
+**API-venster zonder schijnzekerheid:** de PR-bron haalt maximaal `min(48, --max-prs+1)` PR-metadata op, en leest die exacte beperkte selectie vóór en na de bestandsobservatie. Een volle eerste pagina is altijd **onvolledig**, ook wanneer die mogelijk echt de laatste is. Dit maakt een operatoropdracht over 10 PR's goedkoper/kleiner dan onnodig 48 volledige PR-beschrijvingen ophalen. De direct geselecteerde bron-PR blijft daarnaast head én base opnieuw pinnen.
+
+**Broncapaciteit intern consistent:** per PR kunnen maximaal 32 issueverwijzingen worden geobserveerd, met maximaal 48 PRs in de absolute broncap. De samengestelde incidentkaart accepteert nu veilig maximaal **48 × 32** expliciete verwijzingen; een volle drukke GitHub-repository veroorzaakt dus niet meer een onterecht `unbounded`-falen door de oude veel kleinere interne limiet. Dit staat los van de zichtbare cap van vijf kandidaat-PR's per issue.
+
+**Private handoffs:** openbare issuetitels en opgeslagen mensnotities worden in tekst-/Markdown-overdracht tot één inerte regel genormaliseerd en Markdown-metatekens ontsnapt. Ruwe GitHub-issueinhoud of eerdere operatornotities komen daardoor niet als uitvoerbare instructie, HTML of verborgen meerdere regels over.
+
+De directe `--live-issues --focus-issue`-flow blijft strikt read-only: één exact geregistreerd repository/issue, canonical priority/QA-only screening en dezelfde bestaande triagekaart. Onbereikbare, gesloten of QA-only issues worden niet stilzwijgend als opgelost verklaard.
+
+## Meerdere open PR's per issue · eerst bestaand werk benutten (20 oktober)
+
+De bestaande live PR-bestandsscope ontdekt nu ook een TWEEDE type
+productoverlap: twee of meer actuele open PR-bodyteksten in dezelfde
+GitHub-repository verwijzen naar hetzelfde issue-nummer. Twee PR's
+kunnen immers dezelfde bug proberen op te lossen terwijl ze verschillende
+bestanden raken. Dit komt niet naar voren uit bestandsbotsingen alleen.
+
+De uitbreiding werkt in de bestaande productflows:
+
+- scripts/zsentinel_pr_scope_guard.py --audit-open-prs: open-PR
+  bestandsoverlap EN klikbare issue-PR-groepen met exacte head-SHA's.
+- scripts/zsentinel_pr_scope_portfolio.py: beide signalen in maximaal
+  drie onafhankelijk gelezen projecten, met onbekende bron als
+  fail-closed onbeschikbaar en expliciete afkapgrenzen.
+- scripts/zsentinel_issue_scope_cockpit.py --live-issues: bestaande
+  P0/P1 issuekaarten geven bij meerdere open PR-verwijzingen de route
+  'eerst bestaande implementaties bekijken en eigenaar afstemmen',
+  niet automatisch nieuw duplicerend werk maken. Echte bestandscope-
+  overlap blijft eerst; owner-only incidenten houden hun eigenaarroute.
+
+Alle gevonden koppelingen zijn uitsluitend TEXTERVAREN verwijzingen
+in begrensde open PR's. Een PR met dezelfde issue-verwijzing bewijst
+niet dat de PR het issue oplost, geen huidige claim bezit, review
+heeft of mergeklaar is. De bron classificeert
+same_issue_number_unverified_open_pr_body_text_only.
+Bij volle GitHub-pagina, veranderde heads, onleesbare body,
+API-weigering of afgekapt PR-inventarisvenster blijft afwezigheid
+van overlap UNKNOWN in plaats van claimvrij of mergevrij.
+Eigenaarschap, wijzigingen, merges, runneracties en deploys blijven
+ongeautoriseerd. Geen bestaande QA- of regressiesuite veranderd
+of gestart; de oorspronkelijke CI/review/branch-protection en
+bevoegde release-eigenaar blijven vereist.
+
+Broncode op bestaande PR #1567; nog niet gemerged op main of
+live uitgerold.
+
+## Huidige exact-head PR-reviews en checks · merge-eerst-operator (20 oktober)
+
+Naast bestaande bestandscope- en dubbele issueverwijzingen kent de gecombineerde
+live productcockpit nu optioneel een brongebonden current-head PR-checkreview:
+
+    python3 scripts/zsentinel_issue_scope_cockpit.py \
+      --live-issues --project cloud \
+      --max-prs 10 --inspect-pr-gates --format html
+
+Nieuwe scripts/zsentinel_pr_gate_now.py leest voor maximaal VIER
+canoniek gekoppelde open PR's in huidige P0/P1-prioriteitsvolgorde
+de actuele PR base/head identiteit, check-runs (maximaal 100)
+en ingediende reviews (maximaal 100), daarna de actuele PR base/head
+opnieuw. Bij bronverandering of ontbrekende permissie is de ontvangst
+UNKNOWN, geen positief oordeel. Elke bron vereist maximaal vier
+GitHub GETs en verandert niets aan GitHub/Notion/worker/queue/VPS.
+
+De operatorcockpit toont per gevonden bestaande PR exact HEAD
+(commitprefix), lopende checks, niet-geslaagde checks en getelde
+waargenomen onafhankelijke APPROVED-reviews op diezelfde commit.
+Reviews van de PR-auteur tellen NIET als onafhankelijk; een latere
+CHANGES_REQUESTED/DISMISSED-waarneming op dezelfde exacte HEAD
+wordt niet als goedkeuring weergegeven.
+
+**DIT IS GEEN VOLLEDIGE MERGE-ADMISSIE**: niet alle check-runs hoeven
+verplichte branch protection checks te zijn, de complete actuele
+reviewpolicy en werkelijke claim-/releasebevoegdheid blijven onbekend.
+Een 'mergeable' GitHub bronboolean of aantal groene checks/approvals
+mag nooit automatisch een merge, force push of deploy autoriseren.
+Alle permissionflags in source blijven false; een bevoegde
+GitHub-reviewer/CI-protectie bepaalt de feitelijke toelaatbaarheid.
+De optionele optie is uitsluitend beschikbaar bij --live-issues;
+de eerdere saved-board variant blijft bewust historisch.
+
+De operator ziet een eerlijk gedeeltelijk snapshot; ontbrekende
+reviews/checks bij niet-toegankelijke GitHub zijn UNKNOWN, geen
+vrijgave of bewezen productherstel. Geen QA-/regressiesuites geschreven
+of gestart. Source slechts op open product-PR #1567, niet live gedeployed.
+
+## Current-head gate triage: Check Runs + legacy statuses (20 October)
+
+The optional `--inspect-pr-gates` feature now reads **both** GitHub Check Runs
+(`/commits/{sha}/check-runs?per_page=100`) and independent **legacy commit
+statuses** (`/commits/{sha}/status?per_page=100`) for the exact observed
+PR HEAD. Some mandatory status contexts are reported only through the older
+commit-status API; previously the current-head cockpit could misleadingly
+show zero failing checks when a legacy context was failing.
+
+For each of at most four already referenced PRs, the Dutch HTML, text,
+Markdown and JSON issue views now distinguish legacy-context success,
+pending and failure/error from Check Run results. Earlier status entries
+on the *same context* are deduplicated by highest observed GitHub status ID,
+so a superseded error is not automatically treated as a current failure.
+A full 100-status page is explicitly **potentially truncated**. Missing,
+unavailable, changing-head, malformed or truncated sources never turn into a
+positive merge conclusion. The request bound increased from **4 to 5 GETs
+per PR** (two PR snapshots, Check Runs, commit statuses and reviews): at most
+20 requests for the four-PR desk, plus the existing separately bounded issue
+and scope collection.
+
+The cockpit also gives an **observation-based, non-authorizing human next
+step**: inspect incomplete sources, fix a current failure with the PR owner,
+wait for existing pending CI, handle changes requested, verify absent check
+evidence, obtain independent exact-head review, or independently verify
+required branch/release rules. No branch-protection API rule inventory or
+independent owner/Notion lease approval is inferred; even all observed green
+checks and one approval do **not** authorize merge, dispatch or deployment.
+
+Example, still strictly read-only:
+
+```sh
+python3 scripts/zsentinel_issue_scope_cockpit.py --live-issues \
+  --project cloud --inspect-pr-gates --max-prs 10 --format html \
+  > zsentinel-live-issue-gates.html
+```
+
+Use normal protected GitHub merge/review gates and owner authorization
+separately. No QA/regression suite, runner workflow dispatch or production
+write is part of this change.
+
+
+## 20 October · Direct current-HEAD JSON source for the offline Merge-first Desk
+
+The existing `scripts/zsentinel_pr_gate_now.py` now has a direct
+**read-only operator CLI**, so the offline zSentinel workbench does not
+need a separately assembled mock report or a full issue crawl. Give it
+between one and four canonical existing `Zennay/repo#number` references:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1560' --pr 'Zennay/zCloud#1567' \
+  --output ./private-pr-gate-observation.json
+```
+
+The output file is **create-only** (exclusive, no symlink final component,
+mode 0600), never overwrites an existing receipt, contains at most 4×5
+bounded GitHub GET observations, and carries the existing
+`zsentinel-current-pr-gate-observation-v1` schema. GitHub access comes
+from an already configured `GITHUB_TOKEN` environment variable; no
+token or raw response body is written into the output. If a PR source is
+unavailable, the result is an explicit unknown record rather than a
+success/merge claim. Without `--output` the tool prints JSON to stdout
+for deliberate human redirection, not an automatic upload or service.
+
+Load the saved JSON into the offline Product Delivery Workbench in existing
+[PR #1560](https://github.com/Zennay/zCloud/pull/1560) via
+**Import GitHub PR-gate snapshot**. The workbench matches only canonical
+already-captured PR links, marks old source observations stale, groups
+failed/pending/review-blocked PRs and enables human-reviewed Markdown/JSON
+handoffs. **Neither open PR has yet been merged into main merely because
+this integration code exists.** The operator must still check the real
+current head, mandatory exact-head CI, independent review, permissions and
+protected-main rules before a normal authorized merge.
+
+No GitHub issue, pull request, workflow, Notion task, queue, lease,
+runner, SSH target or live production application is modified by this
+one-shot source generator. No QA suite, regression or CI rerun is created
+or invoked.
+
+
+### 21 oktober · concept-PR's en actuele mergeconflicten krijgen eigen eigenaaractie
+
+De bestaande exacte-HEAD gatebalie onderscheidt nu expliciet **concept-PR**, **GitHub mergeable=false** (actueel mergeconflict) en **mergeable=null** (GitHub heeft de mergeability nog niet bepaald). Deze labels komen mee in JSON (`draft_at_read`, `merge_conflict_observed`, `mergeability_not_yet_evaluated`) én in de Nederlandse CLI-tekst. De live issue/PR-cockpit vertaalt de bijbehorende `human_next_gate_step` naar een concrete eigenaaractie, en het offline batchoverzicht accepteert dezelfde nieuwe statussen en toont een opgeslagen conflict afzonderlijk. Oude opgeslagen receipts zonder deze velden blijven historisch/onbekend; ze worden niet ten onrechte als conflictvrij behandeld.
+
+Een concept vraagt eerst productafronding en reviewklaar maken door de bevoegde PR-eigenaar. Bij `mergeable=false` moet de eigenaar eerst de actuele basisconflicten oplossen. Bij `mergeable=null` is aanvullend huidig GitHub-bewijs nodig. Succesvolle checks of een waarneembare `mergeable=true` leveren **nooit** zelfstandig review-, branch protection-, claim- of deployautorisatie op. De scanner leest beide PR-identiteiten rondom de gatebronnen, weigert een tussentijds gewijzigde draftstatus en schrijft geen GitHub-/Notion-/queue-/VPS-state. Bestaande exact-head CI, onafhankelijke review en eigenaarstoestemming blijven vereist.
+
+### 21 oktober · Exacte-HEAD reviewverzoeken expliciet als lopend werk
+
+De bounded current-head balie leest nu `requested_reviewers` en `requested_teams` van de bestaande GitHub-PR tegelijk met de exacte HEAD, base, checks en ingediende reviews. **Een reviewverzoek is geen goedkeuring.** De aantallen worden na de bronopvraging opnieuw vergeleken met een tweede huidige PR-lezing; een verschoven verzoekenset wordt niet als stabiele PR waargenomen. De output bevat `pending_individual_review_requests_observed`, `pending_team_review_requests_observed`, `pending_review_request_evidence_sha256` en de bronstabiliteitsvlag zonder logins, team-identiteiten of reviewrechten te publiceren.
+
+Zodra op de exact waargenomen HEAD nog geen onafhankelijke goedkeuring bestaat, maar er **wel** een reviewverzoek openstaat, geeft de menselijke gatebalie nu `wait_for_requested_independent_review` in plaats van onterecht `request_independent_current_head_review`. Bij ontbreken van zowel goedkeuring als verzoek blijft het verzoekadvies bestaan. Conceptstatus, mergeconflicten, incomplete bronnen, CI-fouten, queued checks en expliciete wijzigingsverzoeken worden eerst beoordeeld. Het is één read-only GitHub-transactie per PR (geen extra GETs, geen automatische revieweruitnodiging).
+
+Alle operatoroppervlakken gebruiken dezelfde Nederlandse gatevertaling uit `zsentinel_pr_gate_now.GATE_STEPS_NL`: huidige CLI-text, live issue HTML/tekst/Markdown en opgeslagen batch-HTML/Markdown/tekst. Een historisch opgeslagen verzoek is alleen een bronmoment: oude ontvangsten zonder reviewverzoekkolommen melden **ONBEKEND**, nooit `0` of actuele vrijgave. Private batch-workorders tonen aantallen en herinneren dat verzoeken géén approvals zijn. Bestaande verplichte exact-head CI, onafhankelijke review, protected-main, eigenaarclaim en release blijven onveranderd.
+
+#### Beslissende reviews gaan vóór losse opmerkingen
+
+Een reviewer kan na `CHANGES_REQUESTED` nog een gewone `COMMENTED`-review indienen. Die reactie is geen nieuwe goedkeuring of intrekking; de actuele reviewerbeslissing wordt daarom uitsluitend uit `APPROVED`, `CHANGES_REQUESTED` of `DISMISSED` afgeleid, op exact dezelfde HEAD en met de nieuwste waargenomen beslissings-ID per onafhankelijke reviewer. Bovendien krijgt een openstaand `CHANGES_REQUESTED` een concrete eigenaaractie ook wanneer andere exacte-HEAD checks nog in de wachtrij staan. Dat voorkomt dat het product uitsluitend 'wacht op CI' zegt terwijl de PR-eigenaar al een wijzigingsverzoek kan afhandelen. Dit blijft een read-only steekproef, niet GitHub's volledige vereiste reviewregelset.
+
+### 21 oktober · Portfolio merge-first kan echte reviewvoortgang herkennen
+
+De bestaande eenmalige portfolio-PR-balie (maximaal drie projecten en vier expliciet gecontroleerde current-head PR's) neemt nu ook de *geobserveerde* aantallen openstaande individuele/teamreviewverzoeken en de SHA-256-vingerafdruk van die verzoeken over uit de begrensde dubbele GitHub-lezing. Dit verschijnt in JSON, de Nederlandstalige tekst/Markdown, de offline HTML-kaarten en de menselijke merge-first shortlist. Een verzoek is **nooit** een ingediende approval. De blocker `independent_review_requested_waiting` is bewust anders dan `independent_review_not_seen`: geen dubbele verzoekactie wanneer een reviewer al is uitgenodigd.
+
+De optionele historische PR-gatevergelijking toont nu wijzigingen in de reviewer-verzoekenset als **nieuw bewijs op dezelfde HEAD**, ook wanneer CI en ingediende reviews onveranderd lijken. Het bestaande SHA-256-bronbewijs van de Check Runs, legacy-statussen en reviews werd abusievelijk behandeld als een 40-cijferige Git SHA: dat is hersteld met een strikt 64-hexadecimaal SHA-256-patroon, gescheiden van de 40-cijferige commit/base-SHA. Beide snapshots moeten volledige, stabiele checks, review-verzoeken en geldige fingerprints hebben voor de categorie `same_exact_head_and_gate_receipts_at_two_observations`. Oudere snapshots zonder reviewerbron blijven *incomplete*, nooit automatisch als een ongewijzigde HOLD weggeschreven.
+
+Het product adviseert alleen menselijk vervolgwerk: geen automatische reviewverzoeken, merge, issueafhandeling, CI-rerun, claim, worker-/VPS-ingreep of deploy. Protected main, onafhankelijke review, actieve eigenaarsclaims en exacte-HEAD vereiste CI blijven aparte autorisatievoorwaarden.
+
+### 21 oktober · Merge-first actielijst en privé-CSV zijn consistent
+
+De geprioriteerde operator-actielijst toont nu expliciet hoeveel reviewverzoeken voor personen en teams in de huidige, aan exact HEAD gebonden bron openstaan. Dit staat in de gewone tekst/Markdown, de aparte offline HTML-actielijst, de machineleesbare JSON en in de optionele privé-CSV. De CSV heeft de afzonderlijke kolommen `pending_review_individuals_observed`, `pending_review_teams_observed` en `pending_review_request_fingerprint_sha256` in `current_gate_observation`; de primaire `merge_first_action`-regel bevat eveneens de aantallen. Bij ontbrekende of veranderde bron zijn ze **leeg/onbekend** in plaats van kunstmatig nul. Het gaat uitsluitend om observatie, niet om een ingediende goedkeuring of eigenaarsvrijgave.
+
+De bestaande `csv_formula_inert`, bounded-uitvoer, create-only privé bestandsrechten en nul-autorisatievelden blijven ongewijzigd. Er worden geen GitHub reviewverzoeken aangemaakt en geen CI/jobs geretriggerd. Geobserveerde reviewer- of CI-verandering wordt nooit zonder benodigde exacte-HEAD checks, onafhankelijke review en protected-main/releasebevoegdheid tot merge-promotie verheven.
+
+### 21 oktober · Complete privé-PR-werkopdrachten met reviewactie en overzicht
+
+De bestaande `--format workorders`, `workorders-html`, `workorders-json` en `workorders-csv` routes in `zsentinel_pr_scope_portfolio.py` gebruiken nu dezelfde brongebonden reviewaanvragen als de actuele portfolio PR-gate en de merge-first prioriteiten. De implementatie zit in de **bestaande** `scripts/zsentinel_pr_workorders.py`, zonder extra GitHub-verzoeken of nieuwe PR.
+
+Elke geselecteerde huidige, dubbel gelezen exacte-HEAD PR-werkkaart bevat een optioneel `pending_review_requests` object met aantallen individuele/teamverzoeken en een SHA-256 bronvingerafdruk, uitsluitend wanneer de PR-gate- en aandachtbron dezelfde HEAD, base en verzoekstatus tonen. Ontbreekt de stabiele exact-HEAD bron, dan is de toestand **onbekend** en worden geen schijnbare nullen getoond. Een uitstaand reviewverzoek is een operatorwijzing, nooit een ingediende onafhankelijke goedkeuring.
+
+De privé HTML-werkkaart biedt directe, uitsluitend navigerende links naar **PR/reviews**, de bestaande **PR/checks**-pagina en **bestandswijzigingen**. Markdown bevat dezelfde relevante URLs en reviewaantallen. CSV bevat open reviewaantallen en een SHA-256-bronvingerafdruk op de PR-actie, plus gescheiden read-only rijen voor GitHub-checks en review. De JSON-werkkaart is brongebonden en bevat het `review_request_worklist_summary` met drie categorieën: al aangevraagd, geen open verzoek waargenomen, en onbekende bron. Hetzelfde overzicht verschijnt in HTML, Markdown en CSV.
+
+De HTML blijft één lokaal scriptvrij bestand met strikte CSP; CSV-cellen blijven formuleveilig en bounded, de offline bron wordt exclusief/private 0600 aangemaakt via de bestaande writer. **Geen** automatische reviewverzoeken, CI-reruns, claims, merge, productieacties of extra gates. Voor een merge blijven exacte huidige GitHub-required checks, onafhankelijke ingediende reviews, branch protection, huidige eigenaar en releaseautorisatie noodzakelijk.
+
+### 22 oktober · Actie-eerst werkvoorraad voor bestaande privé-PR-opdrachten
+
+De bestaande offline `zsentinel_pr_workorders.py` operatorbundel sorteert de geselecteerde huidige product-PRs nu op **concreet eigenaarwerk**, **brononderzoek**, **bestaande CI/independent review afwachten**, **protected-main/release-handoff** en **ongewijzigde HOLD parkeren**. Dit zijn *presentatie- en werkrichtingen*, niet nieuwe scheduler-, review- of branchregels. Alle acties vereisen nog steeds actuele HEAD- en claimcontrole bij GitHub en een bevoegde eigenaar. Historische bron die ouder dan zes uur is of op kernpunten onzeker, wordt niet als direct vrij werk aangemerkt.
+
+JSON ontvangt `workstream`, `operator_primary_step`, `operator_action_link` per kaart plus een totaaloverzicht `workstream_summary`. De scriptvrije privé-HTML toont groepsnavigatie met anchors en een korte werkvoorraad; Markdown en privé-CSV bevatten dezelfde volgende acties, inclusief doorklikbare GitHub-links. CSV-cellen blijven formuleveilig en alle uitvoer blijft begrensd. De oorspronkelijke gateactie blijft zichtbaar naast de operationele volgende stap.
+
+**Parallel review versus wachtende CI:** bij een op beide bronlezingen vastgepinde niet-draft PR met `mergeable=true`, volledige check- en reviewbron, uitsluitend bestaande lopende CI, geen wijzigingsverzoeken, geen onafhankelijke approvals en **geen reeds aangevraagd reviewverzoek**, verschijnt een aanvullende handmatige eigenaaractie om alvast onafhankelijke review aan te vragen. Zo verdwijnt deze vrije stap niet achter `wait_for_existing_current_head_checks`. Bij een veranderde/oudere/onvolledige bron wordt zo'n actie niet als uitvoerbaar voorgesteld. Het systeem vraagt zelf **nooit** review aan, start geen CI en geeft geen merge-/deploybevoegdheid.
+
+Voor een concrete brongebonden operatorbundel: voer de bestaande `scripts/zsentinel_pr_scope_portfolio.py` uit met `--inspect-current-pr-gates`, de gewenste `--gate-pr project#nummer`, `--format workorders-html` (of `workorders`, `workorders-json`, `workorders-csv`) en een **nieuw** privé `--output`-pad. Geen QA-/regressie- of CI-rerun maakt deel uit van dit product.
+
+### 22 oktober · Falende GitHub-jobs en lang wachtende CI direct afhandelen
+
+De merge-first werkbank opent bij een daadwerkelijk op de exacte PR-HEAD waargenomen falende **Check Run** of `failure/error` legacy-statuscontext voortaan de bestaande **specifieke GitHub-job** in plaats van uitsluitend een algemene PR-checkslijst. De operatoractie blijft handmatig; de bron geeft geen bevoegdheid om een job opnieuw te starten, te annuleren of te mergen. Naast de primaire actie zijn de overige waargenomen checklinks beschikbaar.
+
+**Lang queued CI:** de bestaande read-only exacte-HEAD GitHub Check Runs worden gecontroleerd op `status=queued` en een geldig GitHub `created_at`-tijdstip. Na **30 minuten** kan een job in de menselijke werkvoorraad voor onderzoek naar runnerlabels, GitHub repository-/runnergroeptoegang en concurrency worden getoond. De bronlezer bewaart `queued_age_seconds_observed`, `queued_attention_30m`, het totale waargenomen aantal en het aantal `queued` jobs waarvan de leeftijd onbekend is. Alle aantallen zijn beperkte **momentopnames**, geen bewijs dat een self-hosted runner offline is of dat een PR automatisch gefaald heeft. Een ontbrekend, ongeldig of toekomstig tijdstip levert **ONBEKEND**, niet een verzonnen ouderdom. Alleen zichtbaar geselecteerde GitHub-checks leveren directe joblinks; verborgen extra's blijven expliciet als onvolledige dekking vermeld.
+
+De status verschijnt in de huidige PR-gate-CLI, portfolio-overzicht, read-only issuecockpit en privé werkorders (JSON, HTML, Markdown, CSV). De operatorwerkvoorraad brengt lang queued jobs naar voren als *onderzoek door eigenaar*, niet als automatische workflow-retry; bij een bestaande falende check heeft die concrete fout voorrang. Een ouder/onzeker PR-bronmoment wordt niet gepromoveerd tot vrije actie. Parallel review aanvragen terwijl CI loopt wordt niet geadviseerd bij een falende legacy-status of onbekende Check Run-toestand. De 30-minutengrens is een gebruikerssignaal en **geen nieuwe CI-/security-/branch-/reviewgate**.
+
+De bekende issue [#1326](https://github.com/Zennay/zCloud/issues/1326) beschrijft verschillende runnerlabel-/repositoryroutes en veranderende runnerstatussen; het product concludeert daarom bewust **niet** dat `zcloud-vps-1` offline is. Operatoren raadplegen eerst de betreffende GitHub-job en de huidige bevoegde eigenaar. Geen runnerwijziging, extra workflowdispatch, claim, SQLite-write, CI-bypass of deploy.
+
+### Direct Dutch triage without exporting JSON
+
+The same bounded CLI supports `--format text` for an immediately readable
+Dutch summary of each explicitly chosen PR:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1560' --pr 'Zennay/zCloud#1567' \
+  --format text
+```
+
+Each record shows the observed exact commit, modern and legacy pending/failed
+contexts, independent current-head approval count, whether any page was
+truncated, and the next **human** gate action. It states explicitly that
+protected-main/owner/release permission has not been established. `--format
+json` remains the default for source-bound import into the workbench; the
+optional `--output` still uses exclusive private 0600 creation in either
+format. The command never merges, retries or deploys and is not a
+substitute for GitHub's live mandatory rules.
+
+
+### Source-bound, merge-first manifest handoff (no manual PR retyping)
+
+The read-only CLI can also consume the **review-only JSON manifest** already
+exported by the offline Merge-first Workbench in
+[existing PR #1560](https://github.com/Zennay/zCloud/pull/1560):
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./zsentinel-offline-merge-first-review.json \
+  --output ./private-current-head-gates.json
+```
+
+This explicitly requested one-shot operation accepts only a bounded,
+strict-UTF-8, regular, non-symlink (when supported by the OS) JSON file under
+1 MiB with the expected `zsentinel-offline-merge-first-review-v1` schema,
+SHA-256 source board identifier, **all four authorization flags false**,
+original canonical Zennay GitHub PR URLs and unique saved PR identities.
+It never trusts saved ownership, prior mergeability or cached CI as live
+authorization. Malformed/unbounded/missing-source inputs stop before any
+GitHub query. It sorts saved PR references P0, P1, P2, Unspecified and
+observes **at most four per batch** using the same existing max-20-read
+bounded current PR gate collector. For a larger source, supply `--batch 2`,
+`--batch 3`, etc. as separate explicit operations with distinct new
+output filenames. Only the chosen batch is observed in each run; the
+output contains `source_review_pr_count`, `source_review_batch_index`,
+`source_review_batches_total`, `source_review_batch_first_pr`, and
+`source_review_batch_count` to make omitted batches explicit.
+
+The GitHub gate receipt embeds the exact imported manifest SHA256 plus the
+original board source SHA256, so the operator can reconcile two saved
+snapshots without claiming they were fetched in one live transaction.
+`--format text` includes this source provenance and warns about any
+omitted fifth-or-later candidates. `--format json` remains the default
+for locally importing the fresh observation back into #1560; importing it
+never grants merge, deploy or claim authority. Source manifests do not
+authorize work, and neither separate PR is considered integrated until
+its own required CI, protected branch and independent reviews complete.
+
+The file reader makes **no edits** to its input. The optional output is
+exclusive-create mode 0600 with no overwrite, and this operation performs
+no QA execution, worker scheduling, Notion writes, PR merge, service change
+or deployment.
+
+
+### Follow-on PR gate batches: never leave the rest invisible
+
+If the manifest lists more than four existing PRs, first collect batch 1 as
+shown above, then choose a **new** output filename for each later batch:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./zsentinel-offline-merge-first-review.json \
+  --batch 2 --output ./private-current-head-gates-batch2.json
+```
+
+For direct `--pr` choices, `--batch` is not allowed. For manifest selection,
+batches are one-based and bounded by the saved candidate count;
+out-of-range requests stop before a GitHub API request. Each output
+remains a separate private 0600 source observation, not a cross-batch
+atomic view of GitHub.
+
+The offline workbench in [#1560](https://github.com/Zennay/zCloud/pull/1560)
+now rejects a supposed manifest-derived receipt if its original
+`source_review_board_sha256` does not exactly equal the currently loaded
+board, or if its batch index/start/count/total do not match the saved
+candidate count. It describes the imported batch number and explicitly
+marks all **other** batches not inspected in that file. These local
+evidence rules never authorize a merge, claim, workflow retry or deployment.
+
+
+## Nieuwe merge-first totaalweergave: meerdere opgeslagen PR-gate-batches
+
+Het bestaande gereviewde manifest uit [PR #1560](https://github.com/Zennay/zCloud/pull/1560) kan meer dan vier PR's bevatten. Het reeds bestaande `zsentinel_pr_gate_now.py` inspecteert daarom maximaal vier huidige PR-heads per GitHub-GET-batch. De nieuwe **offline batchverzamelaar** toont alle afzonderlijk verzamelde bonnen in één overzicht, zonder nieuwe GitHub API-verzoeken of claims te doen:
+
+```bash
+# Verzamel handmatig per batch precies één brongebonden, private gate-bon:
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./merge-first-review.json --batch 1 \
+  --output ./private-gates-1.json
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./merge-first-review.json --batch 2 \
+  --output ./private-gates-2.json
+
+# Groepeer de bewaarde waarnemingen veilig in een nieuw offline HTML-rapport:
+python3 scripts/zsentinel_pr_gate_batches.py \
+  --from-review ./merge-first-review.json \
+  --receipt ./private-gates-1.json \
+  --receipt ./private-gates-2.json \
+  --format html --output ./private-gate-overview.html
+```
+
+Dit operatorresultaat bevat alle ingelezen PR-URL's en waargenomen HEAD-SHA's,
+de voornaamste menselijke blokkade per PR, aantallen ontbrekende batches,
+ontbrekend/veranderd GitHub-bewijs en bronbonnen ouder dan vijftien minuten.
+Daarnaast zijn `--format json`, `--format markdown` en `--format text`
+beschikbaar. Het HTML-resultaat is offline en heeft geen JavaScript.
+
+De tool leest maximaal 32 bestaande bonnen van elk maximaal 1 MiB, met een
+beperkte reguliere bestandstoegang zonder symlinks waar het platform dat
+ondersteunt. Hij hergebruikt de bestaande strikte manifestparser van
+`zsentinel_pr_gate_now.py` en accepteert uitsluitend precies dezelfde
+manifest-SHA, board-SHA, PR-volgorde en batchgrootte als de originele
+prioriteitsgesorteerde bron. De originele reviewbron mag tussentijds niet
+veranderen. Dubbele batch, onverwachte PR/HEAD/autoriteitsvelden of vervalst
+`merge_authorized=true` worden afgewezen.
+
+**Statuscode 0** betekent uitsluitend dat de aangeleverde *opgeslagen*
+gatebonnen compleet, leesbaar en maximaal 15 minuten oud zijn; het betekent
+**nooit** dat een PR klaar is voor merge. **Statuscode 3** betekent
+onvolledige, verouderde of niet-vertrouwde bron. Indien een opgeslagen
+gatebon ontbreekt, wordt uitsluitend dat ontbrekende segment weergegeven;
+andere bonnen blijven bruikbaar als historische operatorinformatie.
+
+Geen van beide statussen controleert de live vereiste branch protection,
+bevoegde onafhankelijke reviewers, actuele PR-heads, Notion-claims,
+productie-release of runner-resourcing. Zelfs alle groen ogende bronbonnen
+kunnen intussen achterhaald zijn. Alle uitvoer bevat expliciet
+`claim_authorized=false`, `merge_authorized=false`,
+`deploy_authorized=false` en `writes_performed=false`.
+
+Standaard wordt op stdout geschreven; gebruik `--output` voor exclusief
+nieuw aangemaakt privaat bestand met mode 0600. Niets wordt automatisch
+naar GitHub, Notion, VPS, workers, queues of een deployment geschreven.
+De beperking van maximaal 32 bonnen betekent dat zeer grote manifests
+expliciet gedeeltelijk blijven, niet stilzwijgend als afgevinkt verschijnen.
+
+
+### Gatebatchresultaat terugzien in de bestaande interactieve issuecockpit
+
+De nieuwe brongebonden, opgeslagen PR-gategegevens verschijnen ook rechtstreeks
+bij de betreffende **bestaande PR-link per P0/P1-issue** in de
+`zsentinel_issue_scope_cockpit.py`-werkbank. Naast het reeds beschikbare
+live-issue- en bestandscope-overzicht ziet de operator de historische
+gatecategorie, laatst opgeslagen menselijke vervolgactie en expliciete
+bronouderdom. Hierdoor blijft de merge-first-afweging zichtbaar op dezelfde
+plek waar de productissues staan, in plaats van twee losse rapporten naast
+elkaar te moeten lezen.
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --issue-board ./private-product-delivery-board.json \
+  --project cloud --from-review ./merge-first-review.json \
+  --saved-gate-receipt ./private-gates-1.json \
+  --saved-gate-receipt ./private-gates-2.json \
+  --format html > ./private-issue-and-gates.html
+```
+
+`--live-issues --project cloud` mag eveneens als issuebron, maar is dan een
+**andere bronwaarneming**, geen atomische GitHub snapshot. De commandovlag
+`--inspect-pr-gates` (echt live, hooguit vier PR's) is bewust exclusief met
+`--saved-gate-receipt` (opgeslagen, historisch). Het JSON-resultaat toont
+`saved_gate_batch_reconciliation` en per gekoppelde PR optioneel
+`saved_reconciled_gate_observation` zonder de bestaande gescheiden
+`live_exact_head_review_checks_observation` te vervalsen.
+
+Ook bij groene opgeslagen signalen blijft `merge_authorized=false`.
+Onvolledige batches, ontbrekende actuele Notion-claims, niet geverifieerde
+branch protection en release-eigenaarschap kunnen nooit verborgen
+mergetoestemming opleveren. Er wordt geen bestaande review, branch,
+testuitvoering, queue of productiedienst gemuteerd.
+
+
+### Doorbouw 20 oktober · volledige manifestcapaciteit en geprioriteerde werkbak
+
+De gecombineerde `zsentinel_pr_gate_batches.py` ondersteunt nu **het gehele
+bestaande manifestmaximum van 300 PR's**, met 75 afzonderlijke bronbatches
+van telkens maximaal vier PR's. Er blijft **maximaal één batch per expliciete
+`zsentinel_pr_gate_now.py`-opvraag**: geen verborgen massale GitHub-poll,
+geen betaalde of background worker en geen automatische CI-reruns.
+
+De HTML-, tekst- en Markdown-overzichten tonen bovenaan **Eerst bekijken**:
+een compacte handmatige merge-first-werkbak met maximaal 24 bestaande
+PR-links, huidige *historisch waargenomen* CI/reviewcategorie en de
+eerstvolgende menselijke actie. De volgorde volgt exact de originele
+P0/P1-eerst gesorteerde reviewmanifestvolgorde. Als een eerdere batch ontbreekt,
+blijven de oorspronkelijke manifestposities behouden; niet de nummering van
+het beperkte ontvangstbestand. Overige PR's blijven in de volledige
+batchsecties zichtbaar.
+
+Batches zijn nooit één gelijktijdige GitHub-snapshot. De uitvoer toont nu
+het **tijdsverschil tussen de oudste en nieuwste bewaarde bronbon**:
+meer dan 600 seconden maakt de bron expliciet incoherent. Ook ontbrekende,
+onbereikbare en ouder dan vijftien minuten opgeslagen bonnen leveren
+statuscode `3` op. In de JSON staan deze niet-autoriserende bronvelden:
+
+- `cross_batch_observation_spread_seconds`
+- `cross_batch_observation_within_10_minutes`
+- `manual_review_queue_preview`
+- `manual_review_queue_hidden_after_24`
+- `all_observations_present_and_recent`
+
+Ook de bestaande interactieve `zsentinel_issue_scope_cockpit.py` toont deze
+bronwaarschuwing en de compacte menselijke werklijst in een uitklapbare
+sectie bij de brongebonden issues. Een ontbrekende of incoherente
+opgeslagen PR-batch laat de overige issuekaarten staan, maar de tool
+geeft statuscode `3` in plaats van een ogenschijnlijk volledige
+merge-first-beoordeling. Dit is geen nieuwe release-, review- of
+toestemmingsgate: het is alleen een correcte aanduiding van incomplete
+**historische waarnemingen**.
+
+`read-only`, `writes_performed=false`, `claim_authorized=false`,
+`merge_authorized=false` en `deploy_authorized=false` blijven bindend.
+Exact-head CI, GitHub-branch protection, onafhankelijke review,
+huidige claims en bevoegd releasebeheer moeten afzonderlijk live worden
+gecontroleerd vóór uitvoering van enige merge of productiehandeling.
+
+
+### Compacte bediening bij grote PR-backlogs
+
+Bij meer dan een handvol afzonderlijk opgeslagen batches toont de offline
+HTML eerst de **brongebonden menselijke werkbak**. Elke volledige batch staat
+daaronder in een toegankelijk uitklapbaar `details`-onderdeel met
+keyboard-focus, het originele batchnummer, waargenomen aantal PR's en
+expliciete historische bronouderdom. Hiermee hoeft een operator niet door
+75 lange geopende bronsecties te scrollen om de P0/P1-opvolging te vinden.
+Dezelfde broninhoud blijft beschikbaar in JSON, Markdown en tekst; alleen
+de visuele weergave is compacter.
+
+Dit blijft een volledig offline document met gewone links, geen scripts,
+geen live GitHub-status en geen automatische workflow- of mergeactie.
+
+
+## Eén commando: actuele PR-botsingen én exacte-head CI/review (optioneel)
+
+De bestaande portfolio-conflictkaart en de bestaande huidige-head PR-gatecollector
+zijn nu geïntegreerd in **dezelfde operatorflow**. Zonder extra optie verandert
+niets en blijft het programma uitsluitend bij PR-bestandscope. Met
+`--inspect-current-pr-gates` selecteert de tool uit de reeds gelezen stabiele
+PR-steekproef maximaal vier bestaande open PRs en vraagt hun actuele
+GitHub-checks, oudere statuscontexten en ingediende reviews op:
+
+```sh
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --project haxlab \
+  --max-prs 10 --inspect-current-pr-gates \
+  --format html --output ./private-zsentinel-current-merge-desk.html
+```
+
+Hiermee ontstaat één offline operatorpagina met naast elkaar:
+bestandsbotsingen tussen bestaande PR's, dubbele verwijzingen naar open
+productissues, en **voor maximaal vier PR's** een apart exact-head
+CI/reviewoverzicht met bron-HEAD, lopende/mislukte checks, waargenomen
+onafhankelijke approvals en relevante menselijke vervolgactie.
+Voor menselijke bediening zijn ook `--format markdown`, `text` en
+`json` beschikbaar. Het bronveld
+`current_live_pr_gate_observation` in JSON is altijd niet-autoriserend.
+
+De selectie gebeurt **zonder extra open-PR-zoekronde**:
+- Alleen eerder dubbel gelezen, stabiele PR-identiteiten komen in aanmerking.
+- Bij gedeelde bestandspaden worden die PR's eerst ter menselijke inspectie
+  aangeboden, daarna PR's die in hun body hetzelfde issue noemen, vervolgens
+  de rest van de bestaande waargenomen PR-volgorde.
+- Maximaal vier PR-gatebronopvragen per run, eerlijk verdeeld over maximaal
+  drie gekozen projecten. De huidige exacte PR-HEAD en base-SHA worden
+  vergeleken met de opgeslagen file-scope-bron. Bronverandering = UNKNOWN,
+  nooit een groen of mergeklaar oordeel.
+- Elke PR gebruikt de **bestaande** `zsentinel_pr_gate_now.py`-broncollector
+  (maximaal vijf GitHub GETs per PR). De extra limiet is **20 GETs**;
+  volledige standaardvraag maximaal drie projecten × twaalf GETs plus
+  twintig = 56 GETs. Gebruik een geautoriseerde `GITHUB_TOKEN` wanneer
+  rate limits dit vereisen. Er wordt niets opnieuw getriggerd.
+- Projecten met onbereikbare of tijdens het lezen veranderende scopebron
+  krijgen géén verzonnen PR-gate-uitslagen; andere onafhankelijke projecten
+  kunnen wel worden weergegeven. Ongecontroleerde PR's en brononvolledigheid
+  worden expliciet genoemd.
+
+De bestandsinventaris en de gate-inventaris zijn **twee opeenvolgende**
+waarnemingen, geen atomisch GitHub-snapshot. Zelfs de vier gevonden
+exact-head CI-uitslagen bewijzen nog niet dat **alle verplichte branchregels,
+Notion/workerclaims, onafhankelijke reviewpolicies of releasebevoegdheid**
+zijn vervuld. `merge_authorized=false`, `claim_authorized=false`,
+`deploy_authorized=false`, `writes_performed=false` blijven expliciet
+van kracht.
+
+`--output` is optioneel en maakt een **nieuw**, niet te overschrijven
+privébestand met mode 0600 en fsync. Het programma print dan geen
+privébroninhoud of lokaal bestandspad in workerlogs. Zonder `--output`
+blijft de bestaande stdout-interface bruikbaar. Het resultaat wordt niet
+automatisch in zCloud geïmporteerd en veroorzaakt geen queue-, claim-,
+GitHub-mutatie, workflowdispatch, CI-rerun of production deploy.
+
+
+### Productselectie bij optionele actuele gatecontrole
+
+De geïntegreerde `--inspect-current-pr-gates`-optie gebruikt nu ook de
+reeds in de huidige PR-inventaris vastgestelde titelclassificatie uit
+`zsentinel_product_issue_inbox.py`. Een **QA-only/test-only PR-titel**
+wordt niet als zelfstandig product-merge-werk naar voren geschoven;
+dat voorkomt dat oudere quality-validation-taken opnieuw capaciteit
+vragen onder het product-delivery-beleid van 17 oktober.
+
+Deze classificatie is beperkt tot de *waarneembare PR-titel*: een
+feature-PR is daardoor niet bewezen veilig, vrij of zelfstandig eigendom,
+en een overgeslagen QA-PR wordt **niet automatisch gesloten**. De
+bestandsbotsingskaart blijft alle open PR's inspecteren, zodat gedeelde
+bronpaden en actieve mogelijke collisions zichtbaar blijven. Alleen de
+extra maximaal vier GitHub-check/review-GET-kandidaten zijn
+productgericht geselecteerd. De JSON/tekst/HTML toont het aantal
+overgeslagen QA-only titels; elke bron blijft strikt read-only.
+
+
+### Richt de gecombineerde live cockpit op specifieke bestaande PR's
+
+Normaal kiest de operatorfunctie automatisch maximaal vier eerder waargenomen
+product-PR's in een eerlijke portfolioselectie. Voor daadwerkelijk
+**merge-first** opruimen van een bestaande P0/P1-PR kan de gebruiker nu ook
+zelf 1–4 bestaande PR-referenties aanwijzen, zonder extra open-PR-query of
+QA-only-werk te starten:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --gate-pr cloud#1563 \
+  --format html --output ./private-zsentinel-focused-prs.html
+```
+
+`--gate-pr` accepteert uitsluitend een bestaande canonieke
+`project#PRnummer`-referentie bij een van de geselecteerde projecten.
+Als de PR in de huidige **dubbel gelezen stabiele** recente product-PR-lijst
+voorkomt, wordt de daar waargenomen HEAD/base gebruikt. Zo niet, voert
+zSentinel een gerichte aparte bronlezing van **exact die expliciet genoemde
+bestaande PR** uit: `selected_source_pr` leest canonieke open-PR metadata en
+de pagineerbare veranderde-bestandenlijst (maximaal vier extra GitHub GETs:
+PR-metadata plus maximaal drie bestandspagina's).
+Alleen een geldige open PR van het gekozen geregistreerde project met
+product-PR-titel en complete bestandslijst (maximaal 240 unieke paden,
+waarbij hernoemde oude paden meetellen) kan door.
+Bij afwezig, QA-only, ongeldige/truncated bron of netwerkfout wordt **alleen
+die gekozen PR** als `direct_selected_pr_unavailable_or_not_product` met
+onbekende HEAD en **geen mergevrijgave** opgenomen. De andere onafhankelijk
+gekozen en beschikbare PR's worden nog wél gelezen; het overzicht valt
+dus niet volledig om door één externe GitHub-bronfout. De HTML/tekst/JSON
+toont het aantal onbereikbare of geweigerde gerichte PR's en exitcode 3
+bij incomplete dekking. Ook buiten het recente PR-venster kan de operator
+daardoor een oudere P0/P1-product-PR gericht inspecteren zonder de hele
+backlog te downloaden.
+
+Voor oudere gericht gelezen PRs toont de cockpit daarnaast uitsluitend
+**positief waargenomen bestandsbotsingen** tegen de al eerder gelezen recente
+PR-steekproef: directe PR-link, huidige-HEAD-op-het-bronmoment,
+aantal overlappende paden en een beperkte lijst van maximaal twaalf namen.
+Deze overlappende bestandspaden veroorzaken geen nieuwe GitHub-GETs.
+Alle bronoverlap is tijdelijk, gedeeltelijk en geen bewijs van een
+echte Git-mergeconflict of actieve eigenaar. Geen overlap in de beperkte
+steekproef betekent nooit dat de oudere PR geheel conflictvrij is.
+
+De extra gate-API-grens blijft **maximaal vier PR's × vijf GETs** plus
+**maximaal vier afzonderlijke scoped GETs per expliciet gericht opgevraagde
+oudere PR (één metadata plus maximaal drie filepagina's; ook bij onbereikbare
+bron voor de reservering)**, dus maximaal **36 extra GETs**. De enige automatische bijwerking bij een mislukte
+gerichte bron is een expliciet onbekende operatorregel, niet een
+claim-/merge-/deployactie.
+`current_live_pr_gate_observation.mode` onderscheidt expliciet
+gekozen PR's van de automatische beperkte shortlist;
+`explicit_selected_prs` bevat uitsluitend die brongebonden
+project-PR-referenties. Het huidige exacte-head CI/reviewbewijs is
+niet hetzelfde als de vereiste branch protection, onafhankelijke review
+voor merge, een geldige actuele eigenaarclaim of releasebevoegdheid.
+Alle autorisatievelden blijven `false`; er worden géén merges uitgevoerd.
+
+
+### Live gate-cockpit: volledige blokkade-informatie en bronmoment
+
+De samengevoegde optionele live-workbench geeft naast de oorspronkelijke
+`human_next_gate_step` ook een **Nederlandstalige actuele blokkadecategorie**
+`human_gate_blocker` per PR terug. De operator ziet nu afzonderlijk:
+
+- Onbereikbare of tijdens twee waarnemingen gewijzigde HEAD/base;
+- Ontbrekende, niet volledige of afgekorte Check Runs, legacy commit-statussen
+  en reviews;
+- Expliciet mislukte Check Runs **of legacy statuscontexten** (die anders
+  onzichtbaar bleven wanneer alleen Check Runs werden getoond);
+- `github_mergeable_boolean_observed=false` als waargenomen
+  GitHub-mergeconflict, `null` als nog niet berekende mergeability;
+- Draft-PR's, op de exacte HEAD gevraagde wijzigingen en lopende
+  checks/legacy-statussen;
+- **Geen enkel waargenomen Check Run of legacy statuscontext** als
+  onbekende verplichte CI, niet als groene CI;
+- Ontbrekende onafhankelijke actuele-HEAD-approval;
+- Als laatste de **altijd afzonderlijk te verifiëren** branchregels,
+  huidige eigenaar/claim en releasebevoegdheid.
+
+De bron levert `observed_gate_blocker_counts`, expliciete
+`check_runs_total_observed`, `observed_legacy_failure_or_error`,
+`observed_exact_head_changes_requested` en `draft_at_read`.
+De HTML/text/Markdown-uitvoer toont deze indicatoren daadwerkelijk per PR
+en onderstreept dat het géén automatische mergebeslissing is.
+
+Oudere rechtstreeks opgehaalde `--gate-pr` PR's krijgen bovendien
+`observed_in_recent_pr_collision_sample=false`, een afzonderlijke
+lijst van **positief waargenomen** `sampled_file_overlaps_observed` en
+`complete_file_collision_coverage_verified=false`. Het overkoepelende
+`source_coverage_complete` wordt bij iedere uit-het-venster afkomstige
+PR uitdrukkelijk `false`; de CLI geeft dan statuscode 3. Zo kan nooit
+onbedoeld een oude volledig-dekkende PR-lijst worden gecombineerd met
+een nieuw rechtstreeks gevonden PR en vervolgens als compleet verschijnen.
+De werkbank toont de UTC-tijd van de gatebron en blijft bij maximaal
+vier gate-PR's, maximaal 28 aanvullende GETs in directe-PR-modus
+(maximaal 20 in de automatische modus; direct/gericht maximaal 36). De file-overlapstatus is
+gedeeltelijk, zelfs als nul paden overlappen.
+
+Er worden geen PR's gemerged, geen branchregels of CI overgeslagen,
+geen Notion-/workerclaims genomen en geen workflows of VPS-diensten
+opnieuw gestart.
+
+
+### Uitbreiding: grote gerichte product-PR's zonder onbeperkt GitHub-verkeer
+
+De optionele `--gate-pr`-route heeft een afzonderlijke begrensde bestandslezer
+`changed_paths_focused` gekregen. De gewone single-project- en portfolio-
+bestandsinventarissen houden hun bestaande goedkope limiet: **maximaal
+één bestandspagina per bekeken PR**. Alleen een door een operator expliciet
+gekozen oudere PR kan maximaal **drie filepagina's van elk honderd regels**
+ophalen. De bron wordt afgewezen bij dubbele file-identiteiten, ongeldig
+formaat, meer dan **240 unieke paden**, of een derde pagina met precies
+100 entries (mogelijk onvolledige verdere pagina's). Voor de laatste
+gedeeltelijke pagina is de bron wel volledig; oude en nieuwe namen bij
+hernoemen worden beide als paden geteld.
+
+De operator ziet per direct gelezen PR zowel
+`focused_pr_file_pages_observed` als `focused_pr_paths_observed` in
+de JSON en, wanneer beschikbaar, in HTML en tekst/Markdown. Ook de
+reeds waargenomen **gedeelde paden** met recentere PR's blijven zichtbaar.
+Een git repository buiten de eerder gekozen beperkte open-PR-steekproef
+wordt niet stilzwijgend als geverifieerd beschouwd. Een bron die over het
+vaste pad- of paginabudget gaat blijft **UNKNOWN** en blokkeert alleen
+het betreffende gerichte PR-deel. Tot vier gerichte PR's levert
+maximaal **36 extra GitHub GETs** inclusief de bestaande vijf-GET huidige
+CI-/reviewcollectie per succesvol geselecteerd PR. Er vindt geen
+GitHub-write, claim, merge, workflowrerun of production-deploy plaats.
+
+
+### Rechtstreeks een grote bestaande PR vergelijken met andere open PR's
+
+Naast de portfolio-route werkt de uitgebreide bestandsopname nu ook
+**direct** in de bestaande single-project-bestandsscopecockpit,
+uitsluitend wanneer de gebruiker daarvoor één concrete bron-PR kiest:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --expanded-source-files \
+  --max-prs 24 --format html > ./source-pr-overlap.html
+```
+
+Dit verzamelt maximaal **drie begrensde GitHub-filepagina's** voor de gekozen
+canonieke open product-PR (maximaal 240 unieke huidige én bij rename oude
+paden). Daarna worden die paden vergeleken met de reeds bestaande
+begrensde lijst van maximaal 48 andere recente open PR's, zonder de bron-PR
+zelf als conflict te tonen. Een tweede bron-PR metadata-GET controleert dat
+dezelfde HEAD/base nog open staat aan het eind van de waarneming.
+Dit is een expliciete read-only vorm van PR-integratievoorbereiding,
+**geen** Git-mergeconflict- of eigenaarsverificatie.
+
+Zonder `--expanded-source-files` blijft de bestaande snelle route met
+één bronbestandspagina en hoogstens tachtig paden intact. De extra optie
+mag niet zonder `--source-pr` en niet samen met
+`--audit-open-prs`; QA-only-titels zijn voor uitgebreide bronlezing
+niet toegestaan. Bij ontbrekende/gewijzigde bron, dubbele paginaregels,
+meer dan 240 paden of een volledig gevulde derde pagina wordt de
+bron geweigerd. Hierdoor zijn **maximaal vijf gerichte bron-GETs**
+nodig (metadata + maximaal drie filepagina's + één metadata-freshness-read),
+boven op de bestaande begrensde open-PR-steekproef en file-GETs.
+
+De JSON bevat `source_file_pages_observed`,
+`source_file_count` en `expanded_source_file_pages_requested`
+onder `selected_source_pr`. Het aantal gelezen bronpagina's/paden
+wordt ook in de Nederlandse HTML-, tekst- en Markdown-uitvoer getoond.
+De CLI drukt bij bronfouten geen ruwe exception met eventuele lokale
+privébestandspaden meer af. Elke bevinding blijft zonder autorisatie:
+verplichte exacte-head CI, onafhankelijke review, actuele Notion-claims,
+branchregels, eigenaar en releasevenster moeten separaat worden gecontroleerd.
+
+
+## 20 oktober · Veranderingen tussen twee private PR-conflictopnamen
+
+De portfolio-PR-conflictenbalie vergelijkt nu twee begrensde, read-only bronopnamen.
+Daarmee worden HEAD/base-wijzigingen van dezelfde bestaande PR zichtbaar,
+zonder eerdere incomplete inventarissen als bewezen opgeloste blokkades te melden.
+
+Schrijf de eerste momentopname als NIEUW lokaal privé JSON-bestand (0600):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --max-prs 10 \
+  --format json --output /private/zsentinel-pr-earlier.json
+```
+
+Vergelijk op een volgend, afzonderlijk gekozen moment met dezelfde projectvolgorde:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html --output /private/zsentinel-pr-delta.html
+```
+
+Ook JSON, Markdown en tekst bevatten nu `historical_pr_delta`.
+De resultaten onderscheiden aantoonbare HEAD/basis-wijzigingen bij stabiele
+open-PR snapshots van PRs die alleen in een steekproef voorkwamen.
+PRs alleen in de vorige steekproef zijn **niet automatisch gesloten**.
+Nieuwe of verdwenen botsende PR-paren worden uitsluitend gemeld als beide
+complete, stabiele GitHub open-PR snapshots bevatten. Als een bron deels
+onbeschikbaar is, toont de output ONVOLLEDIG en geen vals herstelbewijs.
+
+Beide opnamen moeten dezelfde geordende 1–3 geregistreerde projecten bevatten,
+een UTC-tijd hebben, binnen zeven dagen liggen en niet uit de toekomst komen.
+Het historische JSON moet een reguliere 0600-file zijn van dezelfde gebruiker,
+niet een symlink, maximaal 2 MiB. `--output` creëert exclusief een nieuw
+privé bestand en overschrijft geen eerdere observaties.
+
+**Geen autorisatie:** vergelijking is geen claim-, PR-review-, merge-,
+runner- of deploybesluit. Exact-HEAD CI, onafhankelijke review, actuele
+eigenaren en releasegates blijven verplicht. Geen GitHub/Notion/queue-writes,
+workflow dispatch, of actieve herstelacties worden uitgevoerd.
+
+### Hetzelfde bronverschil in de issue- en PR-cockpit
+
+De gecombineerde issue/PR-cockpit hergebruikt exact dezelfde lokale
+vergelijker. Daarmee kan een P0-issuekaart worden bekeken samen met
+recent geobserveerde PR-HEAD-wijzigingen, zonder extra GitHub-requests
+voor historische vergelijking of een tweede eigen herstelcontroller:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html > /private/zsentinel-issues-en-pr-delta.html
+```
+
+Voor het aanmaken van een **nieuw 0600-bestand** blijft de portfolio-CLI
+met `--output` de aanbevolen route; voor een redirect naar een privélocatie
+moet de operator de lokale bestandsrechten zelf beschermen.
+De issue-cockpit toont historische wijzigingen apart van actuele P0/P1
+productissues en van afzonderlijk opgevraagde exacte PR-checks.
+De vergelijking verifieert geen huidige Notion-claims, runner-herstel,
+verplichte branchregels of bevoegdheid om te mergen.
+
+
+### 20 oktober · Historie direct bij P0/P1-issuekaarten en veilige privé-output
+
+De gecombineerde issue-/PR-cockpit gebruikt nu dezelfde bronvergelijker
+om **concrete, reeds gekoppelde open PR's** in P0/P1-issuekaarten aan te
+merken wanneer HEAD/basis, hun beperkte bronvermelding of een gedeeld
+bestandspad tussen twee snapshots veranderde. De offline HTML heeft een
+filter **Met waargenomen PR-wijziging**; Markdown, tekst en JSON geven
+dezelfde per-issue en per-PR observaties met expliciet volledige of
+ONVOLLEDIGE bron aan. Afwezige activiteit betekent niet dat een PR
+niet is bijgewerkt of een issue is opgelost.
+
+De issuecockpit kan zelf een privérapport aanmaken in plaats van
+een onveilig geërfde shell-redirection te vereisen:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html --output /private/zsentinel-issues-met-historie.html
+```
+
+`--output` maakt **uitsluitend een NIEUW regulier bestand** met mode 0600
+aan en weigert overschrijven, symlinks en bestaande workerbestanden.
+Zonder `--output` blijft uitvoer op stdout ondersteund. Bij één geweigerde
+historische bron wordt geen rapport als compleet gepresenteerd.
+
+Deze informatie is een brongebonden mensenwerkbak, geen automatische
+workerclaim, PR-merge, CI-rerun, release of runneractie. Bestaande
+eigenaren, exact-head verplichte checks, reviews, branchregels en release
+autoriteit blijven bepalend.
+
+
+### Grote repositories: veranderingen in onvolledige bestandssteekproeven
+
+Bij drukke repositories zoals zCloud is de begrensde recente PR-inventaris
+vaak **onvolledig**. Een bestaand overlap-paar dat in de nieuwste beperkte
+opname voorkomt maar niet in de vorige kan dan niet als *nieuw* worden
+beschouwd. De historie-vergelijker toont nu afzonderlijk:
+
+- Overlapparen alleen in de huidige steekproef (**niet bewezen nieuw**).
+- Overlapparen alleen in de vorige steekproef (**niet bewezen opgelost**).
+- PR-HEAD/basis-wijzigingen die wel in beide stabiele snapshots stonden.
+
+Dit gebruikt uitsluitend al aanwezige gesamplede, stabiele GitHub-bronparen,
+geen extra API-calls. De bronlimiet (maximaal 40 getoonde paren per richting)
+en eventuele afgekapte bron blijven expliciet. De gerelateerde open PR's
+verschijnen ook binnen P0/P1-issuekaarten via de bestaande PR-link; zonder
+historische bron of bij niet-stabiele opname blijft de relatie onbekend.
+Een positief steekproefverschil is nooit een geverifieerde bugfix,
+succesvolle merge, runner-herstel of toestemming om andermans claim te nemen.
+
+
+## 20 oktober · Merge-eerst P0/P1 operatorwerkbak met één bronopvraag
+
+De bestaande gecombineerde issue/PR-cockpit bevat nu een **menselijke
+merge-eerst werklijst** boven de issuekaarten. De werklijst verwerkt
+de al opgehaalde issue- en PR-bestandsinformatie, optioneel actuele
+exact-HEAD check/reviewwaarnemingen en optioneel historische PR-snapshots.
+Er worden **geen aanvullende GitHub-GETs** uitgevoerd om deze
+actiecategorieën te berekenen; de oorspronkelijke bronbudgetten blijven gelden.
+
+Per issue staat een bestaande gevonden PR vóór nieuwe implementatie.
+Een zichtbaar P0-infrastructuurissue zoals #1326 is expliciet
+**human-only**; een PR met falende gates wordt naar de actuele PR-eigenaar
+verwezen; lopende/missende checkgates krijgen een HOLD die alleen die PR
+raakt; bestandsoverlap wijst naar ownerafstemming. Geen enkele categorie
+mag een claim, release, merge of dispatch autoriseren.
+
+Maak een compacte overdracht voor een eigenaar:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --inspect-pr-gates --format worklist-markdown \
+  --worklist-limit 20 --output /private/zsentinel-p0-werkbrief.md
+```
+
+De volledige offline HTML, JSON, tekst en Markdown bevatten dezelfde
+geprioriteerde werkbak. Gebruik `--format worklist-json` of
+`--format worklist-text` voor een kort handoff-artifact. De rijlimiet is
+1–60; verborgen rijen worden geteld en mogen niet als afwezig beschouwd
+worden. Alleen `--output` schrijft lokaal en maakt exclusief een
+**nieuw 0600-bestand**; zonder deze optie schrijft de opdracht stdout.
+Er wordt geen Notion-claim, workerjob, PR-review, GitHub-write,
+runnerrecovery, test of deploy uitgevoerd.
+
+Wanneer `--compare-previous` is meegegeven, markeert de werklijst
+PR-beweging tussen twee bronmomenten, maar zelfs een gewijzigde HEAD
+geeft geen automatische eigenaar- of mergevrijgave. Verplichte exact-head
+CI, onafhankelijke review, eigenaarsclaims en branchregels blijven externe
+verplichtingen.
+
+
+### Operatorwerkbak: betrouwbare dekking en directe navigatie
+
+Elke kaart scheidt nu **dekking van PR-bestandspaden** van
+**dekking van PR→issue-tekstverwijzingen**. De twee onafhankelijke
+bronnen worden niet tot één misleidend 'compleet' samengevoegd. Bij
+onvolledige vensters staat expliciet `ONVOLLEDIG`; geen enkele bron
+bewijst afwezige PRs, een vrije eigenaar of veilig mergerecht.
+
+In de offline HTML staat bij ieder item in de merge-eerst werkbak
+**Bekijk kaart**: dit brengt de operator naar dezelfde issuekaart met
+de bestaande PR-links, bronhiaten, optionele historische wijzigingen
+en, als die expliciet gelezen zijn, exacte-HEAD checkinformatie.
+Als de operator een filter actief had, worden de lokale filters voor
+die navigatie gereset. Er worden hierbij geen requests verzonden,
+geen remote state gewijzigd en geen workflowacties gestart.
+
+
+## 20 oktober · Interactieve privé P0/P1-werkbak (offline, zonder remote writes)
+
+De bestaande merge-eerst productwerkbak kan nu als een zelfstandige,
+responsieve HTML-werkpagina worden gemaakt. De kaarten bevatten
+canonieke issue-/PR-links, prioriteit, concrete menselijke volgende stap,
+onvolledige-bronwaarschuwingen en precies dezelfde conservatieve
+autorisatiegrenzen als de gecombineerde productcockpit.
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --format worklist-html --worklist-limit 30 \
+  --output /private/zsentinel-merge-first-desk.html
+```
+
+**Nieuw productgedrag:** lokaal zoeken en filteren op prioriteit, project
+of handmatige status; per issue een handmatige opvolgstatus (*nog te
+bekijken*, *wachten op eigenaar*, *afstemming*, *opvolging genoteerd*)
+en een privénotitie tot 700 tekens. Met **Download privéoverdracht**
+worden alle momenteel geladen bronkaarten inclusief menselijke notities
+als Markdown gedownload. Dat bestand heeft uitsluitend door de browser
+bepaalde lokale rechten; behandel het daarom zelf als privé.
+Het nieuw gemaakte HTML-bronbestand via `--output` heeft wel 0600.
+
+Er is bewust **geen localStorage**, sessieherstel, externe POST,
+GitHub-/Notionmutatie, runneractie, automatische claim of deploy.
+De notities bestaan alleen zolang de HTML-pagina openstaat en zijn
+niet opgehaald uit Notion of veilig naar zCloud opgeslagen; de browser
+waarschuwt bij het verlaten met niet-geëxporteerde menselijke invoer.
+
+Alle output is volledig brongebonden: maximaal 60 kaarten, optionele
+`--worklist-limit`, bronmomenten voor issues en PRs, expliciet hoeveel
+kaarten buiten de beperkte export vallen en per kaart aparte
+PR-bestandsscope en issueverwijzingsdekking. Het ontbreken van een
+PR of van overlap in een beperkte steekproef geeft NOOIT vrijgave.
+Het nieuwe HTML-formaat hergebruikt de bestaande read-only GitHub
+opvraag zonder aanvullende providerrequests.
+
+
+### Heropen handmatige opvolging via een brongebonden privé-sessie
+
+De interactieve P0/P1-werkbak biedt nu ook **Bewaar lokale sessie (JSON)**
+en **Heropen lokale sessie**. Deze optie is apart van de bestaande leesbare
+Markdown-overdracht: het privésessiebestand bevat alleen handmatige
+statussen en notities (maximaal 700 tekens per getoonde issuekaart),
+de exacte volgorde van de lokale bronkaarten en een SHA-256 vingerafdruk
+van de oorspronkelijke issue-/PR-bronmomenten en de getoonde canonieke
+issue-/PR-links.
+
+Import gebeurt volledig lokaal vanuit een expliciet gekozen bestand;
+bestanden groter dan 64 KiB worden geweigerd. Alle bronidentiteiten
+en handmatige statuswaarden moeten **eerst allemaal** overeenkomen.
+Bij mismatch wordt de hele import geweigerd zonder gedeeltelijke
+wijzigingen aan de huidige sessie. Er worden uitsluitend bestaande
+`select.value` en `textarea.value` velden gevuld; geïmporteerde
+inhoud wordt niet als HTML of JavaScript geïnterpreteerd.
+
+Een nieuwe GitHub-opname of ander PR-head/issuevenster vereist een nieuwe
+beoordeling en accepteert de oude sessie bewust niet stilzwijgend.
+Handmatig opgeslagen JSON en gedownloade Markdown blijven **privé
+bestanden onder beheer van de operator**; alleen het initiële HTML-bestand
+dat via `--output` ontstaat heeft automatisch permissies `0600`.
+
+Alle statuswaarden zijn menselijke aantekeningen, geen GitHub-review,
+Notion-claim, CI-bewijs, machine-action, merge- of deploybevoegdheid.
+
+
+### Bestaande PR's gebundeld over meerdere P0/P1-issuekaarten
+
+De merge-eerst operatorwerkbak groepeert een bestaande PR die in
+meerdere huidige issuekaarten voorkomt nu **één keer per canonieke
+PR-URL**. Een groep toont de hoogste waargenomen issueprioriteit en
+alle bronissue-links. Dit verschijnt boven de afzonderlijke acties in
+de gecombineerde issuecockpit, de zelfstandige offline HTML-werkbak en
+de compacte Markdown-/tekstoverdracht.
+
+De groepsweergave voorkomt dubbel werk: een operator kan de bestaande
+PR eerst bij zijn huidige eigenaar laten afronden, in plaats van twee
+parallelle fixes voor dezelfde PR-verwijzing te starten. De
+**issuevermeldingen zijn echter géén bewijs dat die PR elk issue oplost**.
+GitHub-scope, Notion-claims, CI, onafhankelijke reviews en releasegates
+moeten nog steeds separaat worden gecontroleerd. Geen claim, merge,
+dispatch, self-hosted runnerwrite of workflowactie vindt plaats.
+
+
+## Oudere, nog-open PR's opzoeken op een volgende GitHub-pagina
+
+Een drukke zCloud-repository heeft meer open PR's dan de eerste
+maximaal 48 recent bijgewerkte kandidaten. De bestandsconflicttool kan nu
+ook een **expliciete oudere sorteerpagina** inspecteren, zonder het
+standaardbudget aan GitHub-GETs per run te vergroten:
+
+```bash
+# Controleer oudere open PR's tegen precies de bestaande product-PR scope.
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --open-page 2 --max-prs 24 \
+  --format html > ./private-older-pr-collisions.html
+
+# Zoek ook oudere conflicten of dubbele issuevermeldingen tussen PR's
+# op diezelfde beperkte oudere pagina.
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --open-page 3 --max-prs 24 \
+  --format markdown > ./private-older-pr-graph.md
+```
+
+`--open-page` accepteert expliciet 1–50 en gebruikt dezelfde maximaal
+24/48 inspectielimiet als voorheen. GitHub sortering blijft
+`updated desc`; vóór en ná het uitlezen van bestanden leest de tool
+exact **dezelfde pagina en paginagrootte** opnieuw. De geselecteerde
+source-PR krijgt daarnaast dezelfde onafhankelijke HEAD/base-herlezing
+als voorheen. De JSON, tekst, Markdown en lokale HTML vermelden
+**paginanummer, begin- en eindpositie, de daadwerkelijk gelezen PRs**
+en dat eerdere/niet-gelezen pagina's onbekend blijven.
+
+Een pagina groter dan 1 kan **nooit** `pr_file_scope_sample_complete=true`
+produceren, zelfs niet als die pagina kort of stabiel lijkt. Het
+audit-resultaat verbergt daarom altijd vermeende onafhankelijke of
+'overlapvrije' PR-kandidaten op oudere pagina's. Waargenomen botsingen
+blijven bruikbaar voor handmatige review, maar géén botsing in zo'n
+venster heeft exitcode 3 (nooit claimvrijgave). De twee requests voor de
+gekozen PR-pagina worden niet vermenigvuldigd en er is geen automatische
+volledige paginacrawl, merge, claim, workflow of deploy.
+
+
+## Samenhangende PR-conflicten tussen oudere en nieuwere GitHub-pagina's
+
+De aparte oudere-pagina-inspectie was onvoldoende zodra PR #A op pagina 1
+een bestand wijzigt dat ook door PR #B op pagina 2 wordt gewijzigd:
+een los rapport voor iedere pagina kan dat gedeelde bestand **niet**
+herkennen. De bestaande CLI ondersteunt daarom nu een aaneengesloten,
+begrensd venster met `--page-count`:
+
+```bash
+# Ontdek gedeelde bestandspaden tussen de eerste drie pagina's
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 1 --page-count 3 --max-prs 16 \
+  --format html > ./private-cross-page-conflicts.html
+
+# Vergelijk één al bestaande product-PR tegen diezelfde 48 kandidaten
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 \
+  --open-page 1 --page-count 3 --max-prs 16 \
+  --format markdown > ./private-existing-pr-scope.md
+```
+
+Ook handmatig geplande bestandspaden ondersteunen deze gebonden
+cross-page-opvraag. De bron verzamelt per geselecteerde pagina de exact
+aaneensluitende `updated desc` resultaten en vergelijkt **over alle
+gelezen pagina's samen** de PR-bestanden en mogelijke gedeelde
+issuevermeldingen. Hierdoor zijn ook botsingen tussen twee verschillende
+pagina's zichtbaar, in plaats van alleen binnen één pagina.
+
+Veiligheidsgrenzen: 1–3 aaneengesloten pagina's, maximaal 48
+PR-bestandsinventarissen samen, plus hoogstens zes dubbele
+open-PR-lijstlezingen. Bij `--page-count 2/3` gebruikt GitHub
+`per_page = --max-prs` zonder de extra single-page lookahead die anders
+stilzwijgend elke paginagrens één PR zou overslaan. Op alle pagina's wordt
+dezelfde geordende bron **vóór en ná** de bestandinspectie gelezen. Dubbele
+PR-identiteiten tussen pagina's of verschoven bronvolgordes zijn expliciet
+onstabiele bronwaarnemingen. Een geselecteerde bron-PR wordt apart opnieuw
+aan exacte HEAD en base-SHA gebonden.
+
+HTML, tekst, JSON en Markdown tonen de echte pagina's en posities.
+Botsingen zijn bestaande PR's met dezelfde bestandspaden, nooit bewezen
+Git-mergeconflicten. **Meerdere pagina's worden altijd als gedeeltelijk
+behandeld:** een korte laatste pagina of geen botsingen betekent geen
+volledige inventaris, geen vrij eigenaarschap, geen werkovername en
+geen automatische mergebeslissing. De bestaande Notion-claim-,
+review-, beveiligings- en productie-releasegates blijven vereist.
+Er wordt geen CI-rerun, QA, queue-update of VPS-mutatie uitgevoerd.
+
+
+## Zelfde nummer in meerdere product-PR's: titel, body en echt GitHub-issue
+
+Een **concreet productgat** in de eerdere cross-page-controle: bestaande
+PR's konden hetzelfde issue noemen in hun titel (`fix(#1326)` of
+`... (#1326)`) terwijl de body dat nummer niet herhaalde. De
+werkbak vond zulke potentiële dubbele werkzaamheden niet.
+
+De bron combineert nu dezelfde expliciete `#N`-titelverwijzingen die al
+in de bestaande issue-first route worden gebruikt, met de reeds bekende
+body-verwijzingen. De JSON bewaart **per PR/nummer de bronherkomst**:
+`title`, `body` of beide. Een te grote/onbetrouwbare PR-body
+maakt de tekstdekking **onvolledig**, zelfs wanneer er wel een
+titelverwijzing zichtbaar is. Alle zichtbare issueverwijzingen blijven
+slechts tekst-hints, nooit een fix-, ownership-, review- of mergebewijs.
+
+Omdat `#123` in een titel soms ook **PR #123** kan zijn, bestaat
+een optionele, strikt begrensde live GitHub-issue-identiteitscontrole:
+
+```sh
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --max-prs 16 --open-page 1 --page-count 3 \
+  --resolve-issue-identity --format html \
+  > ./private-issue-and-pr-overlaps.html
+```
+
+Alleen bij zichtbare dubbele nummervermeldingen vraagt deze modus via
+GitHub **GET /issues/N** maximaal acht verschillende nummers op.
+Hij leest geen volledige issue-body of persoonsgegevens in de output.
+De pagina en JSON onderscheiden `confirmed_open_issue_at_observation`,
+`confirmed_closed_issue_at_observation`,
+`reference_is_pull_request_not_issue`,
+`identity_unconfirmed`, `source_unavailable` en `not_observed`.
+Een onbeoordeeld nummer wordt nooit als geverifieerd issue gepresenteerd.
+De uitvoer toont het requestbudget en ontbrekende dekking.
+
+De verificatie is bewust opt-in; zonder de vlag wordt **geen extra
+GitHub-GET** toegevoegd. Hij is uitsluitend voor de bestaande
+`--audit-open-prs`-modus en kan niet met een rewrite, merge, workerclaim,
+queue-update of workflow-dispatch worden gecombineerd. Het gaat alleen
+om de identiteit van het genoemde nummer **op één observatiemoment**:
+de echte issue-status, toegewezen eigenaar, productfix, conflicten,
+verplichte CI, onafhankelijke review en productie-release blijven aparte
+beslissingen. Zelfs een geverifieerd open issue verleent geen bevoegdheid.
+
+
+### GitHub-identiteit daadwerkelijk gelezen
+
+De optionele identiteitscontrole verwerkt het echte onderscheid in
+GitHub's `GET /issues/N`-response: een regulier issue heeft een
+`html_url` eindigend op `/issues/N`, terwijl een pullrequest op
+dezelfde API-route een `pull_request`-veld en `/pull/N` heeft.
+De bron verifieert eerst het exacte nummer en de juiste URL voor het
+responstype, voordat het een mogelijke dubbele issue-opdracht labelt.
+
+Concreet op de bestaande zCloud-bron read-only gezien op 20 oktober:
+[issue #1326](https://github.com/Zennay/zCloud/issues/1326) geeft een
+echt issue terug; [PR #1536](https://github.com/Zennay/zCloud/pull/1536)
+komt als pullrequest terug. De eerste bronversie zou een PR door zijn
+`/pull/N`-URL abusievelijk `identity_unconfirmed` noemen; dat
+productgedrag is gecorrigeerd.
+
+Als de GitHub-response ontbreekt, inconsequent is of door rechten/rate
+limiting niet kan worden gelezen, blijft `identity_status` onbekend.
+Zelfs een volledig uitgevoerde lijst GETs wordt expliciet als
+**onvolledig bewijs** gepresenteerd zodra één geobserveerde identiteit
+onbereikbaar/onduidelijk is. Geen bestaande GitHub-issue-status wordt
+naar een claim, fix, merge of live herstel gepromoveerd.
+
+
+### Geen verkeerd herstelwerk starten door een PR-nummer
+
+De optionele bronwaarneming is nu gekoppeld aan een **menselijk
+operatorvervolg**, zichtbaar in JSON, tekst, Markdown en de private HTML:
+
+- `confirmed_open_issue_at_observation` →
+  `review_existing_prs_for_same_open_issue`. Inspecteer eerst de
+  bestaande PR's bij dat issue; dit is geen fix of eigenaarschapsbewijs.
+- `confirmed_closed_issue_at_observation` →
+  `review_closed_issue_before_more_product_work`. Sluiting kan een
+  externe beslissing zijn, dus geen nieuwe claim op basis van een titel.
+- `reference_is_pull_request_not_issue` →
+  `inspect_referenced_pr_not_issue`. Zo verdwijnt een foutieve
+  aanname van dubbel issuewerk; integreer het bestaande PR eerst.
+- Onbereikbaar, onvoldoende of niet aangevraagd →
+  `verify_reference_identity_before_routing`. De route blijft open
+  totdat een echte bron is waargenomen.
+
+De gevolgen blijven **weergave en menselijke triage**. Er wordt niets
+automatisch geclaimd, gedispatcht, betaald, gemerged of gedeployed.
+De status `issue_identity_lookup_incomplete` wordt ook waar wanneer
+een uitgevoerde GitHub-opvraag een onduidelijk/afgewezen resultaat
+teruggeeft: acht ontvangen responses zijn niet gelijk aan acht
+geverifieerde identiteiten. Open issue- en PR-nummers uit dit
+werkoverzicht worden nooit als bewijzen van codefix of live herstel
+gebruikt.
+
+
+### Prioriteit bovenaan: alleen voor werkelijk waargenomen open issues
+
+Bij opt-in issue-identiteitslezing toont de collision workbench nu de
+bronprioriteit van een **bevestigd open GitHub-issue**. Alleen een
+expliciet P0/P1-issue-label (waaronder de reeds bestaande
+`priority:p0`/`priority:p1`-varianten) of titelprefix
+`P0`/`P1` wordt meegenomen. Onjuiste of onvolledige bronvelden
+geven `unclassified` of `not_observed`, nooit een gegokte
+prioriteit. Geverifieerde P0-kandidaten komen vóór P1 en vóór de
+onbekende kandidaten in de visuele werkbak. Binnen dezelfde groep
+worden de bestaande PR-vermeldingen behouden.
+
+Deze volgorde geldt **alleen binnen de brongebonden en maximaal acht
+opgevraagde issue-identiteiten**, niet voor het gehele GitHub-project:
+de resterende of niet bekeken pagina's kunnen zelf ook P0 bevatten.
+In JSON, tekst, Markdown en HTML staan waargenomen prioriteit en de
+human-only vervolgactie apart bij ieder nummer. Een `P0`-kaart
+beweert niet dat een bestaande PR dat issue repareert, de eigenaar
+vrij is, een vereiste check groen is of een veilige productieactie
+is toegestaan. Die autorisatie blijft buiten de scanner.
+
+
+## Veel open PR's: meerdere opgeslagen conflictvensters samenvoegen
+
+De live GitHub-PR-conflictkaart kan bewust maar **maximaal 48 PR's
+per run** scannen. Daardoor zou PR #A op pagina 1 en PR #B op pagina 5
+elkaars gewijzigde bestand nog altijd niet samen in hetzelfde
+live-resultaat kunnen tonen. De nieuwe **privé offline
+cross-window-composer** lost deze bronintegratiekloof op zonder het
+live GitHub-verzoekenbudget, rechten, workers of releaseproces te verhogen.
+
+```sh
+# Privé locatie: de eerdere audit schrijft zelf alleen naar stdout.
+umask 077
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 1 --page-count 3 --max-prs 8 --format json \
+  > ./graph-pages-1-3.private.json
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 4 --page-count 3 --max-prs 8 --format json \
+  > ./graph-pages-4-6.private.json
+
+# Combineren zonder extra GitHub GET of workflow:
+python3 scripts/zsentinel_pr_saved_graph_merge.py \
+  --repo Zennay/zCloud \
+  --input ./graph-pages-1-3.private.json \
+  --input ./graph-pages-4-6.private.json \
+  --format html --output ./private-cross-window-conflicts.html
+```
+
+Met `--format json`, `markdown`, `text` of `html` geeft
+de composer de **nieuwe bestandsparen over verschillende
+opgeslagen vensters**. Botsingen binnen één reeds opgeslagen venster
+staan al in de afzonderlijke graph, en worden daarom niet onnodig
+verdubbeld. HTML bevat canonieke GitHub-links, de werkelijk gedeelde
+bestanden en een waarschuwing dat het geen atomische live waarneming is.
+Er wordt één nieuw bestand met `0600` aangemaakt, bestaande uitvoer
+nooit overschreven.
+
+De invoer is minimaal twee en maximaal zes bestaande privé Graph-JSON
+bestanden uit dezelfde expliciete GitHub-repository, hoogstens 288
+PR's totaal. Per bestand wordt de exacte bronstructuur,
+pagina-afbakening, SHA-identiteit, PR-bestandslijst en stabiele
+voor-/nalezing geëist. Dubbele bronpagina's, dezelfde PR in meerdere
+vensters, veranderende evidence, symlinks, ongeldige JSON, te grote
+bronbestanden en observatiemomenten meer dan tien minuten uiteen
+worden geweigerd; een incomplete PR-bestandslijst blijft zichtbaar
+als **incomplete evidence**. Deze laatste grens voorkomt dat oude
+historische PR-overzichten als één huidig snapshot worden voorgesteld.
+
+**Oplevergrens:** de combinatie is per definitie
+`source_is_atomic_current_snapshot=false` en
+`source_complete_for_all_open_prs=false`. Geen botsing in de
+samengevoegde resultaten betekent dus niet dat een PR vrij is van
+conflicten. Het product voert geen claims, GitHub writes, workflows,
+CI, tests, queue-mutaties, workeracties of merges uit; het is
+uitsluitend een private read-only operatorinventaris. De actuele
+Notion-/GitHub-eigenaarsclaims, beschermde main, verplichte exact-head
+CI, reviews en geautoriseerde deploy blijven onafhankelijke voorwaarden.
+
+
+### Eén gecombineerde werkbak voor cross-window bestands- én nummeroverlap
+
+De opgeslagen Graph-JSON bevat ook bestaande *tekstuele*
+`#N`-verwijzingen met `title`/`body`-herkomst. De privé-composer
+verifieert dat die hints alleen aan PR's met dezelfde **exacte
+waargenomen HEAD** uit het betreffende bronvenster zijn gekoppeld,
+en zoekt nu eveneens naar hetzelfde genoemde nummer in **twee
+verschillende bewaarde vensters**. Resultaten zijn zichtbaar als
+`cross_snapshot_issue_number_hints_observed` met canonieke
+PR-links en oorspronkelijke bronvensternummers, apart van
+`cross_snapshot_file_collision_pairs_observed`.
+
+Dat voorkomt dat twee PRs op bijvoorbeeld pagina 1 en pagina 5
+aan het *zelfde benoemde probleem* werken zonder gedeelde bestanden,
+maar voor de operator onzichtbaar blijven. Een titel/body-`#N`
+is echter niet gecontroleerd als echt GitHub-issue (het kan ook een
+PR-nummer zijn), laat staan als opgeleverde fix. Daarom krijgt dit
+offline resultaat **nooit** de optionele live
+`--resolve-issue-identity`-status uit een ouder bestand als
+actuele waarheid mee. Actuele GitHub-status, actief eigenaarschap,
+verplichte CI, review en main/deploy moeten afzonderlijk worden
+vastgesteld. Binnen één eerder bekeken venster getoonde
+issuevermeldingen worden niet als nieuwe cross-window-conflicten
+herhaald.
+
+
+## Directe GitHub-venstercollectie: één CLI, één privéresultaat
+
+De offline composer kan nu **ook zonder handmatig opgeslagen
+tussenbestanden** worden gebruikt. Voorheen moest de operator meerdere
+`--audit-open-prs`-commando's starten en binnen tien minuten alle
+bronbestanden combineren. Het nieuwe `--live-scan`-pad gebruikt dezelfde
+bestaande read-only GitHub-conflictobservatie en de **exactzelfde
+bronvalidatie en gecombineerde rapportgenerator** als de privébestanden:
+
+```sh
+# Een complete read-only operatoruitvoer in één commando:
+umask 077
+python3 scripts/zsentinel_pr_saved_graph_merge.py \
+  --repo Zennay/zCloud --live-scan \
+  --start-page 1 --windows 3 --prs-per-page 6 \
+  --format html --output ./private-live-cross-window.html
+```
+
+Resultaat: **zes aansluitende PR-pagina's**, verdeeld over drie
+afzonderlijk dubbel gelezen bronvensters, maximaal 36 PR-identiteiten
+en maximaal 48 GitHub GETs. De eerdere offline route met herhaalde
+`--input` blijft volledig ondersteund. Voor grote repo's zijn
+beide opties bruikbaar: de directe variant voor een nieuwe, beperkte
+steekproef en de offline variant voor grotere reeds vastgelegde
+vensters (hoogstens 288 PRs). Alle resultaten worden als nieuw,
+privé `0600`-bestand aangemaakt en bestaande bestanden nooit
+overschreven. `--format` ondersteunt HTML, Markdown, tekst of JSON.
+
+**Harde live grenzen:** `--windows` is 2–3, iedere venstergroep
+bevat precies twee aaneengesloten pagina's, maximaal twaalf PR's
+per pagina, maximaal 36 PR-bestandsinventarissen totaal en een
+startpagina waardoor de gekozen reeks binnen pagina 1–50 valt.
+De vraaglast is maximaal `windows × (4 + 2 × prs_per_page)`
+publieke read-only GitHub GETs. De CLI maakt geen extra
+issue-resolutie-GETs en vereist voor live collecties een expliciete
+`--live-scan`-vlag. `GITHUB_TOKEN` is optioneel voor toegestane
+privérepositories; hij wordt nooit in het rapport opgenomen.
+Live en `--input` zijn bewust onderling exclusief.
+
+Het rapport vermeldt expliciet
+`collection_mode=current_run_bounded_github_GET_only` of
+`private_saved_graph_files`, het aantal bronvensters en voor
+live collecties het maximale GET-budget. De **opeenvolgende** GETs
+worden niet als een atomische, gegarandeerd actuele PR-lijst
+gepresenteerd. Veranderende dubbele bron-PRs, onstabiele
+voor-/nalezing, overschrijden van bronlimieten of veranderende
+identiteit leiden tot weigering; andere niet-gelezen pagina's,
+ongetrackte branches, Notion-leases en vereiste CI/reviews
+blijven onbekend. Dit is geen automatische dispatcher of
+productieactie en geeft nooit edit-, claim-, merge- of deployrechten.
+
+
+### Eén geprioriteerde lijst van bestaande PRs uit meerdere vensters
+
+De gecombineerde privérapportage maakt nu een **compacte bestaande-PR
+werkbak**, niet alleen losse conflictenparen. Een operator ziet per
+bestaande PR hoeveel cross-window PR-paren dezelfde bestanden raken,
+het totale aantal daarbij gevonden gedeelde bestandspaden en hoeveel
+onbevestigde issue-/PR-nummervermeldingen aan die PR zijn gekoppeld.
+
+De prioriteit in deze *observatie* is bewust deterministisch:
+**eerst waargenomen bestandenoverlap**, daarna het aantal betrokken
+bestanden, daarna alleen de onzekere nummer-hints; binnen dezelfde
+categorie op canoniek PR-nummer. Maximaal veertig rechtstreeks
+klikbare PR's worden als snelle werklijst bovenaan HTML/Markdown/tekst
+getoond. JSON bewaart
+`impacted_existing_prs_observed`,
+`prioritized_existing_prs` en
+`prioritized_existing_prs_truncated`.
+De oorspronkelijke volledige bron-PR-paren en cross-window issuehint-
+kaarten blijven eronder beschikbaar, zodat de operator de oorzaak kan
+terugvinden.
+
+Een rangorde is **geen actieve eigenaar, conflictvrije claim, bewezen
+Git-mergeconflict of mergeautorisatie**. De directe live-collector
+en de bestaande offline composer leveren hetzelfde type werklijst
+uit dezelfde strikt begrensde bronobservaties; de huidige
+Notion-claims, branches, verplichte reviews/CI en main/deploy zijn
+nog altijd afzonderlijke releasevoorwaarden.
+
+
+## Verbonden bestandsgroepen bij bestaande PR-integratie
+
+De PR-conflictenkaart geeft nu naast individuele paren een **groepsoverzicht van samenhangende open pullrequests**. Drie PR's die via twee verschillende gedeelde bestanden verbonden zijn, staan bij elkaar, zelfs wanneer de buitenste twee PR's geen identiek bestand delen. Zo wordt zichtbaar hoe groot een mogelijke integratiegroep is voordat iemand zelfstandig een vrij werkpakket kiest.
+
+De bestaande CLI werkt ongewijzigd. Maak lokaal een privé-HTML-bestand met bijvoorbeeld:
+
+    python3 scripts/zsentinel_pr_scope_guard.py --project cloud --audit-open-prs --max-prs 24 --format html > /secure/location/zsentinel-pr-clusters.html
+
+Of lees de tekstuele Markdown via dezelfde opdracht met --format markdown.
+
+Elk cluster vermeldt de bron-PR-links en waargenomen exact-head/base-SHA's, directe bestandspadverbindingen per PR, aantallen waargenomen PR-paren en unieke gedeelde bestandspaden, plus maximaal zestien zichtbare voorbeeldpaden. De hoogst verbonden PR's staan bovenaan, maar zijn geen automatisch geselecteerde eigenaars en worden niet aanbevolen als eerste merge. JSON bevat de volledige begrensde groepen onder linked_pr_collision_clusters en het aantal onder observed_connected_pr_collision_clusters. Groepnummers zijn momentopnamen, niet duurzame IDs.
+
+Clusters worden uit **alle geobserveerde PR-paren** opgebouwd voordat de bestaande 200-parenpresentatie wordt begrensd. Daardoor blijft het binnen de geobserveerde steekproef samenhangende beeld bewaard, ook wanneer de losse kaart is afgekapt. Alleen exact gedeelde bestandsnamen vormen edges; een gedeelde map, issuehint of parallelle branch telt niet als bewezen collision.
+
+Onvolledige GitHub-bestandenlijsten, veranderde inventarissen en niet bekeken zoekpagina's blijven expliciet onbekend. Bestandscope geeft nooit bewijs van een Git-mergeconflict, actuele Notion-claim, vrije eigenaar, werkdir-lease of CI-/releasevrijgave. Het overzicht voert uitsluitend read-only GitHub-verzoeken uit: geen claims, herstarts, workflow-reruns, merges, productie- of beveiligingsacties.
+
+
+### Dezelfde bestandsgroepen direct in de portfolio-workbench
+
+Ook het bestaande multi-projectcommando (tot drie canoniek geregistreerde repositories) toont de verbonden PR-groepen, zonder een extra GitHub-query toe te voegen:
+
+    python3 scripts/zsentinel_pr_scope_portfolio.py --project cloud --project supa --max-prs 10 --format html > /secure/location/zsentinel-portfolio-clusters.html
+
+De portfolioresultaten bevatten per project het aantal waargenomen groepen en de brongebonden clusterkaarten, in tekst, privé-Markdown, offline HTML en JSON. Wanneer één project niet bereikbaar is, blijft de groepwaarde daarvan ONBEKEND en blijven de onafhankelijke projectresultaten beschikbaar. De bestaande beperking van 80 zichtbare losse botsingsparen verandert niet hoeveel geobserveerde edges worden gebruikt om de clusters te vormen. Alle resultaten zijn uitsluitend observaties; er is geen claim- of main-mergeautorisatie.
+
+
+### Historische groepsverandering zonder valse mergeclaims
+
+De al bestaande lokale, privé historische portfoliovergelijking berekent nu ook op basis van de oorspronkelijke PR-paren een nieuwe indeling in verbonden bestandscopegroepen. **Alleen als beide snapshots de volledige open PR-inventaris stabiel en zonder afgesneden overlapparen bevatten**, meldt het verslag welke exact-genummerde PR-ledencombinaties alleen in het vorige of huidige bronmoment voorkomen. Iedere combinatie bevat directe canonieke PR-links. Dit is een bronverschil, geen bewijs dat het werk is gemerged, dat een issue opgelost is of dat een eigenaar vrij is.
+
+Wanneer één inventaris onvolledig is, blijven groepsveranderingen expliciet ONBEKEND. De historische weergave in tekst, privé-Markdown en HTML gebruikt dezelfde bestaande read-only snapshotfunctie. Er worden geen workflow- of VPS-verzoeken toegevoegd en er veranderen geen claims of releasegates.
+
+### Cross-window PR-groepen en concrete bestandsmatrix (20 oktober 2026)
+
+De bestaande saved-graph CLI (scripts/zsentinel_pr_saved_graph_merge.py) combineert reeds opgeslagen privé-PR-vensters of leest dezelfde begrensde pagina's live via zijn bestaande --live-scan route. De uitvoer toont nu ook samenhangende PR-groepen die over minstens twee bronvensters lopen. Een transitieve groep kan deels ontstaan uit een gedeeld bestand binnen pagina A en deels uit een ander gedeeld bestand tussen pagina A en B.
+
+Iedere groep bevat oorspronkelijke canonieke GitHub-PR-links, exacte waargenomen HEAD- en basiscommits, directe verbindingen per PR, verbindingen binnen en tussen vensters en aantallen unieke gedeelde bestanden. Per maximaal achttien voorbeeldbestanden verschijnt een concrete bestandsmatrix: welke bron-PR's raken dit pad, het bronvenster en de HEAD per PR. Alle geobserveerde bestanden tellen mee in de groepsberekening ook wanneer de operatorweergave begrensd is. De matrix verschijnt in privé-HTML, console/tekst, Markdown en begrensde JSON.
+
+De groep is niet automatisch bewijs van eigenaarschap, Git-mergeconflict, mergevolgorde of releasevrijgave. De verzameling is read-only en niet-atomair; ongeziene GitHub-PR-pagina's en PR-loze branches blijven UNKNOWN. Controleer actuele claims, eigenaren, onafhankelijke reviews en exacte-HEAD CI voordat productcode wordt geïntegreerd. Dit overzicht voert geen runner, workflow, productie- of toegangsactie uit.
+
+### Geheugenbegrensde inventaris voor grote gedeelde PR-bestanden
+
+De cross-window werkbank had twee routes die bij veel PRs met hetzelfde bestand onnodig grote lijsten konden bewaren: een lijst filenames PER paar tijdens volledige sortering, en diezelfde filenameverzameling opnieuw in de transitieve clusterbouw. De implementatie gebruikt nu exacte gedeelde-bestandsaantallen bij het rangschikken van de volledige geobserveerde vensters, terwijl de concrete bestandsnamen pas voor maximaal de zichtbare 200 paren via de gevalideerde PR-file-index worden opgevraagd.
+
+De verbonden clusters bewaren uitsluitend verschillende PR-paarverbindingen; de per-bestandsmatrix wordt rechtstreeks uit de bestaande filename-naar-PR index opgebouwd voor maximaal achttien zichtbare namen per groep. Zowel bestandsaantallen, alle werkelijke paarrelaties, transitive groepsverbindingen als bronlinks blijven intact. Er wordt niets ingekort aan het observatiebewijs waarmee groepen worden berekend; alleen de presentatie van concrete bestanden is begrensd.
+
+Dit vermindert geheugenafhankelijkheid van de vermenigvuldiging tussen gedeelde filenames en PR-paren; het is geen garantie dat alle GitHub PRs, claims of branchbescherming zijn gezien. Volledigheid, autorisatie, CI en bronmoment blijven separate, expliciet niet aangetoonde voorwaarden.
+
+#### Zichtbare bestandsmatrix op integratiewaarde gesorteerd
+
+In de begrensde lijst van achttien voorbeeldbestanden verschijnen nu **eerst paden die daadwerkelijk PRs uit verschillende bronvensters verbinden**. Daarna komen paden met de meeste betrokken PRs, met een stabiele alfabetische tie-break. De volgorde helpt om meteen de kern van een over-pagina integratiegroep te zien; alle geobserveerde bestandsnamen blijven meetellen bij de volledige graaf, ook als zij niet in de voorbeeldlijst staan. Dit is een observatieprioriteit, geen mergevolgorde of toewijzing van code-eigenaarschap.
+
+### Privé-CSV: filterbare cross-window bestandsmatrix
+
+De bestaande read-only cross-window PR-werkbank kan nu een **nieuw privé-CSV-bestand** aanmaken. Gebruik dezelfde begrensde bronvensters en de nieuwe vlag `--format csv`. Bijvoorbeeld:
+
+    python3 scripts/zsentinel_pr_saved_graph_merge.py --repo Zennay/zCloud --input /secure/page1.json --input /secure/page2.json --format csv --output /secure/pr-botsingen.csv
+
+De normale `--live-scan` route werkt eveneens met `--format csv`, met exact dezelfde bestaande GitHub-leeslimieten en zonder claims/merges. De CLI schrijft alleen een nieuw bestand met privébestandsrechten 0600 en weigert overschrijven. Het formaat is UTF-8 met Excel-compatibele BOM en gestandaardiseerde CSV-quoting.
+
+De eerste record is een expliciete **bronwaarschuwing**: dit is een gedeeltelijke historische of sequentiële momentopname, geen volledige atomische inventaris en geen autorisatie. Daarna komt één record per zichtbare combinatie van een gedeeld bestand en de werkelijk geobserveerde PR, inclusief URL, exacte HEAD-SHA, zoekvenster, groepnummer en bronproject. Tot 40 verbonden groepen en 18 prioritaire bestanden per groep zijn weergegeven, maximaal 3.000 records / 2 MiB output. Extra bronnen buiten deze limiet blijven UNKNOWN; bij overschrijding weigert de exporter een halve of misleidende overdracht.
+
+De exporter neutraliseert tekst die spreadsheetformules kan starten (waaronder gelijkteken, plus/minus, apenstaart en voorloop-tab/regelbreuk) door zichtbare spreadsheettekst te forceren. Dit voorkomt dat ongecontroleerde GitHub-bestandsnamen als uitvoerbare spreadsheetformules worden opgenomen. CSV is uitsluitend voor lokaal menselijk sorteren en review; een CSV-rij bewijst geen actieve owner, Git-mergeconflict, goedgekeurde review, groene CI, main-merge of deploy.
+
+### Private bronhandhaving en volledige CSV-handoff (20 oktober 2026)
+
+**Privé-opslag nu ook afgedwongen bij inlezen:** de bestaande saved/live cross-window werkbank maakt de output al aan als nieuw 0600-bestand zonder overschrijven. Voor eerder opgeslagen JSON-bronnen controleert de inlezer nu dat de file een eigen regulier bestand is, met geen groeps-/andere leestoegang. Hij verifieert deze eigenaar/permissies zowel vóór openen als op de geopende filedescriptor en na het lezen. Onveilige of ondertussen gewijzigde bestanden worden geweigerd; er wordt niet stilzwijgend een publiek snapshot verwerkt. Bestaat er nog een bewust vertrouwd, door de gebruiker beheerd oud JSON-bestand met bredere rechten, zet dan zelf de rechten op 0600 vóór de volgende import; de tool verandert geen rechten automatisch.
+
+**CSV toont de hele operatorinhoud in plaats van alleen bestandsvoorbeelden.** Met de bestaande `--format csv` ontvangt de gebruiker verschillende, filterbare `record_type`-rijen: `source_summary` (waarschuwing), `existing_pr_priority` (bestaande PR-werklijst met echte URL/SHA en bestandsbotsingsaantallen), `shared_file_pr` (onderliggende bestand × PR matrix), `cross_window_collision_pair` (rechtstreeks gedeeld pad), `unverified_issue_number_hint` (uitsluitend letterlijk nummer in PR-tekst), en `source_warning` (brondekking/afkapgrenzen). Alle rijen blijven binnen dezelfde 3.000 records / 2 MiB output; bij overschrijding wordt de nieuwe output geheel geweigerd in plaats van een mogelijk misleidend bestand als volledig te presenteren.
+
+Spreadsheetbronnen kunnen bestandsnamen met controlebytes of voorlooptekens bevatten. CSV toont controlebytes daarom in leesbare escaped vorm, neutraliseert uitvoerbare formuleprefixen ook na veelgebruikte onzichtbare Unicode-voorlooptekens en gebruikt een stabiel kolomschema. Dit is een menselijk sorteerformaat; originele GitHub-bestandsnamen en complete source-array blijven in de read-only JSON-bron bewaard. Een PR-hit geeft **nooit** automatisch toestemming om te claimen, eigenaar te vervangen, te mergen of te deployen. Verifieer daadwerkelijke bronpagina's, actor, reviews, CI en branch protection onafhankelijk.
+
+### Dezelfde privé-CSV voor maximaal drie projecten
+
+Naast saved/live PR-vensters binnen één repository heeft de bestaande portfolio-CLI nu dezelfde bewuste **CSV-uitvoermogelijkheid over één tot drie canonieke projecten**. De operator voert bijvoorbeeld uit:
+
+    python3 scripts/zsentinel_pr_scope_portfolio.py --project cloud --project woonpoints --max-prs 10 --format csv --output /secure/zsentinel-portfolio.csv
+
+De CSV bevat per project een bronstatusrij; daarnaast verschijnen aparte typecodes voor verbonden PR-groepen, gedeelde bestandsnamen, afzonderlijke PR-botsingsparen, vermoedelijke dubbele issue-/PR-nummervermeldingen en PRs zonder aangetroffen bestandsoverlap in de beperkte steekproef. Alleen wanneer de operator al expliciet `--inspect-current-pr-gates` kiest, bevat de CSV daarnaast individuele exact-HEAD gatewaarnemingen; er volgt geen extra GitHub API-aanroep door de CSV-keuze.
+
+**Privacy:** CSV vereist expliciet `--output`, zodat de cross-project bronmetadata niet onbedoeld op standaarduitvoer belandt. De bestaande uitvoerwriter creëert slechts een nieuw 0600-bestand en overschrijft geen bestaand document; CSV is begrensd op 2 MiB en 2.500 records. Formuleprefixen en onzichtbare/ASCII-besturingstekens worden in spreadsheetvelden veilig weergegeven. Bronpaden of PR-teksten kunnen gevoelig zijn en mogen niet zonder controle worden gedeeld.
+
+**Geen autorisatie:** Een cluster, ongepaarde PR, status of groen waargenomen check is nooit op zichzelf bewijs van vrije code-eigendom, geverifieerde claims, goedgekeurde branchregels, alle verplichte CI, onafhankelijk review, veilige merge of productie-release. Bronstatus en afgekorte voorbeeldlijsten zijn zichtbaar. De tool blijft read-only en voert zelf geen claim, CI-dispatch, merge of deploy uit.
+
+### Directe privé-CSV uit één live PR-conflictenkaart
+
+De **directe** PR-conflictenkaart (scripts/zsentinel_pr_scope_guard.py) kan nu zonder tussenliggende snapshot of andere werkbank een bestandsmatrix naar een nieuw privé-CSV-bestand maken. Voorbeeld:
+
+    python3 scripts/zsentinel_pr_scope_guard.py --project cloud --audit-open-prs --max-prs 24 --format csv --output /secure/directe-pr-kaart.csv
+
+Met de bestaande argumenten `--open-page`, `--page-count` en optioneel `--resolve-issue-identity` kan de operator ook een expliciet, begrensd GitHub-venster kiezen. In het CSV staan de exacte per-bestand PR-link/SHA-bronnen, directe botsingsparen, eventueel meerdere PR-tekstverwijzingen naar hetzelfde nummer met de werkelijk waargenomen issueidentiteitsstatus en PRs zonder gedeelde bestandsnamen in de steekproef. Ongepaard betekent **niet** claimvrij. Extra PRs, onvolledige bestandslijsten en afgekorte rapportonderdelen blijven UNKNOWN en zichtbaar als bronwaarschuwing.
+
+**Expliciet nieuw bestand vereist:** de CLI accepteert `--format csv` alleen samen met `--audit-open-prs --output /pad/nieuw.csv`. De schrijfactie creëert exclusief één lokaal 0600-bestand met een UTC-/brongebonden privacybericht, nooit stdout en nooit een al bestaand bestand; bij exportfout blijft geen bruikbaar halve CSV achter. Maximaal 2 MiB en 2500 records, UTF-8-BOM, gestandaardiseerde CSV-quoting en veilige zichtbare weergave van controlbytes en spreadsheetformuleprefixen. De code voert geen live claim, runneractie, merge, workflowtrigger of deploy uit.
+
+De bronvormen zijn nu complementair: directe single-project CSV uit de live PR-kaart; gecombineerde multi-project CSV uit de portfolio-workbench; en over-paginagrenzen CSV uit de private saved/live graph workbench. Alle drie zijn nonauthoriserende snapshots; controleer de actuele Notion/workerclaims, onafhankelijk review, volledige vereiste CI, branch protection en ownerrechten steeds apart.
+
+
+### Merge-first issuewerkbak: alle bestaande PR-kandidaten behouden (20 oktober)
+
+Wanneer een P0/P1-productissue in de begrensde bron meerdere bestaande PRs
+noemt, bevat de geïntegreerde read-only issuekaart voortaan **alle maximaal
+vijf brongebonden PR-kandidaten**. Voor ieder alternatief blijven de
+canonieke GitHub-PR-link, de afzonderlijke exact-HEAD gatebron
+(`observed_failed`, `observed_pending`, `not_observed` of
+`observed_partial_no_release_permission`), waargenomen bestandscopebotsing
+en historische bronbeweging beschikbaar. Eén primaire PR blijft vooraan
+staan, maar onderliggende bestaande implementaties verdwijnen niet meer.
+
+De Nederlandse tekst-/Markdown-overdracht toont maximaal vier andere
+bestaande PRs per issue expliciet. De privéschermwerkbak heeft onder iedere
+issuekaart een uitklapbare lijst met dezelfde links en gatewaarschuwingen,
+zonder nieuw netwerkverkeer. De hash voor herstel van lokale browsernotities
+neemt nu ook deze alternatieve PR-lijst mee: eerdere handmatige besluiten
+worden niet automatisch gekoppeld aan een gewijzigde selectie van bestaande
+PRs. Dit is bewust alleen *menselijke review*, geen bewering dat meerdere
+PRs dezelfde bug daadwerkelijk repareren.
+
+De bestaande limieten blijven behouden: maximaal 60 issuekaarten, maximaal
+vijf bestaande PR-verwijzingen per issue, maximaal vier alternatieven in
+de weergave. De huidige claimhouder, exacte-head verplichte CI,
+onafhankelijke review en protected-main blijven noodzakelijke externe
+voorwaarden. Geen QA-suite, automatische dispatch, claimovername, CI-rerun,
+merge of deploy is aan deze bronroute toegevoegd.
+
+
+### Volledige gegroepeerde PR-opvolging, ook bij meerdere kandidaten
+
+De merge-first issuewerkbak groepeert nu niet alleen de eerste gekozen PR
+per issue, maar **iedere** reeds als bronverwijzing gevonden bestaande PR.
+Daardoor blijven maximaal vijf bestaande PRs per issue in de samengestelde
+PR-werkvolgorde zichtbaar. Een PR die door één issue als alternatief en
+door een ander als primaire kandidaat wordt genoemd verschijnt in één
+groep met alle oorspronkelijke bronissue-links.
+
+De volgorde blijft P0/P1-eerst en geeft bij gelijke prioriteit voorrang aan
+PRs met meer issuevermeldingen en vervolgens meer primaire issuekoppelingen.
+Per groep staat het verschil tussen alle geobserveerde issuevermeldingen
+en de primaire reviewkandidaten expliciet in de Nederlandse tekst- en
+privé-HTML-weergave. Een tweede PR op dezelfde issue is **geen** bewezen
+dubbele implementatie, fix of vrijgave. De beperkte steekproef zegt evenmin
+iets over PR-loze branches of actieve externe claims.
+
+De bestaande bronlimieten blijven behouden: hoogstens zestig productissues,
+hoogstens vijf bestaande PR-links per issue, hoogstens driehonderd
+brongebonden PR-groepen. De HTML toont uitsluitend gekoppelde issues
+die binnen het gevraagde beperkte schermvenster vallen; ontbrekende
+issues worden niet als afgerond behandeld. Alle veiligheids- en
+releasebevoegdheidsvlaggen blijven false. Er worden geen automatische
+claims, CI-acties, merges of deployments uitgevoerd.
+
+
+### Offline operatorwerkbak: interactieve kaarten blijven bruikbaar met PR-groepen
+
+De bestaande HTML kende ook een groepspaneel met CSS-klasse `ticket`.
+De browsercode selecteerde alle `.ticket`-elementen alsof het echte
+issueformulieren waren. Zodra er een PR-groep verscheen, had het
+groepspaneel geen lokale vervolgstatus of notitieveld; zoeken, filteren,
+sessie-export en -import konden daardoor op een ontbrekend element
+vastlopen. De JavaScript-selectie richt zich nu uitsluitend op
+`article.ticket[data-issue]`, de echte geobserveerde issuekaarten.
+Dit maakt de bestaande zoekfunctie, handmatige vervolgstatussen en
+brongebonden sessie-overdracht weer bruikbaar naast gegroepeerde PRs.
+
+Ook alternatieve bestaande PR-URLs uit de bron zijn voortaan vindbaar
+via de zoekbalk en verschijnen apart in de privé Markdown-download
+van handmatige operatoropvolging. De extra links worden gelezen uit
+dezelfde ge-escapete, maximaal vier kandidaat-PRs per issue; er worden
+geen nieuwe netwerkverzoeken gedaan en geen claims, PRs, jobs, CI of
+deploys aangestuurd. De groepssectie blijft gewoon zichtbaar en levert
+geen verborgen formulierrecord aan een gebruikerssessie.
+
+
+### PR-eerst-operatie: eigen lokale status per bestaande PR
+
+De issuegericht werkbak kan nu ook als daadwerkelijke **PR-eerst reviewbalie**
+worden gebruikt. Iedere bestaande PR-groep toont één zelfstandige privéstatus
+(Nog te beoordelen / Wacht op review of CI / Wacht op huidige eigenaar /
+Afstemming nodig / Opvolging vastgelegd) en een eigen korte notitie, ongeacht
+hoeveel productissues dezelfde PR als hoofd- of alternatieve kandidaat noemen.
+Een lokaal PR-statusfilter, issue-/PR-zoekfunctie, projectfilter en
+prioriteitsfilter helpen bestaande integratiepunten apart opvolgen. De
+privé Markdown-overdracht neemt zowel issue- als PR-besluiten mee, inclusief
+canonieke PR-links en waargenomen issuekoppelingen. Er is **geen** automatische
+claim, merge of GitHub-commentaarfunctie toegevoegd.
+
+Ook de brongekoppelde privé JSON-sessie bewaart nu de afzonderlijke
+PR-groepsnotities en PR-statussen als expliciet `zsentinel-local-handoff-v2`.
+Bij herstel worden **eerst alle** issue- én PR-gegevens gecontroleerd;
+een vreemde URL, bronhash, onbekende status of te lange notitie weigert de
+import voordat bestaande lokale velden worden aangepast. De nieuwe
+SHA256-bronbinding omvat nu ook **iedere zichtbare PR-groep**, volledige
+oorspronkelijke issuekoppelingen, primaire koppelingen en de waargenomen
+gate-/overlap-/bronwijzigingsstatus. Daardoor kleven oude notities niet
+stilzwijgend aan andere bestaande PRs of later gewijzigde gatewaarnemingen.
+De sessie-import is begrensd op 512 KiB; die omvang is uitsluitend lokaal,
+er wordt niets naar een server geüpload. Het sluiten van een werkblad met
+niet-opgeslagen PR- of issuenotities geeft een standaard browserwaarschuwing.
+
+Eerder opgeslagen privésessies met `zsentinel-local-handoff-v1` kunnen
+uitsluitend de **oorspronkelijke issuenotities** terugzetten, en alleen wanneer
+hun *exacte vroegere* bronhash gelijk is aan de opnieuw berekende legacy-hash
+van diezelfde issue-, PR- en gatewaarneming. PR-groepsnotities blijven in die
+situatie onaangeroerd. Vreemde, verouderde of gemengde bronnen blijven
+geweigerd. Een nieuwe export gebruikt altijd v2.
+
+### Één PR-gatebron voor alle gekoppelde issues
+
+De broncompiler voegt afzonderlijke gatewaarnemingen uit meerdere aan
+dezelfde PR gekoppelde issues samen tot één read-only
+`group_gate_source_state`. Een geobserveerde failure, pending status,
+ontbrekende bron of een gedeeltelijke waarneming krijgt een expliciete
+Nederlandse menselijke vervolgactie. Als verschillende issuekaarten elkaar
+**tegensprekende PR-gatewaarnemingen** geven, verschijnt
+`inconsistent_existing_pr_gate_sources` met een verzoek de echte actuele
+PR-HEAD onafhankelijk te controleren; er wordt nooit stilzwijgend één
+positieve waarneming gekozen. Gedetecteerde bestandscope-overlap en
+historische PR-beweging staan op dezelfde groepskaart en in privétekst/
+Markdown. Geen van deze velden bewijst vereiste branchchecks, onafhankelijke
+review, eigenaarschap, mergebevoegdheid of live herstel.
+
+Deze functies zitten uitsluitend in de bestaande zSentinel product-PR en
+veranderen geen actieve claims, GitHub-runner, hostconfiguratie, CI-workflows,
+productiedatabase of externe dienst. **Gecommit is niet hetzelfde als
+gemerged of gedeployed.**
+
+
+### Vervallen bronmomenten mogen geen actuele gate-acties suggereren
+
+De primaire en alternatieve PR-issuekaarten en de PR-groepering toetsen
+ook de reeds bestaande bronversheidsvelden uit de geïntegreerde
+issue-/PR-cockpit. Als een issuebron als verouderd bekend is, is de
+PR-gatebron zichtbaar `issue_source_stale`. Als de gezamenlijke issue-,
+PR- en CI-bronklokken onvoldoende samenhangen, verschijnt
+`source_clock_incoherent`. Deze expliciete UNKNOWN-besluiten krijgen
+voorrang op historisch gevonden rode of groene checks, inclusief in de
+privé HTML-, tekst- en Markdown-overdracht.
+
+Bij meerdere waarnemingen voor dezelfde PR blijven verschillen als
+`inconsistent_existing_pr_gate_sources` zichtbaar in plaats van een
+gesimuleerde actuele gate-status. De concrete actie is nieuwe brondata
+lezen en actuele eigenaar, vereiste CI, review en branchregels beoordelen.
+De werkbak wijzigt daarvoor zelf niets en vraagt geen nieuwe
+runnercapaciteit of betaalde CI aan. Syntactisch ongeldige of ontbrekende
+bronwaarden zijn geen toestemming om verder te gaan.
+
+Dit is specifiek bedoeld om het oude *merge-first* overzicht veilig
+bruikbaar te maken terwijl externe jobs, claims en reviews wijzigen;
+het is geen extra formele releasegate en geen aanspraak op volledige
+live-brondekking.
+
+## 20 oktober · actuele CI-blokkades in bestaande PR-workbench
+
+De optionele merge-eerst-weergave koppelt actuele file-scopecontrole aan actuele, opnieuw gepinde Check Runs en legacy commit-statuscontexten op dezelfde PR-HEAD.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 10 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format html --output /secure/location/zsentinel-ci-review.html
+```
+
+Het offline HTML-rapport toont per geselecteerde bestaande PR een inklapbare lijst met maximaal twaalf lopende of mislukte checkjobs, hun canonieke GitHub-links en twaalf nieuwste niet-groene legacy statuscontexten. Tekst, Markdown en JSON bevatten hetzelfde bronbewijs met expliciete aantallen verborgen niet-groene regels.
+
+Een concrete statusclassificatiefout is hersteld: GitHub kan meerdere runs bewaren voor dezelfde checknaam/provider-app op dezelfde HEAD. Een oude gefaalde run mocht niet als actueel falen blijven meetellen nadat een nieuwe poging succesvol is geworden. De collector gebruikt nu de hoogste Check Run-ID per (app.id, checknaam) en meldt hoeveel eerdere pogingen genegeerd zijn. Ook legacy-contexten worden op de recentste bronstatus-ID beoordeeld.
+
+Bij een onvolledig, afgekapt of verplaatst Check Run-, legacy-status-, review- of HEAD-bronbewijs blijft de toestand onbekend. Er wordt niet automatisch herstart of gemerged. Alle getoonde URLs worden uit de canonieke GitHub-repository en numerieke ID of exacte commit samengesteld; onbetrouwbare externe details_url en target_url worden niet gevolgd. Labels worden ge-escaped voor HTML en Markdown.
+
+De bestaande grens van maximaal vier expliciete PR-gatelezingen blijft staan. Branchregels, vereiste CI, reviewerbeleid, actuele Notion-claims, eigenaar en releasebevoegdheid blijven afzonderlijk te controleren; deze waarneming autoriseert geen claim, CI-rerun, merge of deploy. Er zijn geen QA-/regressiesuites geschreven of handmatig gestart.
+
+### Zelfde blokkades in een privé-CSV
+
+De bestaande portfolio-CSV-export ondersteunt nu extra rijtypen `current_check_job` en `current_legacy_status` met `check_name`, `check_state`, `check_conclusion` en de veilige canonieke `check_url`. Daardoor kunnen operators de exacte HEAD-checks filteren naast de bestaande PR-bestandsscope, zonder Excel handmatig met losse status-API's te combineren.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 10 --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --format csv \
+  --output /secure/location/zsentinel-pr-gates.csv
+```
+
+CSV blijft verplicht een exclusief NIEUW privébestand met mode 0600; geen stdout voor CSV. Formule-activerende of controlekarakters worden volgens de bestaande CSV-sanitizer behandeld. Detailrijen verschijnen uitsluitend wanneer de geselecteerde PR-bron en exacte HEAD overeenkomen; verborgen regels krijgen een expliciete waarschuwing. Geen CI/review/lease- of deployvrijgave volgt uit deze export.
+
+## 20 oktober · vergelijk twee exacte-HEAD CI-/review-opnamen (geen herhaalde stagnatiechecks)
+
+De bestaande `--compare-previous` toont voortaan ook gate-episodeverandering wanneer de huidige run `--inspect-current-pr-gates` bevat en de vorige **privé-JSON** reeds gatebonnen bevat. Deze functie gebruikt géén extra GitHub-calls: de al beschikbare exacte-HEAD Check Runs, legacy statussen, reviews en PR-identiteiten worden lokaal vergeleken.
+
+Maak eerst de bronopname (standaard exclusief nieuwe mode-0600 uitvoer):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format json --output /secure/location/zsentinel-gates-T0.json
+```
+
+Voor een latere geautoriseerde **read-only** herinspectie:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --compare-previous /secure/location/zsentinel-gates-T0.json \
+  --format html --output /secure/location/zsentinel-gate-episodes-T1.html
+```
+
+De bronvergelijking leest alleen gewone private historische bestanden zonder symlinks, begrensd op twee megabytes; snapshots moeten dezelfde geregistreerde project/repo-identiteiten bevatten en chronologisch binnen zeven dagen liggen. Vier bestaande PRs per opnamemoment is het maximum. Het huidige en vorige gatebewijs is alleen vergelijkbaar bij dezelfde exacte HEAD en complete, niet-afgeknotte Check Run-, legacy- en reviewbronnen. Als dit volledig klopt, wordt alleen gezegd: *dezelfde blokkade op twee meetmomenten*. Niet dat de tussenliggende periode ongewijzigd was. Een andere HEAD, gewijzigde checkpoging, reviewbeweging, ontbrekende PR of onvolledige bron krijgt een aparte conservatieve operatorcategorie. Geen automatische reruns worden afgehandeld.
+
+HTML, Markdown, tekst, JSON en de bestaande private CSV ondersteunen die episodeoverdracht. De CSV bevat afzonderlijke `gate_episode_history`-rijen met bron-HEAD, vorige en huidige blokkadecategorie en wijzigingstype. **Geen** resultaat bewijst dat een verdwenen PR werkelijk gemerged is, dat een eigenaar vrij is of dat branch protection, verplichte CI en release-autorisatie vervuld zijn. De gebruiker/PR-eigenaar beslist over opnieuw kijken en eventuele merge; zSentinel neemt geen claims over.
+
+### Directe checkverschillen en behandeling van onvolledige historie
+
+De twee-opnamenvergelijking onderscheidt ook *nieuw waargenomen niet-groene Check Runs*, *eerder niet-groene Check Runs die in de huidige begrensde bron niet meer voorkomen* en verschuivende legacy statuscontexten. Bij een expliciet geselecteerde PR staan de concrete canonieke GitHub-checklinks nu rechtstreeks in HTML, Markdown en tekst, met begrenzing en waarschuwing als meer regels bestaan. De privé-CSV biedt hiervoor het rijtype `gate_episode_changed_check` naast `gate_episode_history`. Een verdwenen niet-groene bronregel is géén bewijs dat een vereiste CI geslaagd is; de volledige status en GitHub-branchregels moeten afzonderlijk worden vastgesteld.
+
+Om verkeerd gerapporteerde onveranderde holds te voorkomen, wordt het voorgaande gatebewijs afgewezen wanneer PR-/gate-opnamemomenten meer dan 15 minuten uiteenliggen, een ingevoerde job-ID/URL of legacy context niet aan de geselecteerde canonieke repository en exacte commit is gebonden, of de eerdere bron niet werkelijk privé en begrensd is. De comparison bevat bij ontbrekende gate-opname expliciet `one_or_both_gate_observations_absent` in plaats van een stilzwijgende claim van geen verschil. Op alle paden blijven `automatic_retry_authorized=false`, `claim_authorized=false`, `merge_authorized=false` en `writes_performed=false`.
+
+### Ook doelbranch-drift opnieuw bekijken
+
+Een GitHub-PR kan een onveranderde HEAD hebben terwijl de `main`-basis verandert door andere merges. Omdat die verschuiving een nieuwe rebase-/mergecontext oplevert, bewaart het huidige live gatebewijs nu ook de **exacte `base_sha_observed`**. Twee waarnemingen zijn uitsluitend een *zelfde hold op beide bronmomenten* wanneer zowel de bron-HEAD als de doelbasis en de begrensde CI/reviewgegevens overeenkomen. Als slechts `main` verschuift, krijgt de PR `head_changed_or_source_uncertain` met de expliciete operatorverklaring *PR-HEAD/doelbasis gewijzigd*. In de private CSV staan de eerdere en huidige doelbranch-SHA in `previous_pr_base_sha` en `pr_base_sha`. Historische opnamen zonder pinned base-SHA zijn geen vrijgavebewijs en worden niet stilzwijgend als ongewijzigd behandeld.
+
+### Werkelijke CI- en reviewontwikkeling zonder verandering in totalen
+
+De bestaande `--inspect-current-pr-gates`-route bewaart nu per exact PR-HEAD, doelbasis en bronopname drie begrensde **bronidentiteitsvingerafdrukken**: `check_runs_evidence_sha256`, `legacy_status_evidence_sha256` en `exact_head_review_evidence_sha256`. Ze zijn afgeleid van canonieke Check Run-app/naam/ID/status/conclusie, de laatste legacy-context-ID/status en de laatste per-reviewer-bon voor exact dezelfde commit. Individuele reviewergegevens worden in de publieke operatorpresentatie niet uitgeschreven; SHA256 is slechts een identificator van de waargenomen bron, **geen** trust/signature of review-authorisatie.
+
+Dit verhelpt een echt operatorgat: twee HEADs met bijvoorbeeld 1 falende check en 0 approvals kunnen gelijk lijken ondanks een herstart, vervangen checkjob, gewijzigde legacy-status of nieuwe reviewbon met gelijk blijvende aantallen. De historische `--compare-previous`-uitvoer beoordeelt dit nu als **gewijzigd gatebewijs** en vermeldt de categorie (Check Run, legacy-context of individuele review). Bij een ongewijzigde `check_run_id` met gewijzigde niet-groene staat/conclusie verschijnt ook een directe checklink. Privé-CSV bevat hiervoor `gate_episode_evidence_change`, naast bestaande `gate_episode_changed_check` en `gate_episode_history`.
+
+Voor *stabiel geobserveerd op twee bronmomenten* zijn nu naast dezelfde HEAD en doelbranch-basis **beide volledige bronopnamen en alle drie geldige vingerafdrukken** nodig. Oudere bewaarde snapshots zonder deze bronvingerafdrukken blijven leesbaar maar worden conservatief **onvolledige bron**; nooit als stabiele blokkade of mergevrijgave gepresenteerd. Verschillende SHA256-identiteiten zijn aandachtssignalen, niet noodzakelijk gewijzigde verplichte CI. Geen automatische claim, check-herstart, gate-bypass, merge of productiehandeling.
+
+### Niet opnieuw dezelfde HOLD checken; concrete, eigenaar-veilige vervolgstappen
+
+De read-only vergelijking geeft nu in HTML, Markdown, tekst, JSON en privé-CSV bij elke PR de machineleesbare `operator_next_step`, plus een Nederlandse beschrijving in het operatoroverzicht. Gebaseerd op de bestaande brongebonden blocker in plaats van een nieuwe policy/gate:
+
+- **Identieke HEAD, base en drie volledige gatebronnen op beide meetmomenten:** `defer_unchanged_hold_without_new_evidence`. Geen zinloze tweede controle of CI-retrigger zonder nieuw bewijs.
+- **Bestaande actuele CI nog pending:** `wait_for_existing_ci_without_retrigger`. Dit is geen opdracht om een workflow opnieuw te starten.
+- **Actueel gefaalde check:** `owner_fix_current_head_failure`. Alleen de PR-eigenaar herstelt een vereiste check; de bronmelding geeft geen toestemming om verplichte checks te omzeilen.
+- **Geen onafhankelijke review:** `request_independent_review_for_current_head`, uitsluitend voor dezelfde actuele HEAD.
+- **Wijziging in HEAD/base of onvolledige bron:** `inspect_current_pr_at_source`; een oude vergelijking is geen basis voor nieuwe acties.
+- **Uit de steekproef verdwenen:** `verify_pr_status_before_concluding_closed`; nooit automatisch als gemerged afsluiten.
+- Draft, gevraagde wijzigingen, door GitHub bevestigd conflict, of onbekende branch-/releasevoorwaarden leveren hun eigen bestaande, eigenaar-veilige stap op.
+
+De private CSV bevat `operator_next_step` in zowel `gate_episode_history` als `gate_episode_evidence_change`. De `operator_next_steps_observed`-telling in JSON is een operatoroverzicht, geen scheduler-claim. Iedere actie blijft menselijk/brongebonden: geen nieuwe automatische merge-/deploy- of runnerautorisatie.
+
+## 20 oktober · Merge-first actielijst bovenaan de operatorpagina
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` toont bij `--inspect-current-pr-gates` voortaan meteen een **bruikbare merge-first actielijst** in de offline HTML-pagina, tekst en Markdown. Dit is de productgerichte hoofdweergave vóór de detailtabellen. Maximaal vier reeds geselecteerde, exact-HEAD waargenomen bestaande product-PRs worden in blocker-categorieën gegroepeerd: (1) mislukte checks of door GitHub vastgesteld conflict, (2) draft/reviewwijzigingen/gewijzigde bron, (3) ontbrekende of nog lopende CI-bron, (4) onafhankelijke review of onbekende mergeability, (5) branch protection/ownership/release. De bestaande GitHub checkjobs/legacy-contexten openen direct via canonical links. Een beperkte bestandscope-lijst toont gelinkte andere PRs, maar heet nooit een bewezen Git-conflict of vrij eigenaarschap.
+
+Het is bewust geen dispatch- of mergequeue. Statusbron, HEAD en doelbasis zijn zichtbaar; ontbrekende samplingsdekking wordt prominent vermeld. Bestaande `--compare-previous`-opnamen geven de acties *nieuw bewijs sinds vorige steekproef* of *op beide bronmomenten exact dezelfde HOLD*. Nieuwe waarnemingen worden binnen hun categorie vooraan getoond. De strikt gelijkblijvende HOLD gaat onderaan met `Geen ongewijzigde blokkade opnieuw controleren zonder nieuw bronbewijs`. Een niet meer in de steekproef aanwezige PR blijft uitdrukkelijk **niet bewezen gemerged**.
+
+Ook `--format csv --output /private/new-name.csv` produceert een private mode-0600 handoff met `merge_first_action`, `merge_first_blocking_job` en `merge_first_related_pr` rijen. Deze bevatten PR-URL/nummer, exact HEAD+base waar geldig, blocker, rang/categorie, eigenaar-veilige vervolgstap en direct gelinkte actuele niet-groene checks. Waarschuwingsrijen melden beperkte source coverage en verborgen CI-jobs. CSV wordt nooit standaard op stdout geëxporteerd. Geen extra GitHub GETs, geen aparte polling en geen automatische acties toegevoegd.
+
+Gebruik bijvoorbeeld voor een *nieuw* privé-HTML-operatoroverzicht:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --format html \
+  --output /private/new-merge-first-desk.html
+```
+
+De bronnen blijven per opnamemoment begrensd/niet atomair: geen bewijs van reviewbeleid, exacte verplichte branch-checkset, workerclaims, Git mergecompatibiliteit buiten een bevestigd GitHub-oordeel of deploytoestemming. GitHub-hosted CI-billing #1523 en VPS-listener #1326 zijn afzonderlijke P0-blokkades: de actielijst verandert geen daarvan en doet geen runnerherstart, CI-rerun, claim, merge of deploy.
+
+## 20 oktober · private eigenaar-werkopdrachten voor bestaande PRs
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` biedt naast zijn offline HTML/JSON/CSV nu een **brongebonden eigenaarshandoff**. Een operator kan hiermee concrete, leesbare Markdown-werkopdrachten voor maximaal vier bestaande product-PRs genereren, zonder bronrepo, scheduler, Notion, runner, GitHub CI of branch state te schrijven. Elke kaart bevat exacte PR-HEAD en doelbasis (of expliciet ONBEKEND), de waargenomen blokkade, concrete menselijke vervolgstap, directe niet-groene check/legacy-contextlinks, GitHub-bestandsdiff, bekende PR-bestandsoverlap en uitsluitend als hint vermelde issueverwijzingen.
+
+CLI, voorbeeld voor een **nieuwe** privé-outputlocatie (een bestand dat nog niet bestaat):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders --output /private/path/zsentinel-owner-workorders.md
+```
+
+Voor verschillende projecten kan `--project` maximaal drie keer en `--gate-pr` maximaal vier keer worden opgegeven. Alle project- en repo-identiteiten moeten uit de canonieke registry komen; een expliciet oudere PR kan apart begrensd direct worden gelezen. Zonder `--inspect-current-pr-gates` of zonder `--output` wordt **geen werkopdracht gemaakt**. Het bestand wordt exclusief met eigenaarrechten en `0600` aangemaakt: geen overwrite, geen symlink-follow, geen stdout-dump. De uitvoer is begrensd tot 512 KiB. Gebruik voor machines de reeds bestaande private `--format csv` of read-only JSON, niet een nieuwe schedulerclaim.
+
+Het document noemt een SHA256-inhoudsbewijs zodat twee handoffs vergeleken kunnen worden; dit bewijst alleen **welke bronfeiten in deze eenmalige opname waren verwerkt**, geen identiteit van een reviewer of actualiteit van de API. Het is geen automatische opdracht tot merge of CI-rerun: een PR-eigenaar moet actuele HEAD, actieve claims, werkelijk verplichte CI, onafhankelijke review, protected-main en releasebevoegdheid apart controleren. Gedeelde bestandsnamen betekenen niet dat GitHub een mergeconflict heeft bevestigd. Beperkte 4-PR-selectie en oudere snapshots bewijzen niets over onbekende PRs of de tussenliggende periode. Alleen handmatig gecontroleerde owner-handoff; geen eigen releasegates toegevoegd.
+
+### Machineleesbare, maar niet-uitvoerende eigenaarshandoff
+
+Dezelfde CLI ondersteunt nu `--format workorders-json` met verplicht een **nieuw privé-outputbestand**, voor systemen die de handoff willen *lezen* zonder de veel grotere debug-board JSON te verwerken:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-json --output /private/path/pr-owner-workorders.json
+```
+
+Het gestructureerde document heeft `schema=zsentinel-private-pr-workorders-v1`, afzonderlijke PR-kaarten met HEAD/base, blocker, exacte links, mogelijke overlapbestanden, bronwaarschuwingen, eerstvolgende eigenaar-veilige actie en een SHA256-provenancevingerafdruk van de waargenomen inhoud. Verplichte 0600/nieuw-pad en 512 KiB-outputlimiet gelden voor zowel Markdown als JSON. `claim_authorized`, `merge_authorized`, `deploy_authorized` en `writes_performed` zijn altijd `false` en hoeven geen server/API te benaderen om te worden afgeleid.
+
+**Bronnuance bij oudere PRs:** rechtstreeks met `--gate-pr` geselecteerde oude PRs kunnen gedeelde *bestandsnamen* hebben in hun directe bounded `sampled_file_overlaps_observed`-waarneming zonder in de recente `shown_collision_pairs`-lijst te staan. De eigenaarshandoff neemt nu ook deze werkelijk geobserveerde paden op, samen met de waarschuwing dat de volledige repository en ongetoonde bestandspagina's onbekend blijven. Dit is geen bewijs van een Git-mergeconflict of van vrij eigenaarschap.
+
+**Issueverwijzingen bij owner-handoff:** de kaart neemt nu ook eenmalige `#N`-vermeldingen uit de recent geobserveerde PR-titel/body mee, niet alleen vermeldingen die toevallig op meerdere open PRs terugkomen. Alleen hints die horen bij de **exact vastgepinde huidige PR-HEAD** worden getoond; een oudere of onbekende HEAD geeft geen mogelijk verouderde issueverwijzing. Zelfs een exact gepinde tekstvermelding is geen bewijs dat `#N` een echte open issue is of dat de PR deze oplost. Controleer GitHub issue-identiteit apart voordat dit als productfix of mergecriterium geldt.
+
+**Unicode-weergave-integriteit:** in de PR-eigenaarshandoff worden onzichtbare
+Unicode-opmaaktekens (waaronder bidi-/zero-width-markeringen), Unicode-regel- en
+alineascheidingstekens en niet-ASCII-witruimte als zichtbare `⟦U+XXXX⟧`-markeringen
+getoond. C0/C1-controltekens en surrogate-codepunten worden geweigerd. Zo kunnen
+bronlabels of checknamen in tekst, Markdown, HTML en CSV niet stilzwijgend de
+visuele volgorde of leesbaarheid van de eigenaarsoverdracht veranderen.
+Markdown-pipes en strikethrough-markeringen worden bovendien letterlijk
+ge-escaped, zodat bronlabels geen tabelkolommen of doorgestreepte statuslabels
+kunnen injecteren. Dit wijzigt geen bron-URL, gate-status, prioriteit of autorisatie.
+
+## 20 oktober · Betrouwbare en tijdgebonden eigenaarwerkopdrachten
+
+`--format workorders` en `--format workorders-json` accepteren nu uitsluitend een
+unieke, volledige projectset die exact overeenkomt met de opgeslagen
+projectweergaven. Dubbele projectobjecten en veranderde projectidentiteiten
+worden geweigerd in plaats van stil overschreven. Verwijzingen naar gerelateerde
+PR's in zowel de getoonde conflictparen als expliciet opgenomen oudere PR's
+moeten canonical `https://github.com/Zennay/<repo>/pull/<nummer>` URL's van
+**dezelfde repository** zijn. Een onverwachte/externe link stopt de overdracht
+zonder outputbestand. De werkbank geeft nooit toestemming tot claim, merge,
+workflow-rerun of deploy.
+
+De bron is één momentopname, geen voortdurende live-watcher. Voor bronnen die
+**meer dan zes uur oud** zijn bevat Markdown nu een prominente
+`HISTORISCHE BRON` waarschuwing; iedere betrokken werkkaart meldt dat
+HEAD, onafhankelijke reviews en verplichte checks opnieuw gelezen moeten
+worden. In `workorders-json` staan `source_observation_stale` en
+`source_freshness_budget_seconds=21600`. `source_current` is bij stale
+bronnen `false`, ook als de HEAD op het moment van de opname exact was:
+`source_exact_head_at_observation` blijft die historische nauwkeurigheid
+apart vastleggen. Een recente opname is nog steeds **geen** branch-protection-,
+eigenaar- of releasevrijgave. De inhoudsvingerafdruk blijft alleen een
+provenancebewijs van de waargenomen feiten.
+
+## 20 oktober · offline HTML-eigenaarwerkbak met directe bronlinks
+
+Naast Markdown en JSON is er nu een zelfstandige, mobiel leesbare en
+scriptvrije **HTML-eigenaarwerkbak** voor dezelfde bestaande
+`--inspect-current-pr-gates` handoff. De operator ziet per PR de bron-HEAD,
+doelbasis, echte niet-groene checklinks, links naar mogelijk gerelateerde PRs,
+gedeelde bestandspaden, issuevermeldingen als *ongeverifieerde hints* en
+concrete handmatige vervolgstappen. Een historische (>6 uur) waarneming wordt
+bovenaan als zodanig gemarkeerd; ontbrekende dekking blijft zichtbaar.
+Bestaande bron- en privacygrenzen blijven identiek aan de Markdown/JSON-route.
+
+Voorbeeld (maak een **nog niet bestaand** privébestand aan):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-html --output /private/path/zsentinel-owner-werkbak.html
+```
+
+HTML is UTF-8, bevat geen JavaScript of externe stylesheets en stelt een
+restrictief Content-Security-Policy met `default-src 'none'` in. Alle
+bronlinks zijn geverifieerde canonieke GitHub PR-, bestandsdiff-, checkrun- of
+vastgepinde commit-links; labels en bestandspaden worden HTML-ge-escaped.
+Ook dit formaat vereist een exclusief aangemaakt `0600` bestand en maximaal
+512 KiB output. Het verricht **geen** taakclaim, GitHub mutatie, CI-rerun,
+automatische merge, release of VPS-actie.
+
+## 20 oktober · Navigabele merge-first eigenaarwerkbak en HEAD-vaste botsingen
+
+De bestaande **private** `--format workorders-html` heeft nu een bovenliggende,
+toegankelijke inhoudsnavigatie naar de maximaal vier geselecteerde PR-kaarten.
+Kaarten tonen de relatieve actierang, **bronstatus op observatiemoment**, de
+exacte HEAD/basis, het aantal verborgen niet-groene checks, ontbrekende
+bestandsdekking en een uitklapbare handmatige release-checklist. Het dossier
+heeft een printweergave zonder navigatie en blijft volledig scriptvrij.
+Alleen de werkvolgorde van de bestaande bron wordt overgenomen: een
+versnapshotte kaart is geen actuele vrijgave.
+
+**Reparatie van een echte bronintegriteitsfout:** de recente bestandsbotsingslijst
+kon een PR-URL uit een oudere HEAD bevatten, terwijl de latere exact-HEAD
+gatewaarneming een nieuwe HEAD had gezien. De handoff sluit sindsdien de
+betreffende oude overlap-links én paden uit, tenzij de waargenomen HEAD van
+de botsingsbron **exact** overeenkomt. Bij ontbrekende of veranderde HEAD
+worden ook oudere gefocuste bestandssteekproeven en losse overlaplinks
+niet langer als positieve bronverbinding geëtaleerd. Incompleet blijft
+uitdrukkelijk incompleet en vereist herlezen; het betekent niet conflictvrij.
+
+**Issueverwijzingen zijn nu navigeerbaar maar nooit automatisch bewezen:**
+Markdown en HTML geven voor een maximaal twaalf getelde `#N`-tekstvermeldingen
+een canonieke eigen-repository `/issues/N`-link met expliciete waarschuwing dat
+het doel een PR, ontbrekend nummer of niet-relevant issue kan zijn.
+De operator controleert de echte identiteit/status zelf alvorens iets als
+opgelost te behandelen. Geen extra GitHub-aanroepen of automatische statusacties.
+
+## 21 oktober · private CSV eigenaarwerkopdrachten voor echte integratiebesluiten
+
+De bestaande merge-first eigenaarwerkbak ondersteunt nu ook `--format
+workorders-csv` naast Markdown, JSON en de scriptvrije privé-HTML. De CSV
+is een **brongebonden uitvoerbaar operatoroverzicht**, geen automatische
+merge- of dispatchlijst. Voor maximaal vier geselecteerde bestaande product-PRs
+krijgt een operator één `pr`-regel met rang, bron-HEAD, opnamemoment, blocker
+en concrete menselijke actie, gevolgd door gelinkte `check`-, `related_pr`-,
+`overlap_path`-, `issue_hint_unverified`- en `source_warning`-regels.
+Verstopte niet-groene checks en onvolledige bestandsdekking worden expliciet
+`coverage_warning`; een oude HEAD of een onvolledig venster wordt nooit
+als vrijgeefbaar geïnterpreteerd.
+
+Gebruik vanuit de repository root:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-csv \
+  --output /private/path/zsentinel-werkopdrachten.csv
+```
+
+De bron wordt slechts één keer begrensd geobserveerd. Net als de bestaande
+workorders-formats vereist CSV `--inspect-current-pr-gates` en een nieuwe,
+uitsluitend door de eigenaar leesbare outputlocatie: `O_EXCL`, `0600`,
+`O_NOFOLLOW` waar ondersteund, maximaal 512 KiB en geen stdout-dump.
+CSV heeft UTF-8-BOM en gequote kolommen; potentieel gevaarlijke
+spreadsheetformuleprefixen worden onschadelijk gemaakt. De `source_sha256`
+beschrijft de opgeslagen inhoud, niet een authentieke goedkeuring.
+
+Voor iedere regel gelden dezelfde grenzen: geen bewezen actuele claims,
+geen volledige verplichte CI-/review- of branch-protectiondekking, geen
+github write, Notion write, runnerrestart, queue claim, deploy of merge.
+De GitHub `/issues/N`-links zijn uitsluitend **onbevestigde PR-tekstvermeldingen**:
+ook een PR of niet-bestaand nummer kan achter zo'n link zitten.
+
+## 21 oktober · brongebonden gewijzigde-gate actielijst zonder dubbele controle
+
+De optionele reeds bestaande `--compare-previous` bron wordt nu **echt
+hergebruikt in de private workorders** in plaats van alleen in het grote
+portfolio-overzicht. Op één plek in de offline HTML, Markdown en CSV ziet
+de verantwoordelijke welke PRs sinds een vorige opname prioriteit vragen.
+De huidige exact-HEAD bevinding, eerdere gatevergelijking en eventuele
+ongewijzigde HOLD blijven nadrukkelijk verschillende soorten bewijs.
+
+Een historisch verschil krijgt **dezelfde brongebonden uitleg en concrete
+menselijke vervolgstap** als de bestaande
+`scripts/zsentinel_pr_gate_continuity.py` vergelijking. De werkbak
+onderscheidt expliciet:
+
+- `changed_gate_receipt`: bewijs veranderd bij exact dezelfde HEAD;
+- `changed_or_uncertain_head`: HEAD verschillend **of bron onzeker**, dus
+  niet zonder meer als codewijziging presenteren;
+- `incomplete_gate_source`: de twee bronnen hebben geen volledige dekking,
+  geen bewezen gewijzigde of constante situatie;
+- `newly_selected_not_new_pr`: voor het eerst in de afgebakende selectie,
+  niet noodzakelijk een nieuwe PR;
+- `unchanged_two_snapshots`: twee identieke exact-HEAD gateopnames; herhaal
+  geen HOLD-onderzoek zonder nieuwe informatie;
+- `not_compared`: geen historische bronvergelijking aanwezig.
+
+Per PR verschijnen de al eerder waargenomen **gewijzigde check-run-links**
+en veranderde gatebewijstypen direct in de private HTML en Markdown; CSV
+geeft afzonderlijke `observed_change`, `changed_check` en
+`changed_gate_evidence` regels. Historische checklinks worden beperkt
+tot canonieke paden van dezelfde GitHub-repository. Niet-canonieke links,
+ontbrekende bronregels en afgekapt bewijs krijgen een zichtbare
+dekkingwaarschuwing, geen fictieve statusupdate. Er worden hiervoor
+**geen extra GitHub-requests, retries, workerclaims of productieacties**
+uitgevoerd.
+
+Vanuit de zCloud repository root (nieuwe outputbestandsnamen vereist):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format json --output /private/zsentinel-eerder.json
+
+# Op een later bronmoment: dezelfde projectset en PR-selectie.
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --compare-previous /private/zsentinel-eerder.json \
+  --format workorders-html \
+  --output /private/zsentinel-nieuwe-owner-desk.html
+```
+
+Alternatief: `--format workorders` voor Markdown of
+`--format workorders-csv` voor een private CSV. Alle bestanden worden
+uitsluitend nieuw/private aangemaakt, niet in-place overschreven.
+Voor alle weergaven geldt: twee waarnemingen tonen **niet** de ononderbroken
+toestand daartussen, geen actuele claims, geen branch-protection-vrijgave,
+geen onafhankelijke review en geen productie-releasebevoegdheid.
+
+### 21 oktober · historisch bronmoment versus latere live gateherlezing
+
+De eerdere portfolio-observatie en de later opnieuw gelezen huidige PR-gates
+hebben elk een **eigen UTC-tijdstempel**. Bij het integreren van de historische
+wijzigingsweergave is voorkomen dat het tijdstempel van de initiële
+`board.observed_at_utc` abusievelijk vergeleken wordt met de latere
+`current_live_pr_gate_observation.observed_at_utc`. De historische
+`compare_gate_episodes` receipt moet overeenkomen met de **initiële**
+portfolio-opname waarop die comparator feitelijk werkt; het concrete
+exacte-HEAD checkbewijs blijft daarnaast de **latere** gateherlezing.
+Dit voorkomt een onterechte foutmelding zodra een live scan daadwerkelijk
+langer duurt dan de eerste bronopname. De CSV/HTML/Markdown tonen beide
+contexten waar beschikbaar, zonder te claimen dat de tussenperiode continu
+is gecontroleerd. Geen nieuwe polling, QA-suite of vrijgavepad.
+
+
+## 21 oktober 2026 — repo-unieke PR-navigatie en brongebonden eigenaaractie
+
+De bestaande lokale, privé **Merge-first PR Workorders** blijven een read-only operatorwerkbak. De HTML-navigatie gebruikt voortaan de **canonieke repository + PR-identiteit** in de fragment-ankernaam (bijvoorbeeld `#pr-Zennay-zCloud-pull-1567`), niet alleen `#pr-1567`. Daardoor verwijst een PR #1 uit het ene project niet ten onrechte naar PR #1 van een ander project wanneer beide in dezelfde 1–3-projectenoverdracht voorkomen. De labels en artikelankers gebruiken dezelfde gevalideerde GitHub-bron.
+
+In de HTML-voorvertoning verschijnt een compacte **werkvolgorde op basis van de bronopname** met vier strikt niet-autoriserende toestanden:
+
+- **Herlees bron en huidige HEAD** bij een historisch (>6 uur), ontbrekend of onvolledig exact-HEAD-bewijs of onzekere bronvergelijking.
+- **HOLD ongewijzigd: ander werk oppakken** uitsluitend voor een eerder geselecteerde onveranderde HOLD in de begrensde, twee-opnamenvergelijking.
+- **Nieuw gatebewijs: eigenaar laten beoordelen** wanneer dezelfde gepinde PR-HEAD daadwerkelijk een gewijzigde gate-receipt heeft.
+- **Wacht op verplichte gates en onafhankelijke review** wanneer de andere bijzondere gevallen niet gelden. Dit is nooit een bewijs dat CI of review reeds voldaan is.
+
+Deze operatorstatus wordt **eenmaal uit hetzelfde gevalideerde bord** afgeleid en consequent getoond per HTML-kaart, in Markdown en als afzonderlijke `attention_status` en `attention_label` kolommen in privé CSV. De status is geen claim/lease, kent geen automatische taakverdeling en controleert geen GitHub-branchregels, actuele reviews of runnergezondheid.
+
+Voor brongebonden PR's met beide geldige exact-40-hex-SHA's bevat elke HTML-kaart nu directe links naar de **geobserveerde HEAD-commit en doelbranchbasis**. Markdown gebruikt dezelfde gepinde commitlinks en CSV heeft aparte `observed_head_commit` en `observed_base_commit` records. Onbekende of onstabiele HEADs krijgen géén verzonnen commitlink. Deze links maken menselijke vergelijking en onafhankelijke review sneller, maar zijn expliciet **historisch bronbewijs**, niet de actuele gatebeslissing.
+
+Voorbeelden: gebruik de reeds bestaande `--format html`, `--format markdown` of `--format workorders-csv --output <nieuw privébestand>` van de portfolio-PR-bronflow; de bestaande 0600/O_EXCL privébestandsbeveiliging, 512-KiB-uitvoerlimiet, maximaal vier PRs en de niet-autoriserende booleans blijven ongewijzigd. Geen nieuwe GitHub-verzoeken, QA-/regressiesuite, scheduler-/runneractie, PR-merge of deploy toegevoegd.
+
+Implementatie op bestaande [zCloud PR #1567](https://github.com/Zennay/zCloud/pull/1567), broncommits [7e270af](https://github.com/Zennay/zCloud/commit/7e270af6fe27955a5d2e06b618dc34232775df55) en [dc7f9c1](https://github.com/Zennay/zCloud/commit/dc7f9c1ae162c4d06aab16064e5c1a27bdac8974). Merge en productieacceptatie blijven afhankelijk van verplichte actuele exacte-head CI, onafhankelijke review, branch protection en bevoegde eigenaar.
+
+
+## 21 oktober 2026 — exact geobserveerde peer-HEAD voor botsende product-PRs
+
+De bestaande Merge-first Workorders maken nu **per geselecteerde product-PR** zichtbaar welke andere geopende PR's volgens een **stabiel gelezen GitHub-PR-bronvenster** dezelfde bestanden raken. Het bestaande bestandspadenpanel kon eerder een onstabiele broninventaris als positief collisionbewijs presenteren. Dit is fail-closed hersteld in [f58ddb1](https://github.com/Zennay/zCloud/commit/f58ddb1e3512d4c3bed6626cf02104c4d8e0bcd6): bij afwijkende voor-/nalezing worden gedeelde bestands-/PR-links en niet opnieuw onafhankelijk geverifieerde issuevermeldingen **niet als bevestigde observatie getoond**. De bronwaarschuwing blijft zichtbaar.
+
+Een nieuw begrensd `peer_head_evidence` veld verwerkt uitsluitend waargenomen bronparen die aan de exact opnieuw gelezen geselecteerde HEAD zijn gebonden. Het bewaart per peer: canonieke PR-URL, peer-HEAD-SHA op bronmoment, geobserveerde gedeelde-bestandsteller, maximaal 24 exacte padnamen, preview-onvolledigheid en bronsoort. Maximaal acht peerkaarten; een onstabiele inventaris, ontbrekende SHA, conflicterende peer-SHA/bronpaden of afgekapte selectie leidt tot `peer_head_evidence_partial=true`, niet tot een verzonnen veilige mergevolgorde. Peercommitlinks zijn bronlinks, geen claim- of merge-autorisatie.
+
+Gebruikersfunctionaliteit:
+- **HTML:** per PR directe bronlinks naar botsende peer-commits, gedeelde paden en zichtbare onvolledige-bronmelding. Browser blijft offline/scriptvrij met bestaande CSP.
+- **Markdown:** dezelfde peer-commitlinks en exacte paden als zelfstandig reviewdossier.
+- **CSV:** afzonderlijke `peer_head_collision`, `peer_shared_file` en `coverage_warning` records, geschikt voor lokale filtering en overdracht. De bestaande private 0600/O_EXCL output en formula-inerte CSV-cellen blijven behouden.
+
+Broncode: [19b915b](https://github.com/Zennay/zCloud/commit/19b915bdc941a4ff9c92061d161fb30259b17a7a), [dbe2225](https://github.com/Zennay/zCloud/commit/dbe22256b9a92d5efd55d94a7f819da7e9134647). Dit verandert geen productiequeue, workerclaim, live runtime, GitHub review, CI of deploy. Bestaande verplichte exacte-HEAD checks en menselijke eigenaars-/releasegoedkeuring zijn ongewijzigd. Alleen de nieuwe Python-source is via read-only opgehaalde exacte commit syntactisch geïnspecteerd; geen QA-/regressiesuite geschreven of gedraaid.
+
+## 21 oktober · issue-/PR-activiteit als conservatief stagnatiesignaal
+
+De bestaande live issue-first cockpit en de compacte privé P0/P1-werkbak tonen nu
+een expliciet activiteitssignaal voor ieder issue. De bestaande PR-scopebron
+behoudt hiervoor updated_at uit hetzelfde begrensde open-PR-bronvenster dat
+al voor de botsingsdesk wordt gelezen; er zijn geen extra GitHub-requests.
+De live issuebron bewaart created_at/updated_at in het SHA-gehashte privé
+bronpakket. Het nieuwe model in scripts/zsentinel_issue_activity.py vergelijkt de issue-update
+met de meest recente waargenomen update van de aan dat issue gekoppelde open
+PR-kandidaten, met een venster van 7 dagen.
+
+De UI onderscheidt:
+- recent_issue_activity_observed — het issue zelf is recent bijgewerkt;
+- recent_linked_pr_activity_observed — het issue is ouder, maar een gekoppelde
+  open PR toont recente activiteit;
+- quiet_over_7_days_observed_claims_unknown — issue en alle gekoppelde PR's
+  in de complete begrensde bron zijn ouder dan zeven dagen;
+- quiet_over_7_days_partial_pr_coverage — issue is ouder, maar gekoppelde
+  PR-activiteit of issueverwijzingsdekking is incompleet;
+- source_clock_incoherent / activity_timestamp_unknown — bronmomenten of
+  tijdstempels zijn onvoldoende betrouwbaar.
+
+Dit is bewust geen label 'stalled', geen owner/lease-detectie en geen
+bewijs dat een PR-loze branch of worker inactief is. Elke kaart zegt expliciet
+dat actieve claims, PR-loze branches en stilstand niet zijn geverifieerd.
+Dezelfde signaalvelden verschijnen in JSON, tekst/Markdown, de volledige
+offline HTML en de compacte privé HTML-werkbak. Er is geen queue-/Notion-write,
+claim, retry, CI-dispatch, merge, deploy of workeractie toegevoegd.
+
+De sortering gebruikt het activiteitssignaal alleen als tie-breaker ná de
+bestaande P0/P1-prioriteit, bestaande PR-first-regel en waargenomen falende
+PR-gates. Een stil issue kan dus nooit een P0/P1- of falende bestaande PR
+wegdrukken; binnen dezelfde tier worden issues zonder recente activiteit
+eerder zichtbaar voor menselijke triage. Het signaal wijst geen eigenaar aan
+en geeft geen toestemming om werk te claimen of een worker te onderbreken.
+
+De twee offline issue-werkbakken bieden ook een lokale filter op het
+activiteitssignaal (stilte >7 dagen met complete/onvolledige PR-dekking,
+recente issue-update, recente gekoppelde PR of onbekende bron). De filter werkt
+alleen op reeds weergegeven kaarten en meervoudige-PR-issues; hij haalt geen
+nieuwe brondata op, bewaart geen status stilzwijgend en verandert geen claims.
+Zo kan een operator de P0/P1- en bestaande-PR-prioriteit behouden en daarna
+gericht de stilste bronissues bekijken.
+
+
+## 21 oktober · gedeelde Unicode-veilige CSV-formulesanering
+
+De vier bestaande private CSV-routes (directe PR-conflictenkaart,
+multi-projectportfolio, samengevoegde PR-vensters en merge-first
+eigenaarwerkopdrachten) gebruiken nu dezelfde
+`csv_formula_inert`-helper uit `zsentinel_pr_scope_guard.py`.
+Formuleherkenning kijkt door opeenvolgende Unicode-witruimte, zero-width
+tekens, BOM en andere Unicode-format-/separator-markeringen heen voordat
+`=`, `+`, `-` of `@` wordt beoordeeld. De oorspronkelijke broncel blijft
+behouden; alleen een apostrof vóór de cel maakt een mogelijk actieve
+spreadsheetformule inert. De bestaande CSV-quoting, bestandslimieten en
+create-only/private-0600 schrijfcontracten blijven ongewijzigd. Dit is
+defensieve export-sanitatie, geen wijziging van de GitHub-bron of van
+merge-/claim-/deployrechten.
+
+
+## 21 oktober · gedeelde PR met afwijkende HEAD-waarnemingen blijft zichtbaar
+
+De issue-first werkbak groepeert dezelfde bestaande PR wanneer meerdere
+productissues ernaar verwijzen. Als één issuebron verouderd is en daardoor
+geen bruikbare HEAD heeft terwijl een andere bron wel een HEAD waarnam, wordt
+de groeps-HEAD nu **ONBEKEND/INCONSISTENT** gemaakt in plaats van de volledige
+P0/P1-werkbak af te breken of één HEAD te kiezen. De issuekaarten en andere
+PR-groepen blijven beschikbaar; de menselijke vervolgstap is de actuele issue-
+en PR-bron opnieuw te lezen. De offline cockpit toont nu per gedeelde PR ook
+de waargenomen gatebron en die vervolgstap. Een opgeslagen SHA blijft een
+bronmomentopname, nooit actuele HEAD-, eigenaars- of mergevrijgave.
+
+
+De compacte Markdown-/tekstoverdracht en de HTML-cockpit tellen deze gevallen
+ook apart: PR-groepen met onbekende HEAD en groepen met conflicterende
+HEAD-waarnemingen. Als de tellerbron ontbreekt, toont de overdracht
+**ONBEKEND** in plaats van nul. Deze aantallen zijn observaties van de huidige
+beperkte issue-/PR-bron, geen volledige backlog- of mergevrijgave.
+
+## 21 oktober · bestand-/mapconflicten in de merge-first werkbak
+
+De directe exact-HEAD werkbak toont nu twee verschillende soorten overlap naast elkaar:
+- **Exact gedeeld bestandspad**, zoals `src/app.py` tegenover `src/app.py`.
+- **Bestand-/mapconflict**, zoals een PR die het bestand `src` wijzigt terwijl een andere PR `src/app.py` nodig heeft. Een Git-pad kan niet tegelijk een bestand en de bovenliggende map zijn.
+
+De werkbak hergebruikt de al verzamelde begrensde bestandspaden; er komen geen extra GitHub-verzoeken bij. De uitvoer noemt het aantal bestand-/mapconflicten en toont een begrensde set padparen. Het blijft steekproefbewijs: ontbrekende PR's, actieve eigenaarclaims, actuele branchbescherming en mergeautorisatie blijven onbekend en worden niet afgeleid.
+
+## 21 oktober · onafhankelijke productkandidaten wanneer een bestaande PR wacht
+
+De privé HTML-werkbak heeft naast **Volgende open bronissue (P0 eerst)** nu een
+aparte route: **Volgende kandidaat zonder PR-waarneming (P0 eerst)**. Deze
+route selecteert alleen issues die de opgeslagen, begrensde bron als
+`owner_before_new_product_work` classificeert en waarvoor geen gekoppelde PR
+in diezelfde bron is waargenomen. Dat is nadrukkelijk géén bewijs dat er geen
+PR bestaat, dat een PR-loze branch ontbreekt, dat de issue-eigenaar vrij is,
+of dat een actieve claim niet bestaat.
+
+**Download onafhankelijke productkandidaten (Markdown)** maakt één private
+overdracht met alle open kandidaten uit de huidige bronopname, ongeacht de
+zichtbare zoek-, prioriteits-, project- of PR-focusfilters. De export bewaart
+de bronklokken en het exacte lokale brontoken, prioriteit, issue- en projectlink,
+menselijke vervolgstap, waargenomen activiteitsklokken, PR-/issueverwijzings-
+dekking en eventuele lokale privénotitie. Kandidaten blijven in P0/P1/P2-volgorde;
+een lokaal genoteerde opvolging wordt niet opnieuw aangeboden als open kandidaat,
+maar is daarmee niet als opgelost gemarkeerd. Het nieuwe privésessietoken bindt
+nu ook project, prioriteit, actieclassificatie en beide dekkingsvlaggen; een
+gewijzigde kandidaatclassificatie kan daardoor niet stilzwijgend dezelfde lokale
+notities hergebruiken. Het afzonderlijke legacy-token blijft alleen voor de
+bestaande issue-only sessie-import bestaan.
+
+**Werkwijze:** parkeer uitsluitend de PR waarvan de verplichte exacte-HEAD-CI
+wacht; open de kandidatenoverdracht en controleer voor de gekozen issue opnieuw
+de actuele open PRs, volledige PR-loze branch-inventaris en actieve claims.
+Kies pas daarna een onafhankelijke producttaak. De route doet geen GitHub-,
+Notion-, queue-, claim-, CI-, merge-, runner- of deployactie en verleent geen
+eigenaarschap of releasebevoegdheid.
+
+## 21 oktober · onderscheid exacte bestandsbotsingen van bestand/map-ancestorconflicten
+
+De PR-conflictgraaf rapporteert nu twee afzonderlijke waarnemingen:
+
+- **Exact gedeeld bestand:** beide PRs wijzigen bijvoorbeeld `src/app.py`.
+- **Bestand/map-ancestorconflict:** de ene PR behandelt `src` als bestand terwijl de andere een pad zoals `src/app.py` toevoegt. Beide wijzigingen kunnen niet samen in dezelfde Git-tree bestaan, ook al zijn de bestandsnamen niet exact gelijk.
+
+Per waargenomen PR-paar worden de twee paden en de richting van de ancestorrelatie getoond in de JSON-, tekst-, HTML-, Markdown- en private CSV-uitvoer. De portfolio-conflictbalie en de bestaande private merge-first werkopdrachten nemen deze relatie afzonderlijk over; werkopdrachten binden de positieve melding aan de geselecteerde PR-HEAD en tonen de waargenomen peer-HEAD.
+
+De bron blijft begrensd: maximaal 200 zichtbare scope-conflictpaarkaarten en 24 padvoorbeelden per paar. Afgekapt bewijs wordt als onvolledig gemarkeerd. De historische snapshotvergelijker houdt deze padparen nu ook apart bij: alleen twee volledige stabiele snapshots kunnen toevoeging of verdwijnen vaststellen; anders worden verschillen uitsluitend als steekproefwaarneming gemarkeerd. Oudere snapshots zonder deze velden worden als historische scope-dekking onbekend weergegeven. Exacte overlap en ancestor-overlap blijven aparte categorieën, zodat bestaande consumers van `shown_file_collision_pairs` hun oude betekenis behouden.
+
+**Interpretatie:** dit is een bestand/map-scopeconflict-signaal, niet automatisch een Git-mergeconflict, actieve eigenaar, lease of toestemming om een PR te wijzigen of te mergen. Een lege of gedeeltelijke steekproef is nooit vrijgave.
+
+
+## 21 oktober · privé-rapportuitvoer via gepinde directory-inode
+
+De issue-/PR-cockpit, PR-bestandsscope-CSV-export, actuele PR-gatebon, PR-portfoliorapport en opgeslagen cross-window PR-collisionexport delen nu `scripts/zsentinel_private_report_writer.py` voor `--output`, in plaats van losse pathname-open/unlink-patronen. Deze routes:
+
+- vereist een bestaande directory die eigendom is van de huidige gebruiker en
+  geen lees-, schrijf- of traverse-rechten voor groep/anderen heeft (dus `0700` of strikter);
+- controleert dat de directory-inode tussen de voorcontrole en de open gelijk
+  bleef en gebruikt daarna die gepinde directory-FD;
+- weigert bestaande bestanden, symlinks en niet-reguliere doel-inodes;
+- maakt het rapport exclusief aan met mode `0600`, begrenst de UTF-8-uitvoer
+  tot 6 MiB en synchroniseert bestand en directory;
+- ruimt na een schrijffout uitsluitend de inode op die deze aanroep zelf heeft
+  aangemaakt, nooit een bestand dat intussen dezelfde naam kreeg.
+
+Gebruik een bestaande private directory (de CLI maakt die bewust niet zelf aan):
+
+```sh
+install -d -m 700 "$HOME/.local/state/zsentinel"
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project zCloud --format html \
+  --output "$HOME/.local/state/zsentinel/issue-cockpit-20261021.html"
+```
+
+Het pad moet nog niet bestaan; een gedeelde tijdelijke directory zoals
+`/tmp` wordt terecht geweigerd. Deze wijziging verandert alleen de lokale
+rapportuitvoer: geen queue/claimwijziging, netwerkactie buiten de reeds gekozen
+read-only observatie, workflowdispatch, merge of deployment.
+
+
+## 21 oktober · bounded ancestor-scope graph and connected components
+
+The live open-PR scan now counts file/directory ancestor matches while retaining
+at most `MAX_SCOPE_PATH_PAIRS_PER_PAIR` (24) deterministic path examples per
+PR pair. Previously the scanner accumulated every matching path pair in memory
+before applying the display cap; two 100-path PRs could create up to 10,000
+temporary dictionaries for a single edge. The observed total remains exact for
+the scanned file lists, while retained examples stay bounded during graph
+construction.
+
+A separate transitive component view now groups path-scope edges into
+`linked_pr_path_scope_collision_clusters`. Each component includes observed
+PR/HEAD receipts, number of participating PRs, PR-pair edge count, total
+observed ancestor-conflict count, and at most eight path examples. At most 40
+components are displayed; truncation is explicit. JSON, operator text, offline
+HTML and Markdown now distinguish these groups from exact shared-filename
+clusters. Existing pairwise path-scope cards and CSV rows retain their previous
+meaning.
+
+This is still only a bounded observation of open PR paths. The counts do not
+prove Git merge conflicts, active owners, claim leases, review approval or safe
+integration order. A partial/stale sample cannot clear a path for editing or
+merging.
+
+
+## 22 oktober · veilige lokale herinvoer in de bestaande merge-first werkbak
+
+De bestaande operatorroutes voor (1) een geselecteerd privé reviewmanifest,
+(2) een historische privé PR-snapshot en (3) de canonieke projectregistratie
+openen hun bron voortaan **nonblocking en zonder symlink-follow**. De
+bestandstypecontrole gebeurt al vóór `open` met `lstat`: een FIFO, socket,
+directory of device wordt geweigerd in plaats van een operatorconsole te laten
+hangen aan een onbegrensde read. Een ontbrekende veilige `O_NOFOLLOW`/
+`O_NONBLOCK` capability leidt ook tot expliciete weigering.
+
+Een geopende invoer wordt aan hetzelfde reguliere bestand gebonden met
+device/inode, grootte en nanoseconde-wijzigingstijd vóór en na één begrensde
+read. Het werkelijk gelezen aantal bytes moet exact overeenkomen met de
+gepinde grootte. De historische snapshot blijft verplicht eigendom van de
+operator, alleen voor die gebruiker toegankelijk en maximaal 2 MiB; een
+reviewmanifest blijft maximaal 1 MiB en de canonieke registratie maximaal
+512 KiB. Alle bestaande JSON-schema-, eigenaar-, HEAD- en mergegatechecks
+blijven daarna bestaan.
+
+Praktisch gevolg: een verkeerd gekozen pipe of tijdens import vervangen
+bestand kan niet meer onzichtbaar de merge-first beoordeling blokkeren of
+een gemengde historische bron als één vaste waarneming presenteren. Een
+geweigerd bestand moet door de operator opnieuw als **regulier lokaal
+bestand** worden aangeboden; er wordt niet automatisch een andere bron,
+branch of eigen claim gekozen. Dit verandert geen GitHub-, Notion-,
+queue-, CI-, VPS-, runner- of deploymentstatus; **broncontrole is nooit
+merge- of leaseautorisatie**.
+
+
+## 22 oktober · historische bestand/map-botsingen zonder schijnoplossingen
+
+De historische PR-snapshotvergelijker kent nu **twee onafhankelijke
+volledigheidsgrenzen**. Een complete stabiele lijst van open PR's is niet
+genoeg om afzonderlijke bestand/map-conflictpaden volledig te vergelijken:
+per PR-paar kunnen nog steeds padvoorbeelden zijn afgekapt. Zowel de
+teller van getoonde paren, de totale waargenomen paren als beide expliciete
+truncatievlaggen en elke `path_conflicts_truncated` worden betrokken.
+
+Als ook maar één van de twee momentopnames onvoldoende paddekking heeft,
+rapporteren JSON, offline HTML, operator-tekst en Markdown verschillen
+**uitsluitend als steekproefwaarnemingen**. Er volgt dan geen stellige
+"conflict verdwenen" / "nieuw volledig conflict"-melding; de werkbak toont
+juist wat in de huidige of vorige beperkte bron zichtbaar was en dat de
+ontbrekende paden opnieuw moeten worden bekeken. Exact gedeelde
+bestandsnamen en bijbehorende onafhankelijke volledigheidsclaims behouden
+hun bestaande betekenis.
+
+Dit voorkomt dat een operator een niet-getoond ancestor-pad als opgelost
+interpreteert wanneer de volledige PR-inventaris wel compleet was maar de
+padvoorvertoning niet. Het is nog altijd geen bewijs van Git-mergeability,
+review, actueel eigenaarschap of productie-vrijgave.
+
+
+## 22 oktober · daadwerkelijk issuegerichte bestand/map-herstelroute
+
+De bestaande `scripts/zsentinel_issue_scope_cockpit.py` toont nu niet
+alleen identiek gewijzigde bestandsnamen, maar ook de al door de
+PR-scopegraaf waargenomen **bestand/map-ancestorbotsingen** per gekoppelde
+bestaande product-PR. Daardoor kan een wijziging van bestand `src` niet
+langer als onafhankelijk worden aangeboden ten opzichte van een andere
+PR die `src/app.py` vereist.
+
+- De bron is de reeds bestaande begrensde `shown_path_scope_collision_pairs`
+  van precies het geselecteerde project. Elke partner moet overeenkomen
+  met een daadwerkelijk waargenomen open PR én zijn exacte bron-HEAD.
+  Een vreemd project, ongekend PR-nummer, vals pad of duplicate paar
+  wordt afgewezen in plaats van een menselijk mergeadvies te vormen.
+- Per issue-PR worden de geobserveerde partners, gepinde peer-HEAD,
+  werkelijk conflicterende padvoorbeelden, afkapping en expliciete
+  `merge_authorized=false` zichtbaar in JSON, Nederlandse tekst,
+  Markdown en de responsieve offline HTML-werkbak. Er is geen nieuwe
+  netwerk-opvraag en er wordt geen claim of release geactiveerd.
+- `scripts/zsentinel_issue_action_board.py` neemt ancestorbotsingen mee
+  bij **bestaande PR eerst / eigenaar afstemmen**, groepeert één bestaande
+  PR over meerdere issues en toont de nieuwe aparte bronobservatie in
+  de privé-CSV. De gewone exacte-bestandscategorie blijft afzonderlijk.
+- De directe `--audit-open-prs` CLI en de issuegerichte CLI geven
+  niet langer ten onrechte exitstatus 0 bij uitsluitend geobserveerde
+  bestand/mapconflicten. Status 2 betekent bronconflict waargenomen;
+  status 3 blijft onvolledige bron. Exitstatus 0 verleent nooit
+  claim-, merge- of deploybevoegdheid.
+
+Dit herstelt een echte inconsistentie tussen de beschikbare PR-bron,
+de issuegerichte gebruikerswerkbak en de machineleesbare route voor
+menselijke afstemming. Ook bij een brongebonden conflict blijft de
+werkelijke Git-mergebaarheid, actuele lease, verplichte checklijst,
+onafhankelijke review en productie-eigenaar apart te bewijzen.
+
+
+## 22 oktober · bestand/map-ancestorbotsingen in de issuegerichte merge-eerst werkbak
+
+De bestaande live PR-conflictgraaf zag niet alleen identieke bestandsnamen,
+maar ook **file-versus-directory ancestorconflicten** (bijvoorbeeld `src`
+versus `src/app.py`). De issuegerichte Product Delivery Cockpit sloeg deze
+tweede soort echter over. Daardoor kon een P0/P1-issue met een werkelijk
+waargenomen bestand/map-botsing ten onrechte de neutrale route
+`inspect_existing_pr_and_owner_gates_first` krijgen.
+
+Dezelfde waargenomen scopebron wordt nu zonder nieuwe GitHub-opvraag
+verbonden aan bestaande issue→PR-kaarten. Per betrokken PR laat de
+uitgebreide cockpit de canonieke peer-PR, geobserveerde HEAD, telling,
+een padpaar en expliciete voorvertoningsafkapping zien. De menselijke
+tekst-/Markdownoverdracht, compacte merge-eerst HTML en per-issue
+privé-handoff maken de afzonderlijke ancestorcategorie zichtbaar.
+De `--audit-open-prs` commandostatus signaleert ook ancestorbotsingen
+als actievere inspectie, zelfs zonder identiek bestand.
+
+Elke peeridentiteit moet tot de geobserveerde PR-head-steekproef behoren;
+brondata met onjuiste repository, HEAD, padrelatie, dubbele paren of
+onbegrensde previews wordt geweigerd. Bij beperkte brondekking of
+onverenigbare waarneming is het resultaat nooit een automatische
+`safe to merge`. Het samengestelde issue-advies stuurt naar menselijke
+owner-/scope-afstemming, nooit een claim/lease-intrekking.
+
+De compacte worklist maakt onderscheid tussen algemene bestandsoverlap
+en de specifiek waargenomen bestand/map-ancestorbotsing. Deze signalen
+en de teller betrokken PRs zijn nu onderdeel van het **lokale bron-token**
+voor privé notities, zodat een eerdere sessie niet stilzwijgend dezelfde
+opvolgnotities kan hergebruiken wanneer het scopebewijs gewijzigd is.
+De private per-issue Markdown-handoff bevat diezelfde waarneming.
+
+Alle bronclaims blijven `merge_authorized=false`,
+`owner_verified=false` en `release_authorized=false`.
+Exacte GitHub HEAD/CI, onafhankelijke review, Notion- en workerclaims,
+branch protection en productiebevoegdheid blijven afzonderlijke gates.
+Geen QA-/regressiesuite of automatische CI-rerun nodig om deze broncodewijziging
+uit te voeren; er is ook geen VPS/SQLite/runner-mutatie gedaan.
+
+## 22 oktober · expliciete doelbranch in iedere botsingswaarneming
+
+De scope-inventaris leest nu voor iedere PR ook de actuele `base.ref` naast
+de bestaande base-commit-SHA. Een ongeldige/lege doelbranch maakt de PR-identiteit
+onbruikbaar in plaats van de target stil weg te laten. Bij een expliciet
+geselecteerde bron-PR controleert de tweede GitHub-lezing zowel de base-SHA als
+de branchnaam; een retarget naar een andere branch maakt de bron onstabiel,
+ook wanneer beide branches toevallig naar dezelfde commit wijzen.
+
+De doelbranch staat nu in het JSON-bewijs, bron-PR-overzicht, overlapkaarten,
+verbonden bestands- en bestand/map-scopegroepen, operator-tekst, offline HTML,
+Markdown en private CSV (inclusief de branch van beide kanten van een paar).
+Dit verandert geen collision-signaal in een bewezen Git-conflict: twee PR's
+op verschillende doelbranches blijven zichtbaar als gedeelde bestands-/scope-
+waarneming, maar de operator ziet nu expliciet dat hun release-target verschilt.
+
+Deze toevoeging verandert geen bestaande claim-, merge-, CI- of deploybevoegdheid.
+
+
+Ook wanneer de steekproef geen botsing toont, staan de daadwerkelijk bekeken
+PR-identiteiten met HEAD, doelbranch en bestandlijstdekking expliciet in
+operator-tekst, Markdown, offline HTML en private CSV. Die lijst blijft een
+begrensde observatie en noemt geen PR claimvrij of mergeklaar.
+
+
+
+## 22 oktober · doelbranch als onderdeel van PR-bronidentiteit
+
+De branchnaam van de PR-doelbasis is nu naast de base-commit-SHA onderdeel van
+de exacte gatewaarneming. De live collector valideert `base.ref` en leest die
+bij de tweede PR-opvraag opnieuw; een retarget tijdens het verzamelen maakt de
+waarneming onzeker, ook wanneer beide branches toevallig naar dezelfde commit
+wijzen. De scope-inventaris, gatecollector en merge-first werkbak moeten op
+dezelfde HEAD, base-SHA én doelbranch uitkomen voordat een kaart als bronvast
+wordt getoond.
+
+De doelbranch wordt meegenomen in de operatorwerkopdracht, private CSV,
+historische gatevergelijking, opgeslagen gatebatches en de samengevoegde
+cross-window botsingsgrafiek. Bij historische snapshots zonder branchveld
+blijft de branchidentiteit **ONBEKEND**; zulke oude snapshots kunnen niet
+worden aangemerkt als dezelfde stabiele gatewaarneming. De scope-delta toont
+een ontbrekende doelbranch expliciet in plaats van die als ongewijzigd te
+behandelen. De botsingsgrafiek vermeldt de doelbranch van beide PR's naast
+gedeelde paden, zodat een gedeeld bestand op verschillende release-targets
+niet wordt verward met bewezen Git-mergeconflict.
+
+Geen van deze velden is branch-protectionbewijs, eigenaarschap, claimvrijgave,
+reviewapproval of merge-/deployautorisatie. Bestaande verplichte CI en
+onafhankelijke review blijven afzonderlijke gates.
+
+
+Bij een instabiele PR-bron tonen de operatorwerkbak en private handoff ook
+de gevangen doelbranch naast de tweede waarneming. Branch-stabiliteit staat
+los van HEAD/base-SHA-stabiliteit: een stabiele `base.ref` wordt niet ten
+onrechte als veranderde branch gelabeld wanneer alleen de commitbron verschoof.
+De vervolgstap benoemt branch-retargeting expliciet wanneer de twee branchnamen
+verschillen; elke vorm van brononzekerheid blijft een menselijke HOLD.
+
+
+## 22 oktober · activiteitssnapshot meenemen in merge-first CSV
+
+De `worklist-csv`-export bevat nu op iedere issue-regel niet alleen het
+activiteitssignaal en de laatste issue-update, maar ook de berekende
+issue-inactiviteit in uren, de laatste waargenomen update van gekoppelde open
+PR's en de inactiviteitsduur daarvan. De rij bewaart tevens de dekking van
+gekoppelde PR-activiteit, het observatievenster en de UTC-referentietijd.
+
+Een bestaande PR blijft één gegroepeerde integratiekans. De PR-regel krijgt
+daarom een begrensd `related_issue_activity_snapshot_json` met per zichtbaar
+gekoppeld issue de afzonderlijke prioriteit, activiteitssignaal, timestamps,
+leeftijden en dekkingsstatus. De leeftijd van een issue wordt niet samengevoegd
+met die van een ander issue en de activiteit van een willekeurige PR wordt niet
+voorgesteld als de activiteit van deze kandidaat-PR.
+
+De snapshot komt uit dezelfde reeds verzamelde bron en doet geen extra
+GitHub-verzoeken. Ontbrekende waarden blijven leeg/UNKNOWN volgens het
+broncontract. Stilte bewijst geen stilstand of vrije eigenaar; alle claim-,
+merge- en deployvelden blijven `NO`.
+
+
+De activiteitssignaalbron valideert ook iedere gekoppelde PR-URL vóór set-/mapgebruik.
+Onjuiste typen, niet-canonieke URL's, te lange identiteiten en dubbele refs leveren
+een begrensde bronfout op in plaats van een ongecontroleerde `TypeError` of een
+ambigu activiteitsoverzicht. Dit verandert geen claim- of releasebesluit.
+
+
+## 22 oktober · expliciete anomalie voor toekomstige issue-/PR-activiteitsklokken
+
+Een issue- of gekoppelde open-PR-update die ná de gekozen observatieklok valt,
+wordt niet langer alleen als een ontbrekende timestamp verwerkt. De classifier
+markeert `source_clock_incoherent` en levert `event_clock_incoherent=true`.
+Zo kan een recente issue-update een toekomstige PR-timestamp niet verbergen
+achter een normaal ogend activiteitssignaal.
+
+De menselijke werkbak en issue-CSV tonen de anomalie expliciet. De gegroepeerde
+PR-CSV-regel bewaart dezelfde boolean per gekoppeld issue in het
+`related_issue_activity_snapshot_json`. Oudere opgeslagen boards zonder deze
+nieuwe receipt krijgen `UNKNOWN` in plaats van een verzonnen `NO`. Dit is
+alleen een observatie van bronklokken, geen bewijs van stilstand of vrije claim.
+
+De observatieklok zelf wordt ook begrensd: een `as_of`-waarde meer dan 120 seconden in de toekomst levert een expliciete `ValueError` op. Anders zou een foutieve toekomstige referentie zowel issue- als PR-leeftijden kunstmatig verhogen en actuele productissues ten onrechte als stil presenteren. De toegestane twee minuten vangen kleine klokscheefstand op; er wordt geen toekomstig tijdstip gebruikt om stilte te berekenen.
+
+## 22 oktober · portfolio- en historische-scopewaarschuwingen benoemen de echte dekkingsreden
+
+De grafiek en het portfolio-board hebben verschillende zichtbare uitvoerlimieten.
+Een bron kan alle geselecteerde PR's en paden hebben ingelezen terwijl de
+portfolio-weergave slechts de eerste 80 overlap-, bestand/map- of padaliasparen
+laat zien. Die tweede limiet telt nu mee als afzonderlijke
+`source_coverage_reasons`-categorie (`portfolio_*_display_truncated`).
+JSON, tekst, Markdown, offline HTML en de private CSV tonen dezelfde reden.
+Een onvolledig board wordt niet stilzwijgend als volledige operatorbron
+gepresenteerd.
+
+De historische snapshotvergelijker geeft nu ook concrete reden-codes waarom
+bestand/map- en padaliaswijzigingen niet volledig vergelijkbaar zijn: onder
+meer onbeschikbare GitHub-bron, instabiele snapshots, onvolledige PR-inventaris
+en een onvolledige padvoorvertoning. De reden wordt opgenomen in de JSON-
+uitkomst en in tekst/Markdown en offline HTML weergegeven. Geobserveerde
+steekproefverschillen blijven uitsluitend steekproefwaarnemingen; een reden-code
+verleent geen claim-, merge- of releaseautorisatie.
+
+Deze uitbreiding gebruikt uitsluitend reeds verzamelde bronvelden en introduceert
+geen extra GitHub-polling, CI-dispatch, queue-/claimwijziging of releaseactie.
+
+## 22 oktober · dekkingsreden volgt iedere PR-werkopdracht
+
+De private per-PR-werkopdracht neemt nu de bounded
+`source_coverage_reasons` van het projectboard over. Bij onvolledige PR-
+inventaris, instabiele bron of een afgekapt portfolio-overzicht staat dezelfde
+reden ook als `source_warning` in de JSON, offline HTML, Markdown en private
+CSV-export. Zo hoeft een eigenaar de waarschuwing niet terug te zoeken in een
+los projectkaartje om te begrijpen waarom overlapinformatie onvolledig is.
+
+Oudere bewaarde werkopdrachten zonder dit optionele veld blijven leesbaar.
+Nieuwe waarden worden begrensd en op een veilige reason-code-vorm gecontroleerd.
+De waarschuwing is alleen broncontext: bestaande owner/lease-, exact-HEAD-CI-,
+review-, branch-protection- en releasechecks blijven afzonderlijk vereist.
+
+## 22 oktober · één gedeelde Nederlandstalige bronbeperkingsuitleg
+
+Dezelfde machineleesbare reden-codes behouden hun stabiele JSON-identiteit,
+maar tekst, Markdown, offline HTML, CSV-waarschuwingen en per-PR-werkopdrachten
+gebruiken nu één gedeelde vertaling naar mensentaal. Redenen uit historische
+snapshotvergelijkingen behouden bovendien de aanduiding `vorige snapshot` of
+`huidige snapshot`. Onbekende toekomstige codes vallen veilig terug op een
+zichtbare generieke uitleg; de broncode zelf blijft beschikbaar in de
+gestructureerde brondata.
+
+Hierdoor krijgt de eigenaar zowel de concrete reden als het juiste meetmoment,
+zonder extra bronverzoeken of impliciete claim-/merge-/releasebesluiten.
+
+## 22 oktober · meerpagina-open-PR-inventaris in de bestaande portfolio-opdracht
+
+De operator kan voor één tot drie geregistreerde projecten de bestaande
+portfolio-opdracht gebruiken met `--max-prs 16 --pages 3`. Daarmee leest de
+read-only grafiek maximaal drie **opeenvolgende** GitHub-pagina's van zestien
+open PR's per project (maximaal 48 PR's/project). De standaard blijft
+`--pages 1` en `--max-prs 10`, zodat oude aanroepen hun lage
+GitHub-verzoekbudget behouden.
+
+Een open-PR-inventaris telt uitsluitend als volledig bij een stabiele dubbele
+bronlezing vanaf pagina 1, zonder dubbele nummers, wanneer een kortere
+terminale pagina is gevonden en alle later expliciet opgevraagde pagina's
+leeg zijn. Dat geldt ook als de lijst eerder stopt dan de derde
+opgevraagde pagina. Een geheel volle laatste pagina, ontbrekende middenpagina
+of afwijkende tweede bronlezing blijft onvolledig. De bestaande afzonderlijke
+grenzen voor bestandslijsten, bestand/map-paarvoorbeelden en padaliassen
+blijven van kracht; een volledige PR-lijst kan daarom nog steeds een
+onvolledige *conflictbron* opleveren.
+
+De historische vergelijking accepteert maximaal 48 brongebonden PR-identiteiten.
+De private operatorweergaven en CSV tonen nu `open_pr_pages_read` en
+`open_pr_window_complete` naast de onafhankelijke
+`source_complete_for_sample`. De gate-inspectie selecteert nog steeds
+hoogstens vier exacte-HEAD PR's per run: 48 PR's lezen betekent niet dat
+48 CI/review-gates beoordeeld zijn. Noch volledige paginering noch
+afwezigheid van overlappende paden verleent een actieve claim,
+branch-recht, merge- of deployautorisatie.
+
+### Operatorwerkopdrachten met herleidbare paginabron
+
+De bestaande `--inspect-current-pr-gates`-flow kiest ook na een
+meerpagina-scan slechts maximaal vier PR's om exact-HEAD gatebonnen
+op te halen. Hun individuele private werkopdracht vermeldt nu hoeveel
+opeenvolgende open-PR-pagina's zijn gelezen en of dit *open-PR-venster*
+volledig was. De JSON bewaart deze bronfeiten als
+`source_open_pr_pages` en `source_open_pr_window_complete`, de
+CSV biedt afzonderlijke kolommen en tekst/Markdown/HTML tonen dezelfde
+feitelijke dekking. Oudere opgeslagen receipts zonder de nieuwe
+optionele velden blijven leesbaar als één pagina met onbekende
+volledigheid; er wordt geen voltooid bronvenster verzonnen.
+
+Ook bij volledig open-PR-venster blijven padlimieten, review/CI,
+claim-/workerbezit, PR-loze branches, branch protection en
+release-eigenaar apart onbekend totdat de bevoegde actor ze vaststelt.
+
+## 22 oktober · herstelroute voor afgekapt conflictbewijs (read-only)
+
+De volledige PR-bron is voortaan alleen 'volledig' als niet alleen de
+open-PR-paginering en gewijzigde bestanden, maar ook de gepresenteerde
+gedeelde-bestandsvoorbeelden en bestand/map-clusters niet zijn afgekapt.
+Een botsingspaar met meer gedeelde paden dan de voorbeeldlimiet of een
+scope-cluster buiten de clusterlimiet levert een aparte
+`source_coverage_reasons`-melding. De operator ziet de bronreden
+consistent in JSON, tekst, Markdown, offline HTML en private CSV.
+
+De operator krijgt nu bovendien maximaal vijf **concrete handmatige
+leesacties** (`source_recovery_steps`) afhankelijk van het werkelijke
+brongat: bijvoorbeeld de read-only PR-scan uitbreiden met
+`--max-prs 16 --pages 3`, een driftende HEAD opnieuw lezen,
+PR-bestandslijsten controleren of de daadwerkelijke Github Files changed
+van de betrokken PRs openen. De stappen worden opgenomen in
+portfolio-overzichten én de geselecteerde individuele PR-werkopdrachten,
+inclusief de offline HTML en private CSV-regels
+`source_recovery_action`. Er wordt geen GitHub-rerun, PR-edit, workerclaim,
+servicewijziging, merge of deploy uitgevoerd.
+
+Een volledige GitHub-PR-scan is onafhankelijk van Notion-/workerclaims en
+branch protection. Bij ontbreken van CI/review/eigenaarschap blijft de
+bestaande merge-HOLD van kracht.
+
+## 22 oktober · optionele GitHub Actions runnerwachtrij in dezelfde operatorbalie
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` ondersteunt nu
+`--inspect-runner-queue` voor **afzonderlijke, read-only GitHub Actions
+bronnen**. Per geregistreerd project worden maximaal twee workflowruns in
+status `queued`, twee in `in_progress` en twee in `waiting` gelezen,
+met maximaal zestien jobs per niet-wachtende run; de maximale nieuwe
+bronbelasting is negen GitHub GETs/project. De standaard blijft UIT. De
+operator kan dit combineren met bestaande `--inspect-current-pr-gates`,
+zonder extra workflow, testsuite, service of agent te starten.
+
+Het bronmodel maakt onderscheid tussen `NO_ASSIGNMENT_OBSERVED`,
+`ASSIGNED_AT_READ` en `UNKNOWN` voor **jobs**. Workflowstatus `waiting`
+staat apart als maximaal twee exacte run-/HEAD-links, omdat een omgeving-
+approval of concurrency-wacht kan bestaan voordat GitHub een job aanmaakt.
+De operator ziet de aparte wachtrijdekking (`bounded_observed`,
+`partial_window` of `unknown`), statusdrift en de canonieke workflowlinks.
+Dit is een bronmoment, geen bewijs dat iedere waiting-run uitsluitend op
+menselijke approval wacht, en zeker geen job-/runnerstoring. Jobkaarten
+behouden afzonderlijk de status, maximaal acht runnerlabels, bronleeftijd en
+canonieke Actions-joblinks. De steekproef is begrensd en niet-atomair; een
+niet toegewezen job bewijst GEEN offline zCloud-listener. De eigenaar
+verifieert GitHub-repository/runnergroep/labels en, indien toegestaan en
+zonder actieve Runner.Worker te verstoren, de echte listener via zSSH.
+
+JSON, operator-tekst, Markdown, offline scriptvrije HTML en private CSV
+bevatten de optionele diagnose. De individuele private PR-handoff neemt
+uitsluitend **repositorybrede, van PR-gates gescheiden** queuecontext over:
+geen enkel queue-item wordt als bewijs van geslaagde verplichte exacte-HEAD
+CI/review gepresenteerd. Geen automatische workflowdispatch, retry,
+runnerrestart, claim, merge of deployment.
+
+Voor P0 [#1326](https://github.com/Zennay/zCloud/issues/1326) blijft
+de bevoegde infrastructuureigenaar verantwoordelijk voor het echte herstel
+en de live-verificatie van runnerregistratie en uitgevoerde jobs.
+
+### Niet-atomaire GitHub-runnerstatus blijft herkenbaar
+
+GitHub kan tussen het lezen van de wachtrij en het ophalen van jobdetails
+een run afronden of van status laten wisselen. De optionele diagnose blijft
+dan bruikbare andere waarnemingen tonen, maar zet
+`run_state_drift_observed=true` en meldt dat de bron niet stabiel was.
+Dat signaal staat zowel in de operatorweergave als in de private CSV.
+Afgeronde of dubbel geobserveerde runidentiteiten worden niet als
+concurrerende actieve jobs geteld. Onbekende jobnamen worden vervangen
+door een lokaal afgeleid numeriek GitHub-joblabel; ingebedde controlecodes
+worden niet in terminal-/HTML-tekst overgenomen.
+
+De waarneming is geen globale GitHub runnerinventaris en bewijst geen
+verplichte CI-success, actieve Notion-claim, runneruitval, restarttoestemming
+of production release. Herstel blijft onder de echte eigenaar van issue #1326.
+
+### Wachtrijdruk zonder verwarring tussen workflowrun en job
+
+De optionele runnerwachtrijkaart toont nu ook de door GitHub **gemelde
+aantallen workflowruns** per aangevraagde status (`queued`, `in_progress`,
+`waiting`) naast het aantal werkelijk bekeken runs. Deze telling wordt
+niet voorgesteld als het aantal afzonderlijke queued jobs of mislukte
+uitvoeringen. Workflowstatus `waiting` wordt apart getoond met maximaal
+twee exacte workflowlinks en SHA's, ook wanneer er geen job is aangemaakt.
+Een oude of ontbrekende receipt geeft expliciet `unknown`; een volledige
+bounded waiting-steekproef zonder resultaten betekent alleen dat op dit
+bronmoment geen workflow in die status is gezien. Statusdrift tussen de
+opeenvolgende GETs blijft zichtbaar. De CSV en private PR-eigenaarsoverdracht
+nemen dezelfde teller, workflowlinks en dekkingsgrens mee.
+
+Een directe read-only GitHub-broninspectie op 22 oktober leverde in een
+begrensd venster een statuslijst met `total_count=2500` queued
+workflowruns en een job in run 39830563978 met labels
+`[self-hosted,zcloud,vps]` en nog geen toegewezen runner. Deze momentopname
+is als diagnostische aanwijzing aan de bestaande P0-issue #1326
+toegevoegd; noch die teller noch de afwezige jobtoewijzing is bewijs
+voor een offline listener. De daadwerkelijke correctie vereist nog
+de bevoegde runnerbeheerder en live uitvoeringsbewijs.
+
+
+## Explicit issue freshness is required before publishing a PR HEAD
+
+The merge-first issue workorder rejects any issue card whose `issue_evidence_stale` field is absent or not a real boolean. Only an explicit `false`, coherent source clocks and a stable second-read PR HEAD can populate `source_head_observed`. Missing or malformed freshness must never be interpreted as “not stale”; the operator can still refresh the source, but cannot reuse an unverified HEAD receipt.
+
+
+## Target-branch freshness for an explicitly selected source PR
+
+When `--source-pr` is supplied, the scope guard now reads the actual GitHub target-branch tip before and after the bounded collision scan. The report distinguishes:
+
+- `current`: both branch-tip reads agree with the selected PR's stored base SHA;
+- `stale`: both branch-tip reads agree with each other, but the PR's stored base SHA differs;
+- `changed_during_observation`: the target branch moved during the scan;
+- `unavailable`: either independent target-branch read could not be established.
+
+Only `current` permits the selected-source scan to count as complete. The tool still reports observed path collisions when freshness is uncertain, but it cannot present a stale-base or changing-base sample as complete. This is a read-only evidence guard, not a rebase, mergeability, ownership, approval or merge-authority claim.
+
+
+## Machine-readable owner next step
+
+Every observation now includes `source_scope_blockers` and `recommended_next_step_code`. Codes distinguish a stale selected-PR base, a target branch that moved during the scan, an unavailable branch-tip read, a changed source PR, unstable open-PR snapshots, truncated file lists, and bounded-window/alias coverage limits. The recommendation routes to owner-led branch refresh or a new bounded observation; it never grants claim, edit, merge or deploy authority. Text, HTML and Markdown expose the same next-step code and blocker list as JSON.
+
+## 23 oktober 2026 · één QA-only productselectiebeleid voor alle PR-routes
+
+Het PR-overlapbord behoudt alle geopende PR's in de **botsingsobservatie**, ook QA-only-PR's: gedeelde bestandsnamen en directory-voorouders blijven zichtbaar voor een mogelijke echte productmerge. Maar voor de **merge-first productkandidaten** gebruikt zowel de algemene open-PR-lijst als de rechtstreeks geselecteerde `--source-pr` nu identieke `explicit_qa_only_pr`-regels voor titel, labels en branch. Deze PR blijft op de huidige main zelfstandig importeerbaar: zolang de afzonderlijke issue-inbox PR #1563 niet gemerged is, staat de equivalente predicate lokaal in de scope-guard en importeert deze uitsluitend de op main bestaande `QA`-titelregex. Na integratie kan de duplicatie in een aparte, eigenaarschap-veilige stap worden geconsolideerd. Die beoordeelt niet alleen een `QA`/`test`-titel, maar ook expliciete `qa`, `qa-only`, `tests-only`, `quality-validation`, `qa-validation`, `regression`-labels en branches met `qa/`, `test/`, `tests/` of `quality-validation/`.
+
+Het bestaande rapportveld `product_candidate_based_on_title` blijft uit compatibiliteit bestaan, maar de boolean betekent voortaan **geschikt onder het gedeelde titel/label/branch-beleid**; het is geen eigenaarschap, bronclaim, goedgekeurde review, groene verplichte CI of mergeautorisatie. Een expliciet via `--source-pr` aangewezen QA-only-PR wordt nu **voor iedere productbronmodus** geweigerd, dus ook zonder `--expanded-source-files`, en wel vóór het ophalen van extra GitHub-bestandspagina's. De gewone open-PR-botsingsobservatie houdt deze PR's apart zichtbaar en als niet-productkandidaat gemarkeerd. De operatorinterface gebruikt nu de correcte formulering ‘QA-only PR’s (titel/labels/branch)’.
+
+Deze codewijziging verandert geen GitHub-staat, workflow, claim, runner, queue, productbranchbeveiliging of huidige releasebevoegdheid. Geen QA-/regressiesuites geschreven of handmatig gestart.
+
+### 23 oktober · titel/body-issue-identiteit zonder onbedoelde aliassen
+
+De bestaande open-PR-collision scan gebruikt nu in titel én body dezelfde begrensde `#123`-syntaxis: maximaal acht decimale cijfers, geen letters, cijfers, underscore of slash direct vóór de `#`, en een numerieke woordgrens na het issue-nummer. Hierdoor verdwijnt het eerdere asymmetrische titelmaximum van zeven cijfers en kan een fragment achter een padseparator geen automatische gelijknamige issue-relatie krijgen. De source-coverage voor ontbrekende/te lange PR-tekst blijft apart `incomplete`; een bronverwijzing is alleen een hint, nooit merge-/claimautorisatie.
+
+### 23 oktober · volledige same-repo issuelinks in bestaande PR-collision graph
+
+De read-only PR-bron herkent nu niet alleen de expliciete `#123`-issues in titel/body, maar ook volledige canonieke `https://github.com/Zennay/<repo>/issues/123`-links voor **dezelfde** geregistreerde repository. Een verwijzing naar een issue met hetzelfde nummer in een andere repository wordt niet als interne relatie opgenomen. Bestaande `body`/`title`-provenance en afgekapt-bronvenster blijven behouden. Dit maakt duplicate-issue-overzichten en merge-first-bestandsbotsingen vollediger, maar de relatie is uitsluitend een niet-geautoriseerde tekstwaarneming; branch owners, reviews, CI en merge-rechten worden er niet uit afgeleid.
