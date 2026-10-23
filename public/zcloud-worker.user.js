@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      2.0.8
+// @version      2.0.9
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -39,7 +39,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.8");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.9");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -86,7 +86,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.8",...extra
+      provider:"chatgpt",runnerVersion:"2.0.9",...extra
     });return true}catch(_){return false}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -302,20 +302,7 @@
     try{
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
-      if(!ready(actual)){
-        // An open browser tab is not an authorized dispatch. Report the
-        // missing queue/slot contract instead of silently looking healthy.
-        if(actual && actual.active===true && actual.desired_state!=="paused" &&
-           actual.desired_state!=="draining"){
-          const reason=!actual.assignment_ready?"queue-assignment-not-ready":
-            !actual.queue_item?.queue_id?"queue-lease-missing":
-            !actual.global_worker_slot?"worker-slot-unallocated":
-            !String(actual.prompt||"").startsWith("Werk verder aan ")?"prompt-contract-mismatch":
-            "worker-target-not-ready";
-          await blocked(reason);
-        }
-        return;
-      }
+      if(!actual)return;
       await status("heartbeat",{reason:"worker-v2-check-30s"});
       const cid=conversation();
       // The durable server binding, not a sessionStorage cache, acknowledges
@@ -376,6 +363,20 @@
         }
       }else if(everGenerating){
         everGenerating=false;next=true;reportedGenerating=false;await status("generation-finished");
+      }
+      if(!ready(actual)){
+        // An open browser tab is not an authorized dispatch. Report the
+        // missing queue/slot contract instead of silently looking healthy.
+        if(actual && actual.active===true && actual.desired_state!=="paused" &&
+           actual.desired_state!=="draining"){
+          const reason=!actual.assignment_ready?"queue-assignment-not-ready":
+            !actual.queue_item?.queue_id?"queue-lease-missing":
+            !actual.global_worker_slot?"worker-slot-unallocated":
+            !String(actual.prompt||"").startsWith("Werk verder aan ")?"prompt-contract-mismatch":
+            "worker-target-not-ready";
+          await blocked(reason);
+        }
+        return;
       }
       // Preserve existing chats; age alone never authorizes a reset.
       await commands();
@@ -444,7 +445,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "2.0.8";
+  const SCRIPT_VERSION = "2.0.9";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
