@@ -66,6 +66,17 @@ source is `observed` with an empty array. The legacy `GET /api/alerts`
 remains an array for backward compatibility and does not carry a source
 receipt; use the incident panel or v1 route when completeness matters.
 
+Claim-conflict incidents receive a separate bounded evidence disclosure:
+`claim_conflict_source_status` is `observed` when all relevant canonical
+task-claim lookups were readable, `partial` for legacy or unverifiable claim
+identities/clocks, `not_applicable` when the observed alert window contains no
+claim-conflict alert, and `unavailable` if the alert source itself cannot be
+read. `claim_conflict_source_complete` is false whenever the alert source or
+a relevant claim observation is unknown. An unverifiable conflict stays visible
+and a fixed Dutch owner action explains that the claim must be checked before
+closure. These are observations, never proof of task ownership or permission
+to release a claim.
+
 No GET here renews, expires or releases a claim, authorizes a worker, or writes
 an incident. These changes are source-only on this PR until independent review,
 exact-head mandatory CI, protected-main integration and authorized deployment
