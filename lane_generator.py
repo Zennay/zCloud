@@ -9,11 +9,50 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
 ACTIVE_STATUSES = frozenset({"claimed", "running", "verifying"})
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 PROFILE_LANES = {
+    "portfolio-recovery": (
+        {
+            "id": "release-integration",
+            "keywords": (
+                "merge", "pull request", "pr", "main", "branch",
+                "review", "approval", "integrate", "integration",
+                "mergen", "samenvoegen", "pullverzoek", "integreer",
+                "integreren", "naar main",
+            ),
+        },
+        {
+            "id": "product-remediation",
+            "keywords": (
+                "issue", "issues", "bug", "fix", "repair", "defect",
+                "product", "feature", "ux", "ui", "customer",
+                "bouw", "repareer", "repareren", "probleem", "fout",
+                "functie", "gebruikersflow", "gebruikerservaring",
+            ),
+        },
+        {
+            "id": "worker-recovery",
+            "keywords": (
+                "worker", "scheduler", "queue", "claim", "browser",
+                "runtime", "memory", "ram", "swap", "crash", "stalled",
+                "wachtrij", "taakclaim", "browserwerker", "browserworker",
+                "workerblokkade", "vastgelopen",
+            ),
+        },
+        {
+            "id": "ci-deploy-recovery",
+            "keywords": (
+                "deploy", "workflow", "runner", "vps", "service",
+                "ci", "build", "release", "github actions", "pipeline",
+                "uitrollen", "uitrol", "deployment", "zelfgehoste runner",
+                "pijplijn",
+            ),
+        },
+    ),
     "research-validation": (
         {
             "id": "critical-path",
@@ -185,15 +224,27 @@ PROJECT_SCOPE_ALIASES = {
 }
 
 
+def _scope_values(scope, key):
+    """Accept a single scope name as one value, never as individual chars.
+
+    Persisted task metadata can contain either a string or an array. Splitting
+    "server.py" into characters silently loses real file-scope collisions.
+    """
+    values = scope.get(key)
+    if isinstance(values, str):
+        return (values,)
+    return values if isinstance(values, (list, tuple, set, frozenset)) else ()
+
+
 def _normal_scope(scope):
     scope = scope if isinstance(scope, dict) else {}
     capabilities = []
-    for value in scope.get("capabilities") or []:
+    for value in _scope_values(scope, "capabilities"):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if item and item not in capabilities:
             capabilities.append(item)
     files = []
-    for value in scope.get("files") or []:
+    for value in _scope_values(scope, "files"):
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
@@ -207,6 +258,90 @@ def _normal_scope(scope):
         if item not in files:
             files.append(item)
     return {"capabilities": capabilities, "files": files}
+
+
+def _recovery_declared_scope(metadata):
+    """Fail closed on ambiguous zSentinel WRITE scopes, never synthesized ones.
+
+    A generated `execution_lane.scope` is NOT an owner declaration.
+    Reject the *whole* declaration if a value is malformed: accepting one
+    valid capability alongside an invalid file would falsely prove safety.
+    Other project profiles keep their existing scope representation.
+    """
+    raw = metadata.get("conflict_scope") if isinstance(metadata, dict) else None
+    if not isinstance(raw, dict):
+        return {"capabilities": [], "files": []}
+    parsed = {"capabilities": [], "files": []}
+    for key in ("capabilities", "files"):
+        value = raw.get(key, [])
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, (list, tuple)) or len(values) > 64:
+            return {"capabilities": [], "files": []}
+        for original in values:
+            if not isinstance(original, str) or not 1 <= len(original) <= 256:
+                return {"capabilities": [], "files": []}
+            name = original.strip()
+            if not name or name != original or any(c in name for c in ("*", "?", "[", "]", "\\", "\x00")):
+                return {"capabilities": [], "files": []}
+            if key == "files":
+                if name.startswith("/") or name.endswith("/") or "//" in name:
+                    return {"capabilities": [], "files": []}
+                if any(segment in ("", ".", "..") for segment in name.split("/")):
+                    return {"capabilities": [], "files": []}
+                if not re.fullmatch(r"[A-Za-z0-9_./@+-]+", name):
+                    return {"capabilities": [], "files": []}
+            else:
+                name = name.lower()
+                if not re.fullmatch(r"[a-z0-9][a-z0-9._:/-]*", name):
+                    return {"capabilities": [], "files": []}
+            if name not in parsed[key]:
+                parsed[key].append(name)
+    # A capability label alone names a lane, not the files it may edit.
+    # Only explicit, finite real file paths can prove two code writers
+    # are independent. Read-only tasks are never granted writer authority.
+    if not parsed["files"]:
+        return {"capabilities": [], "files": []}
+    return parsed
+
+
+def recovery_scope_diagnostic(item):
+    """Human-safe metadata classification; never returns raw paths or owners."""
+    metadata = _metadata(item)
+    if not isinstance(metadata.get("conflict_scope"), dict):
+        return "missing_declaration"
+    return ("declared" if any(_recovery_declared_scope(metadata).values())
+            else "invalid_or_empty_declaration")
+
+
+def recovery_active_profile_mismatch(item):
+    """Unreconciled active lane provenance must not admit another writer.
+
+    A matching profile name alone is insufficient: malformed or missing lane
+    IDs previously looked compatible, so a title change could silently route
+    an active writer into a different lane and free its original lane.
+    """
+    record = _metadata(item).get("execution_lane")
+    if not isinstance(record, dict):
+        return True  # Missing provenance does not prove a safe migration.
+    if record.get("profile") != "portfolio-recovery":
+        return True
+    lane_id = record.get("lane_id")
+    if not isinstance(lane_id, str):
+        return True
+    return lane_id not in {
+        lane["id"] for lane in PROFILE_LANES["portfolio-recovery"]
+    }
+
+
+def _recovery_scope_from_item(item):
+    return _recovery_declared_scope(_metadata(item))
+
+
+def _recovery_scope_from_claim(claim):
+    metadata = claim.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = _metadata(claim)
+    return _recovery_declared_scope(metadata)
 
 
 def _metadata(item):
@@ -268,7 +403,8 @@ def _profile(project):
 def _lane_scope(project_id, lane_id, item=None):
     capabilities = [f"{project_id}:{lane_id}"]
     capabilities.extend(PROJECT_SCOPE_ALIASES.get((project_id, lane_id), ()))
-    explicit = _scope_from_item(item or {})
+    explicit = (_recovery_scope_from_item(item or {}) if project_id == "zsentinel"
+                else _scope_from_item(item or {}))
     for capability in explicit["capabilities"]:
         if capability not in capabilities:
             capabilities.append(capability)
@@ -278,12 +414,23 @@ def _lane_scope(project_id, lane_id, item=None):
     }
 
 
-def _lane_score(text, lane):
+def _lane_score(text, lane, profile=None):
     score = 0
     for keyword in lane["keywords"]:
         pattern = r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])"
         if re.search(pattern, text):
-            score += 3 if " " in keyword or "-" in keyword else 1
+            weight = 3 if " " in keyword or "-" in keyword else 1
+            # All issue tickets mention "issue" or "fix", regardless of the
+            # worker best equipped to handle them. Keep those words as a
+            # fallback for product remediation, but prefer an actual runner,
+            # claim, deploy or merge signal when one is present.
+            if profile == "portfolio-recovery" and keyword in {
+                "issue", "issues", "bug", "fix", "repair",
+                "product", "feature", "bouw", "repareer", "repareren",
+                "probleem", "fout", "functie",
+            }:
+                weight = 0.25
+            score += weight
     return score
 
 
@@ -294,15 +441,38 @@ def classify_backlog_item(project, item):
         str(item.get("title") or "") + "\n" +
         str(item.get("completion_criteria") or "")
     ).lower()
-    scored = [(_lane_score(text, lane), index, lane) for index, lane in enumerate(lanes)]
+    scored = [(_lane_score(text, lane, profile), index, lane) for index, lane in enumerate(lanes)]
     score, _, lane = max(scored, key=lambda value: (value[0], -value[1]))
-    # No keyword match: keep the first lane as the deterministic primary work lane.
+    routing_origin = "KEYWORD_CLASSIFICATION" if score > 0 else "NO_KEYWORD_FALLBACK"
+    # Unknown product work belongs to product remediation, not the PR
+    # release lane. A title without "PR"/"merge" evidence must never
+    # masquerade as an unfinished product PR.
     if score <= 0:
-        lane = lanes[0]
+        lane = (next(l for l in lanes if l["id"] == "product-remediation")
+                if profile == "portfolio-recovery" else lanes[0])
+        if profile == "portfolio-recovery":
+            routing_origin = "PRODUCT_REMEDIATION_FALLBACK"
+    state = str(item.get("status") or "").strip().lower()
+    if (profile == "portfolio-recovery"
+            and (state in ACTIVE_STATUSES
+                 or (state == "queued" and item.get("worker_slot") is not None))):
+        # Existing active workers AND still-queued slot reservations own the
+        # persisted canonical lane. An edited title must not silently move
+        # their reservation while another writer is being admitted.
+        # A missing/legacy lane remains subject to global owner HOLD.
+        persisted = _metadata(item).get("execution_lane")
+        if isinstance(persisted, dict) and persisted.get("profile") == profile:
+            lane_id = persisted.get("lane_id")
+            if isinstance(lane_id, str):
+                pinned = next((l for l in lanes if l["id"] == lane_id), None)
+                if pinned is not None:
+                    lane = pinned
+                    routing_origin = "PERSISTED_ACTIVE_LANE"
     project_id = str(project.get("id") or item.get("project_id") or "").strip().lower()
     return {
         "lane_id": lane["id"],
         "profile": profile,
+        "routing_origin": routing_origin,
         "scope": _lane_scope(project_id, lane["id"], item),
     }
 
@@ -324,6 +494,10 @@ def work_package_rank(item):
         "implement", "build", "ship", "deliver", "complete", "finish",
         "integrate", "migrate", "fix", "repair", "recover", "restore",
         "launch", "enable", "harden", "connect", "refactor",
+        "bouw", "bouwen", "implementeer", "implementeren", "herstel",
+        "repareer", "repareren", "integreer", "integreren",
+        "merge", "mergen", "lever", "opleveren", "afronden",
+        "los op",
     )
     if any(re.search(r'\b' + word + r'\b', title) for word in words):
         return 0
@@ -335,6 +509,47 @@ def work_package_rank(item):
     return 1
 
 
+def _prohibited_recovery_qa(item):
+    """Do not admit a NEW QA/validation package to zSentinel recovery.
+
+    Existing active work remains reserved; mandatory GitHub CI still runs
+    under its independent release gates. An incidental mention of tests in a
+    genuine bug-fix ticket does not turn that product fix into a QA package.
+    """
+    title = str(item.get("title") or "").strip().lower()
+    if re.match(
+        r"^(?:qa(?:[ :(-]|$)|tests?(?:[ :(-]|$)|regression[ -]tests?(?:[ :(-]|$)|"
+        r"quality[ -]validation(?:[ :(-]|$)|validation[ -]suite(?:[ :(-]|$)|"
+        r"regression[ -]suite(?:[ :(-]|$)|run[ -](?:qa|regression)(?:[ :(-]|$)|"
+        r"regressie[ -]?tests?(?:[ :(-]|$)|kwaliteits[ -]?validatie(?:[ :(-]|$)|"
+        r"kwaliteits[ -]?controle(?:[ :(-]|$)|validatie[ -]?ronde(?:[ :(-]|$)|"
+        r"test[ -]?suite(?:[ :(-]|$)|test[ -]?pakket(?:[ :(-]|$)|"
+        r"testen(?:[ :(-]|$)|schrijf[ -](?:qa[ -])?tests?(?:[ :(-]|$)|"
+        r"draai[ -](?:qa[ -])?tests?(?:[ :(-]|$)|"
+        r"voer[ -]tests?[ -]uit(?:[ :(-]|$))",
+        title,
+    ):
+        return True
+    metadata = _metadata(item)
+    lanes = [
+        metadata.get("lane_id"),
+        metadata.get("work_type"),
+        metadata.get("work_lane"),
+    ]
+    execution_lane = metadata.get("execution_lane")
+    if isinstance(execution_lane, dict):
+        lanes.append(execution_lane.get("lane_id"))
+    return any(
+        str(value or "").strip().lower().replace("_", "-") in {
+            "qa", "qa-validation", "quality-validation", "regression-testing",
+            "test-suite", "testing-only", "kwaliteits-validatie",
+            "kwaliteitscontrole", "regressie-tests", "testen-alleen",
+            "testpakket", "validatie-ronde",
+        }
+        for value in lanes
+    )
+
+
 def _queue_order(item):
     status = str(item.get("status") or "queued").lower()
     return (
@@ -344,6 +559,21 @@ def _queue_order(item):
         str(item.get("created_at") or ""),
         str(item.get("queue_id") or ""),
     )
+
+
+def _trust_active_lease(item, now_utc):
+    """Never infer a writer has a sound lease from an end time alone."""
+    def parsed(value):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            date = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return date.astimezone(timezone.utc) if date.tzinfo else None
+        except (ValueError, OverflowError):
+            return None
+
+    start, expiry = parsed(item.get("claimed_at")), parsed(item.get("claim_expires"))
+    return start is not None and expiry is not None and start <= now_utc < expiry and start < expiry
 
 
 def generate_execution_lanes(project, backlog, claims=()):
@@ -367,12 +597,68 @@ def generate_execution_lanes(project, backlog, claims=()):
     for item in items:
         lane = classify_backlog_item(project, item)
         classified.append({**item, **lane})
+    deferred_qa_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    deferred_ineligible_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    deferred_assigned_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    for item in classified:
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and item.get("worker_slot") is not None):
+            # The real dispatch query requires worker_slot IS NULL.
+            # Queued records still bound to a slot are already reserved;
+            # never advertise them as fresh recovery work.
+            deferred_assigned_by_lane[item["lane_id"]] += 1
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and item.get("eligible") != 1):
+            # The real server requires eligible=1. The read-only operator
+            # desk includes ineligible rows for visibility; never promote
+            # those rows into apparently claimable worker slots.
+            deferred_ineligible_by_lane[item["lane_id"]] += 1
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and _prohibited_recovery_qa(item)):
+            deferred_qa_by_lane[item["lane_id"]] += 1
+
+
+    # The cross-project zSentinel profile must fail closed if already active
+    # work does not declare its actual file/capability scope. A synthetic
+    # lane-only capability does not prove that another lane can edit safely.
+    # Existing owners remain active; this only suppresses NEW queued admission.
+    unknown_active_scopes = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and not any(_recovery_scope_from_item(item).values())
+    ]
+    # Active leases from an older profile must not be reinterpreted into
+    # independent four-lane writes, even if someone supplies file scopes.
+    # Existing owners are preserved; the runtime owner must reconcile the
+    # currently deployed profile and the original worker's claim first.
+    mismatched_active_profiles = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and recovery_active_profile_mismatch(item)
+    ]
+    # An active row with an impossible, expired or absent queue lease stays
+    # owned by its current worker, but cannot authorize another parallel
+    # writer. Only the portfolio-recovery profile has this extra hold.
+    observed_now = datetime.now(timezone.utc) if profile == "portfolio-recovery" else None
+    untrusted_active_leases = [
+        item for item in classified
+        if observed_now is not None
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and not _trust_active_lease(item, observed_now)
+    ]
 
     active_claims = []
+    unknown_claim_scopes = 0
     for claim in claims or ():
         if str(claim.get("project_id") or project_id).strip().lower() != project_id:
             continue
-        scope = _scope_from_claim(claim)
+        scope = (_recovery_scope_from_claim(claim) if profile == "portfolio-recovery"
+                 else _scope_from_claim(claim))
         if scope["capabilities"] or scope["files"]:
             active_claims.append({
                 "claim_key": str(claim.get("claim_key") or ""),
@@ -380,6 +666,11 @@ def generate_execution_lanes(project, backlog, claims=()):
                 "worker_id": str(claim.get("worker_id") or ""),
                 "scope": scope,
             })
+        elif profile == "portfolio-recovery":
+            # An externally supplied claim is still an owner reservation even
+            # when its scope is absent/invalid. Never silently discard it and
+            # admit another writer to the same unknown file scope.
+            unknown_claim_scopes += 1
 
     lane_items = {}
     for lane_def in lane_defs:
@@ -391,7 +682,42 @@ def generate_execution_lanes(project, backlog, claims=()):
 
     chosen_by_lane = {}
     blocked_by_lane = {lane_def["id"]: [] for lane_def in lane_defs}
+    active_backlog_counts = {lane_def["id"]: 0 for lane_def in lane_defs}
     occupied_scopes = []
+    reserved_queued_lanes = set()
+    # Queued rows carrying an existing worker slot are NOT new dispatch
+    # candidates, but they still reserve their lane and write scope. Without
+    # these reservations, a different recovery lane could be admitted to
+    # write the same files while the slot-bound task was still pending.
+    reserved_queued = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() == "queued"
+        and item.get("worker_slot") is not None
+    ]
+    unknown_reserved_scopes = [
+        item for item in reserved_queued
+        if not any(_recovery_scope_from_item(item).values())
+    ]
+    untrusted_reserved_profiles = [
+        item for item in reserved_queued
+        if recovery_active_profile_mismatch(item)
+    ]
+    for assigned in reserved_queued:
+        lane_id = assigned["lane_id"]
+        reserved_queued_lanes.add(lane_id)
+        blocked_by_lane[lane_id].append({
+            "kind": "queue",
+            "reason": "queued_worker_slot_reserved",
+            "overlap": {"capabilities": [], "files": []},
+        })
+        if any(_recovery_scope_from_item(assigned).values()):
+            occupied_scopes.append({
+                "queue_id": str(assigned.get("queue_id") or ""),
+                "lane_id": lane_id,
+                "scope": assigned["scope"],
+                "reserved_queued_slot": True,
+            })
 
     # Existing active work is authoritative: preserve it and reserve its write
     # scope before considering any new queued work.
@@ -401,26 +727,103 @@ def generate_execution_lanes(project, backlog, claims=()):
             item for item in lane_items[lane_id]
             if str(item.get("status") or "").lower() in ACTIVE_STATUSES
         ]
+        active_backlog_counts[lane_id] = len(active)
         if active:
-            chosen = active[0]
-            chosen_by_lane[lane_id] = chosen
-            occupied_scopes.append({
-                "queue_id": str(chosen.get("queue_id") or ""),
-                "lane_id": lane_id,
-                "scope": chosen["scope"],
-            })
+            # The first active task remains the displayed lane owner, but ALL
+            # active tasks reserve their write scopes. A second in-flight task
+            # must not disappear from cross-lane collision admission just
+            # because the UI can display only one task per lane.
+            chosen_by_lane[lane_id] = active[0]
+            for in_flight in active:
+                occupied_scopes.append({
+                    "queue_id": str(in_flight.get("queue_id") or ""),
+                    "lane_id": lane_id,
+                    "scope": in_flight["scope"],
+                })
 
+    unscoped_queued_writer_reserved = False
     queued = sorted(
         [
             item for item in classified
             if str(item.get("status") or "queued").lower() == "queued"
             and item["lane_id"] not in chosen_by_lane
+            and item["lane_id"] not in reserved_queued_lanes
+            and not (profile == "portfolio-recovery" and item.get("eligible") != 1)
+            and not (profile == "portfolio-recovery" and item.get("worker_slot") is not None)
+            and not (profile == "portfolio-recovery" and _prohibited_recovery_qa(item))
         ],
         key=_queue_order,
     )
     for candidate in queued:
         lane_id = candidate["lane_id"]
         if lane_id in chosen_by_lane:
+            continue
+        if (unknown_active_scopes or unknown_claim_scopes
+                or unknown_reserved_scopes or untrusted_reserved_profiles
+                or untrusted_active_leases or mismatched_active_profiles):
+            # Existing queue writers and externally supplied claims retain
+            # their ownership; neither an empty scope nor a malformed scope
+            # proves that a new queued writer is independent.
+            if mismatched_active_profiles:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_legacy_profile_unreconciled",
+                    "ambiguous_active_count": len(mismatched_active_profiles),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if unknown_active_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_write_scope_not_declared",
+                    "ambiguous_active_count": len(unknown_active_scopes),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if untrusted_reserved_profiles:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "queued_assigned_lane_provenance_untrusted",
+                    "ambiguous_reserved_count": len(untrusted_reserved_profiles),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if unknown_reserved_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "queued_assigned_write_scope_not_declared",
+                    "ambiguous_reserved_count": len(unknown_reserved_scopes),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if unknown_claim_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "claim",
+                    "reason": "active_claim_write_scope_not_declared",
+                    "ambiguous_claim_count": unknown_claim_scopes,
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if untrusted_active_leases:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_queue_lease_untrusted",
+                    "ambiguous_active_count": len(untrusted_active_leases),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            continue
+
+        candidate_without_scope = (
+            profile == "portfolio-recovery"
+            and not any(_recovery_scope_from_item(candidate).values())
+        )
+        if profile == "portfolio-recovery" and (
+            unscoped_queued_writer_reserved
+            or (candidate_without_scope and (occupied_scopes or active_claims))
+        ):
+            # With no declared write scope, cross-lane file independence
+            # cannot be proven. Admit at most one such worker, serialized,
+            # and never alongside known active/scoped work.
+            blocked_by_lane[lane_id].append({
+                "kind": "queue",
+                "reason": "unscoped_queued_writer_must_be_serial",
+                "overlap": {"capabilities": [], "files": []},
+            })
             continue
 
         conflicts = []
@@ -440,7 +843,9 @@ def generate_execution_lanes(project, backlog, claims=()):
             if overlap["capabilities"] or overlap["files"]:
                 conflicts.append({
                     "kind": "queue",
-                    "reason": "queue_scope_conflict",
+                    "reason": ("queued_worker_slot_scope_conflict"
+                               if occupied.get("reserved_queued_slot")
+                               else "queue_scope_conflict"),
                     "queue_id": occupied["queue_id"],
                     "lane_id": occupied["lane_id"],
                     "overlap": overlap,
@@ -455,6 +860,8 @@ def generate_execution_lanes(project, backlog, claims=()):
             "lane_id": lane_id,
             "scope": candidate["scope"],
         })
+        if candidate_without_scope:
+            unscoped_queued_writer_reserved = True
 
     results = []
     for lane_def in lane_defs:
@@ -466,9 +873,35 @@ def generate_execution_lanes(project, backlog, claims=()):
             "project_id": project_id,
             "profile": profile,
             "lane_id": lane_id,
+            "routing_origin": (chosen.get("routing_origin", "UNKNOWN")
+                               if chosen else "NO_LOCAL_TASK"),
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
-            "status": str(chosen.get("status") or "") if chosen else "blocked" if blocked_by else "idle",
+            "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]
+                or deferred_ineligible_by_lane[lane_id]
+                or deferred_assigned_by_lane[lane_id]) else "idle",
+            "deferred_qa_packages": deferred_qa_by_lane[lane_id],
+            "deferred_ineligible_packages": deferred_ineligible_by_lane[lane_id],
+            "deferred_assigned_packages": deferred_assigned_by_lane[lane_id],
             "scope": scope,
+            # Advisory reconciliation only: never take, release, or supersede
+            # an existing worker claim on the strength of this count.
+            "active_backlog_count": active_backlog_counts[lane_id],
+            "parallel_active_warning": active_backlog_counts[lane_id] > 1,
+            "unknown_active_scope_count": len(unknown_active_scopes),
+            "active_profile_mismatch_count": len(mismatched_active_profiles),
+            "unknown_claim_scope_count": unknown_claim_scopes,
+            "unknown_assigned_scope_count": len(unknown_reserved_scopes),
+            "untrusted_assigned_profile_count": len(untrusted_reserved_profiles),
+            "assigned_slot_scope_conflict_count": sum(
+                entry.get("reason") == "queued_worker_slot_scope_conflict"
+                for entry in blocked_by
+            ),
+            "untrusted_active_lease_count": len(untrusted_active_leases),
+            "serialized_unscoped_queue_admitted": (
+                bool(unscoped_queued_writer_reserved)
+                and chosen is not None and chosen.get("status") == "queued"
+                and not any(_recovery_scope_from_item(chosen).values())
+            ),
             "blocked_by": blocked_by,
         })
     return results

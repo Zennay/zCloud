@@ -1,0 +1,1649 @@
+## 23 October 2026 · inode-uitputting zichtbaar naast vrije root-schijfruimte
+
+De hostobserver gebruikt nu dezelfde read-only `statvfs("/")`-meting om ook
+beschikbare inodecapaciteit te signaleren. Vrije bytes alleen zijn geen
+voldoende bewijs dat een runner nog bestanden, logs of tijdelijke bestanden
+kan aanmaken: een bestandssysteem kan zijn inodes uitputten terwijl er nog
+schijfruimte over is.
+
+De JSON bevat afzonderlijke velden `inode_status`, `available_inodes`,
+`unavailable_inode_percent` en `inode_pressure_hint`, naast de bestaande
+blok-/GiB-meting. Bij minstens 95% niet-beschikbare inodes is de inode-druk
+`HIGH`; vanaf 90% is die `ELEVATED`. Als het bestandssysteem geen bruikbare
+inode-totalen rapporteert, blijft inodecapaciteit `UNKNOWN` en wordt de
+gecombineerde root-schijfbron `PARTIAL` in plaats van volledig waargenomen.
+Bekende blok- of inode-druk blijft zichtbaar bij onvolledige dekking; zonder
+bruikbare inodegegevens wordt geen volledig gezond oordeel gegeven.
+
+De operatorweergave toont vrije inodes en de inode-druk afzonderlijk. Dit is
+uitsluitend metadata-observatie: geen directoryscan, cleanup, claim-, runner-,
+service-, queue- of deploymentmutatie.
+
+## 23 October 2026 · herstelactie-overflow wordt zichtbaar
+
+De lokale herstelcockpit begrenst de incidentenlijst tot negen kaarten. Eerder
+werden alle acties na de rangschikking stilzwijgend afgekapt, waardoor de
+operator niet kon zien hoeveel aanvullende acties buiten beeld vielen of welke
+categorieën nog aandacht vroegen.
+
+Wanneer de lijst meer dan negen acties bevat, toont de cockpit nu de acht
+hoogst gerangschikte concrete acties plus één expliciete overflowkaart. Die
+kaart bevat het exacte aantal weggelaten acties, de aantallen per ernstniveau
+(urgent/review/info), en maximaal acht veilig gevormde actiecodes als
+voorbeelden. De machineleesbare velden `omitted_count`,
+`omitted_severity_counts`, `omitted_action_codes` en
+`omitted_action_codes_truncated` ondersteunen eigenarenoverdracht en
+integraties. Als er negen of minder acties zijn, blijft de bestaande lijst
+ongewijzigd.
+
+De overflowkaart waarschuwt dat de korte lijst niet volledig is en verwijst
+naar het volledige private eigenaarrapport. Zij autoriseert geen claim, queue-
+wijziging, runneractie, merge of deployment; verborgen acties worden niet als
+opgelost of afwezig geïnterpreteerd.
+
+## 22 October 2026 · bind runner presence to one process lifetime
+
+The local runner observer now reads the bounded `/proc/<pid>/stat` start-time field before and after collecting a candidate runner's executable identity and, for zCloud, service-cgroup membership. It counts the candidate only when the numeric PID and kernel start-time ticks still match. If the process exits during the observation, that transient process is skipped; if identity cannot be established or the PID has been reused, the runner source stays incomplete rather than mixing evidence from two process lifetimes. The receipt never exports PIDs, start-time ticks, executable paths, argv or environment.
+
+Source commit: [1582530](https://github.com/Zennay/zCloud/commit/158253042283832f6572dae9775369d5242a2feb). No QA suite was written or run.
+
+## 22 October 2026 — onbekend runnerproces kan geen complete afwezigheidswaarneming opleveren
+
+De read-only `scripts/zsentinel_runner_presence.py` markeert de procfs-bron nu
+als **onvolledig** wanneer de kernel `comm` of de executable-basename een
+`Runner.Listener`/`Runner.Worker` aanwijst, maar het proces niet aan een
+bekende runnerfamilie en dezelfde rol kan worden gebonden. Dit geldt zowel
+voor een onleesbare executable met een niet-herkenbare `argv0`-fallback als
+voor een leesbare executable buiten de bekende runnerpaden. Eerder kon zo'n
+proces stil worden overgeslagen terwijl `source_complete=true` bleef en
+een lege listenersteekproef daardoor te sterk kon lijken.
+
+De operator ziet nu alleen een begrensd aantal niet-classificeerbare
+runnerprocessen en een vaste waarschuwing; er worden geen PID's,
+argumenten, omgevingsvariabelen of executable-paden getoond. De onvolledige
+bron verhindert conclusies over listener-afwezigheid en houdt de
+zCloud-servicecgroupwaarneming conservatief. Dit is observatie, geen bewijs
+van GitHub-registratie of jobtoewijzing en geen autorisatie voor restart,
+retry, claim of deploy. Er is geen QA-suite geschreven of gedraaid.
+
+## 22 oktober 2026 · hostbrondekking als zelfstandige HTML-tabel
+
+De offline herstelcockpit toont nu een afzonderlijke tabel voor de vier vaste
+hostbronnen: RAM/swap, CPU-load, root-schijfruimte en Linux PSI. Elke bron krijgt
+de expliciete status Waargenomen, Gedeeltelijk of Onbekend. Zodra één bron
+onvolledig is, verschijnt een waarschuwing dat nieuwe workers op HOLD blijven;
+volledige hostbrondekking blijft nadrukkelijk geen bewijs van vrije cgroup-,
+claim- of runnercapaciteit. De bestaande PSI-meetwaardentabel blijft daarnaast
+beschikbaar.
+
+## 22 oktober 2026 · lane-kaarten benoemen onvolledige hostbronnen
+
+De concrete toelichting op iedere wachtende lane bevat nu, naast de algemene
+hostdrukmelding, de exacte vaste broncategorieën die `UNKNOWN` of `PARTIAL`
+zijn. Dat maakt de HOLD direct bruikbaar vanaf de lane-kaart, zonder dat de
+operator eerst een apart rapport hoeft te openen. Bij volledig gemeten druk
+blijft de bestaande eigenaaractie ongewijzigd. Dit is alleen weergave/advies:
+geen worker-toelating, claim, queue, runner of service wordt aangepast.
+
+## 22 oktober 2026 · urgente drukmelding toont óók ontbrekende bronnen
+
+Wanneer een bekende HIGH/ELEVATED-drukbron samengaat met gedeeltelijke
+hosttelemetrie, toont de eigenaaractie nu beide feiten: de bekende druk én de
+onbekende/partiële broncategorieën. De bevoegde eigenaar krijgt expliciet de
+opdracht die ontbrekende dekking mee te controleren vóór capaciteitswijziging
+of nieuwe worker-toelating. Daarmee gaat brononzekerheid niet verloren doordat
+de waarschuwing als urgent/review wordt gerouteerd. De melding blijft adviserend:
+geen job, claim, worker, service of deployment wordt gewijzigd.
+
+## 22 oktober 2026 · incomplete hosttelemetrie krijgt een expliciete eigenaaractie
+
+De vierbaan-herstelactie toont nu ook een concrete HOLD als de hostbron
+`HOST_PARTIAL` of `UNKNOWN` is zonder een bekende HIGH/ELEVATED-drempel.
+De actie somt alleen vaste broncategorieën op (`meminfo`, `loadavg`,
+`root_disk`, `psi`), noemt ontbrekende of gedeeltelijke dekking en vraagt
+de bevoegde hosteigenaar om herobservatie vóór nieuwe worker-toelating.
+Dit sluit aan op de nieuwe per-bron hostobserver: een onvolledige meting
+wordt niet stilzwijgend als gezond weergegeven. Bestaande jobs/claims blijven
+intact; de kaart voert geen restart, claim-, queue- of deploymentactie uit.
+
+## 22 oktober 2026 · host-capaciteit vereist volledige brondekking voor een groen oordeel
+
+De gecombineerde hostobserver hield eerder alleen de RAM/swap- en loadavg-parsing
+binnen één foutgrens. Daardoor kon een fout in loadavg correcte RAM/swap-data
+laten verdwijnen; omgekeerd kon een geldige meminfo/loadavg-meting samen met
+onvolledige root-schijf- of PSI-dekking nog steeds `HOST_SNAPSHOT_OBSERVED`
+en `NO_LOCAL_THRESHOLD_CROSSED` opleveren.
+
+De observer leest de vier bronnen nu onafhankelijk en behoudt iedere geldige
+meting. JSON bevat `source_coverage`, `observed_sources`, `partial_sources`
+en `missing_sources` voor `meminfo`, `loadavg`, `root_disk` en `psi`.
+Een bekende HIGH/ELEVATED-drempel blijft zichtbaar, ook bij gedeeltelijke
+dekking. Zonder bekende drempeloverschrijding wordt de algemene hint alleen
+`NO_LOCAL_THRESHOLD_CROSSED` wanneer alle vier bronnen volledig zijn
+waargenomen; anders blijft de hint `UNKNOWN` en de status `HOST_PARTIAL`
+(of `UNKNOWN` wanneer geen bron bruikbaar is). De bestaande desk zet
+nieuwe-work-admissie bij onvolledige hostbron al op HOLD; lopende eigenaren
+worden niet onderbroken. De mensentaalweergave toont de werkelijk bekende
+RAM/swap/load-metingen en noemt precies welke bronnen ontbreken.
+
+## 22 oktober 2026 · swap niet aanwezig is niet hetzelfde als 0% gebruikt
+
+De read-only hostobservatie gaf voor een machine zonder geconfigureerde swap
+`swap_used_percent=0.0` door. Dat was numeriek waar als formule-uitkomst,
+maar de operatorweergave maakte geen onderscheid tussen "swap bestaat niet"
+en "swap bestaat en is volledig vrij".
+
+Het hostpacket heeft nu een expliciete `swap_status`: `OBSERVED`,
+`NO_SWAP_CONFIGURED` of `UNKNOWN`. Als `SwapTotal=0`, blijft
+`swap_used_percent=null` en zegt de mensentaalweergave dat swap niet is
+geconfigureerd; alleen een positieve, geldig waargenomen `SwapTotal`
+levert een percentage op. De bestaande drukdrempels tellen swapgebruik
+alleen mee als swap werkelijk aanwezig is. Dit verandert geen
+worker-admission, queue, claim, runner of service en geeft geen
+capaciteits-/herstartautorisatie.
+
+## 22 oktober 2026 · partiële PSI verbergt geen bekende hostdruk meer
+
+De read-only Linux PSI-waarnemer gaf bij één ontbrekende kernelbron `status=PARTIAL`
+terug met `pressure_hint=UNKNOWN`, ook als een andere correct gelezen bron
+bijvoorbeeld zware CPU-stalls meldde. Daardoor verdween een bestaand
+signaal uit de gecombineerde hostdruk en de eigenaaractie.
+
+De waarnemer classificeert nu ook bij onvolledige dekking de **bekende bronnen
+afzonderlijk**: een bekende HIGH/ELEVATED-drempel wordt behouden met
+`pressure_scope=OBSERVED_SOURCES_ONLY` en `pressure_basis`. Ontbrekende
+bronnen blijven UNKNOWN. Als geen bekende bron een drempel overschrijdt,
+blijft de algemene hint UNKNOWN in plaats van een onterechte
+`NO_LOCAL_THRESHOLD_CROSSED`. Bij volledige dekking blijven de bestaande
+drempels van kracht.
+
+De offline HTML-druktafel toont nu de bekende meetwaarden naast expliciete
+UNKNOWN-cellen en een waarschuwingsregel over de ontbrekende dekking.
+De tekstuele samenvatting en de prioritaire eigenaaractie noemen dezelfde
+waargenomen PSI-druk, maar verklaren geen specifieke GitHub-job geblokkeerd
+en verlenen geen worker-, claim-, restart- of deployrechten. Er is geen
+queue-/service-mutatie of QA-suite aan gekoppeld.
+
+## 22 oktober 2026 · P0-eigenaarwerk blijft zichtbaar, ook zonder nieuwe wachtrijtaak
+
+De bestaande vier-lane cockpit had een functionele volgordefout: de
+`owner_review_shortlist` nam de volgorde van de lokaal ingelezen
+projectregels over, ondanks het label 'P0 eerst'. Bij een maximum van zes
+konden wachtende P1-projecten dus een echt P0-project uit het zicht duwen.
+Ook een reeds `running`/ `claimed` P0-project zonder nieuw wachtwerk
+werd niet opgenomen, terwijl de volledige CSV het wel als `P0_ACTIVE_OWNER`
+classificeerde.
+
+Nu gebruiken de privé HTML-, tekst-, Markdown- en JSON-eigenaaroverdrachten
+dezelfde deterministische bronvolgorde als de volledige CSV:
+`P0_QUEUED` → `P0_ACTIVE_OWNER` → `P1_QUEUED` →
+`P1_ACTIVE_OWNER`. Binnen een groep komt het grootste waargenomen
+P0-/P1-volume eerst; gelijke scores zijn alfabetisch stabiel. De
+maximaal zes zichtbare kaarten bevatten nu ook afzonderlijke aantallen
+actief P0/P1 en tonen de categorie `owner_review_kind` in JSON.
+De volledige CSV kent dezelfde P0/P1-prioriteit voor actieve-only regels,
+in plaats van die als `UNKNOWN` aan te duiden.
+
+Dezelfde bronkaart bereikt nu ook de maximaal negen zichtbare
+**incident-acties**: de eerste in de lokale shortlist waargenomen
+`P0_ACTIVE_OWNER` verschijnt als `ACTIVE_P0_OWNER_PROTECTED` met een
+concrete eigenaarstap. Dit is **geen vastgelopen-incidentdiagnose**;
+actieve P0-taak betekent slechts dat de bestaande eigenaar en claimklok
+bij opvolging behouden moeten blijven. Het paneel houdt de volgorde
+P0-wachtwerk → P0-actieve eigenaar → P1-wachtwerk aan, ná de bestaande
+kritieke runner-/scopebeveiligingswaarschuwingen.
+
+Een actieve-only kaart is expliciet **eigenaarrecheck**, geen vrij
+werkpakket. Geen actieve lease of worker wordt geclaimd, onderbroken,
+opnieuw ingepland of overgenomen. Alle gegevens blijven één beperkte
+lokale queue-steekproef; ontbrekende projectdekking en afgekapt
+shortlistmateriaal blijven **ONVOLLEDIG**. Geen live GitHub/Notion-
+bevestiging, reviewergoedkeuring, CI-mergeautoriteit of deploybewijs.
+
+# zSentinel · four-lane recovery admission
+
+## 22 October · portable portfolio owner-actions CSV from one local snapshot
+
+The read-only four-lane desk can now create a private **all-project owner-actions CSV** without fetching GitHub/Notion, claiming workers or mutating queue state. Unlike the six-row urgent shortlist, the CSV contains a row for **every canonical project** (13 projects); absent local rows stay `UNKNOWN`, never "zero open issues".
+
+```bash
+# Choose a pre-existing operator-owned directory with mode 0700.
+python3 scripts/zsentinel_four_lane_desk.py \
+  --db /path/to/existing/history.db \
+  --format owner-actions-csv \
+  --output /path/to/private-owner-dir/zsentinel-portfolio-actions-20261022.csv
+```
+
+A new `.csv` destination is required and is created with exclusive ownership mode 0600, never overwritten. The CSV contains canonical project names, **local** queued P0/P1 and active P0/P1 counts, separate eligible hints, the fixed per-project HOLD/owner action and recommended manual next step. Rows are **P0 queued first**, then P0 with active owners, P1 queued, P1 with active owners, other locally observed groups, and finally unobserved projects. The `owner_review_order` column retains this provenance. `host_admission_observation` and `held_local_recovery_lanes` carry the same local host-pressure and owner-HOLD facts as the four-lane desk; a nominal observation is never runtime or CI authorization. Canonical GitHub **open-PR and open-issue search links** are navigation, *not* evidence of current issue/PR state. Each row carries the exact source observation timestamp, a privacy-preserving local source fingerprint and source-completeness booleans.
+
+No raw `queue_id`, task title, file path, claim key, worker ID, process arguments, token or prompt content enters the CSV. All external GitHub issue / Notion claim coverage remains `UNKNOWN`; `owner_verified`, `claim_authorized`, `merge_authorized` and `deploy_authorized` remain `false`. If the local source is incomplete, a project with no sampled row still cannot be assumed clear. Existing exact-head CI, review and owner checks apply before every merge or production action.
+
+
+This is source guidance for the `portfolio-recovery` profile in
+`lane_generator.py`. The zSentinel role remains cross-project recovery within
+zCloud, not a separate product or permission boundary.
+
+## What is implemented
+
+| Lane | Work chosen from the existing backlog |
+| --- | --- |
+| `release-integration` | Finish a previously opened product PR on main, when existing exact-head checks, reviews and authorization permit. |
+| `product-remediation` | Resolve unowned product-impact issues and real bugs; do not invent QA work. |
+| `worker-recovery` | Investigate genuine queue, claim, browser-worker or scheduler blockage. |
+| `ci-deploy-recovery` | Investigate CI, runner and deployment problems without bypassing release authority. |
+
+The classifier treats generic ticket words (`issue`, `fix`, `bug`,
+`product`) as weak signals in this profile. Specific terms such as
+`runner`, `queue` and `merge` determine the lane when present.
+On 21 October, the same four routing lanes also gained Dutch vocabulary
+to support actual Dutch zCloud work orders without silently defaulting
+to the release lane: `mergen`/`samenvoegen`/`integreer`
+(release), `bouw`/`repareer`/`gebruikersflow` (product),
+`wachtrij`/`taakclaim`/`browserworker` (worker), and
+`uitrollen`/`deployment`/`pijplijn` (CI/deploy).
+Dutch product-delivery verbs now receive the same equal-priority
+package preference as their English equivalents. Higher queue
+priority, existing ownership, declared file scopes and mandatory
+release gates continue to take precedence.
+This is routing, not proof of ownership or permission to take a task.
+
+## 21 October · preserve current active recovery lanes
+
+The four-lane classifier no longer sends an unrecognized, keyword-free
+product work item to the first lane (`release-integration`): it defaults
+to `product-remediation` unless PR/merge/release words actually support
+another lane. This is classification only, never a new claim.
+
+A running, claimed or verifying recovery task with a **complete** persisted
+`execution_lane` (`profile=portfolio-recovery` plus one of the four exact
+canonical lane IDs) retains its recorded lane even when the task title or
+completion criteria change. The existing owner and *all* in-flight file
+scopes remain reserved. Queued work is classified from its current product
+description and is not allowed to spoof an active lane to get preferred
+placement.
+
+New recovery admission also rejects explicitly Dutch QA-only titles
+(e.g. `regressietests`, `kwaliteitsvalidatie`, `validatieronde`,
+`schrijf tests` and `voer tests uit`) and corresponding persisted
+QA-only lane labels. It does not filter a real product bugfix merely
+because its requirements mention tests, and it never removes or
+preempts an already active task. Mandatory CI still runs on its
+independent existing gates.
+
+The same routing decision is now shown in the existing operator desk's
+text, JSON (`lanes[].routing_origin`) and script-free offline HTML:
+`PERSISTED_ACTIVE_LANE`, `KEYWORD_CLASSIFICATION`,
+`PRODUCT_REMEDIATION_FALLBACK` or `NO_LOCAL_TASK`. These are finite,
+human-readable provenance labels, not inferred claims, hidden process
+identities or permission to dispatch new work.
+
+A missing/legacy/unknown active lane identifier is now an explicit
+`active_legacy_profile_unreconciled` HOLD for **new** parallel writers
+rather than a silently trusted matching profile name. Do not migrate or
+reassign existing workers based on an inferred lane; ask the active owner
+to reconcile the persisted source. Neither rule changes queue records,
+leases, scheduler admissions, reviews or releases.
+
+## 21 October · assigned queued work reserves cross-lane write scopes
+
+The main zCloud dispatcher allows new work only when `worker_slot IS
+NULL`. The four-lane recovery classifier already excluded slot-assigned
+queued entries as new candidates, but their **write scopes were not
+reserved across other lanes**. This could make a second, independently
+classified recovery work item look locally non-conflicting even though
+it would touch the same files as a still-queued assigned task.
+
+The existing `portfolio-recovery` lane generator now treats every
+`queued` item with a non-null `worker_slot` as an existing protected
+reservation:
+
+- Its **persisted** canonical `execution_lane` stays pinned even when
+  title/criteria change, exactly like a running worker. A missing,
+  legacy, or unknown lane provenance prevents **all new parallel writer
+  suggestions** until the original owner reconciles it.
+- With a declared valid file scope the reservation occupies its lane
+  and file coverage before any new queued candidate is evaluated.
+  Other lanes with overlapping scopes get
+  `queued_worker_slot_scope_conflict`; the reserved lane stays
+  blocked, never returned by `eligible_queue_lane_map`.
+- Without valid file scope, `queued_assigned_write_scope_not_declared`
+  prevents new parallel writer admission regardless of other candidate
+  scopes. There is no inferred free workspace or automatic recovery.
+- Source diagnostics now distinguish held slot assignments, overlapping
+  reserved-slot file scopes, unknown reserved file scopes and untrusted
+  assigned-lane provenance, including bounded owner follow-ups in text,
+  private offline HTML, Markdown and JSON. Self-reservation is displayed
+  as `deferred_assigned_packages`, **not** falsely counted as a scope
+  conflict. A true overlapping new-writer candidate increments
+  `assigned_slot_scope_conflicts` and is refused. The existing
+  operator's bounded cross-lane collision scan now also includes
+  all still-queued workerslot reservations alongside running/claimed/
+  verifying tasks; collisions **between two existing reserved lanes**
+  remain visible rather than being missed until another candidate
+  arrives. The scan retains its 64 protected-task source-coverage
+  ceiling and fails closed if that ceiling or metadata trust is lost.
+  **No worker IDs, queue IDs, slot numbers or raw file paths** are
+  exported by the operator desk.
+
+This remains a pure derivation/read-only operator feature. No live
+task is claimed, released, migrated, retried, restarted or deployed.
+The canonical service still owns actual queue admission and all
+Notion/GitHub/security/review/resource gates.
+
+## 21 October · queue eligibility parity with the actual runtime
+
+The real `server.py` selects **eligible=1**, `status=queued` and
+`worker_slot IS NULL` rows for new worker assignment. The private four-lane desk intentionally reads all local
+`queued` rows to show blocked work, so its old lane generator could
+mislabel an ineligible item as a candidate. Recovery lanes now filter
+`queued` items unless their explicit `eligible` value equals 1.
+A missing, false or non-1 value is not a permission to dispatch.
+Existing `claimed`/`running`/`verifying` items **remain active
+reservations**, even if `eligible` was later cleared, and continue
+to hold their declared write scopes.
+
+An otherwise eligible queued row with an existing workerslot is also
+excluded from new recovery admission. The generator records a bounded
+`deferred_assigned_packages` count per lane; the desk displays
+`HOLD_QUEUE_WORKER_SLOT_RESERVED` if those slot-linked records are
+the only work present. No slot IDs, worker IDs or claim keys appear in
+the public-facing report. Existing assignments are neither released
+nor automatically retried. The existing recovery-action panel also
+presents separate read-only owner follow-ups for slot reservations
+(`HOLD_QUEUE_WORKER_SLOT_RESERVED`) and noneligible queue entries
+(`HOLD_QUEUE_NOT_ELIGIBLE`). These are safe owner-triage suggestions,
+not an authority to clear or requeue a live task.
+
+The desk now exposes the count per lane as
+`deferred_ineligible_packages` in JSON, human-readable text, offline
+HTML, and Markdown. If ineligible work is the only remaining work,
+the lane is visibly `blocked` and its human-only admission verdict is
+`HOLD_QUEUE_NOT_ELIGIBLE`, not `idle` or a locally suggested new
+writer. The operator must reconcile eligibility with the original
+queue/Notion owner. A local eligible=1 observation is **not**
+permission to claim, deploy or merge; all other external gates remain
+unchanged. This change does not alter the SQLite queue, existing
+claims, runner processes or production scheduler.
+
+## Reservations and collision visibility
+
+- All in-flight queue entries (`claimed`, `running`, `verifying`) reserve
+  their own scope, even if multiple entries were accidentally assigned to
+  the same lane. Only one owner is *displayed* per lane; hidden active work
+  must never cease to occupy its files or capabilities.
+- `active_backlog_count` reports how many in-flight entries were observed
+  for that lane. `parallel_active_warning=true` means there are two or more;
+  it is a **reconciliation signal**, not permission to cancel, reassign,
+  duplicate, merge, resume or steal their work.
+- Serialized `conflict_scope.capabilities` and `conflict_scope.files` may
+  be a string or an array. A single filename is always one filename, not
+  an iterable of characters. Existing path/capability overlap checks still
+  determine whether a *queued* candidate may use the lane.
+- Missing local claims, unseen Notion claims, absent external leases and an
+  idle lane are **not evidence of free global ownership**. Independently
+  recheck current claims before writing to any PR, queue or VPS runtime.
+
+## Runtime boundaries
+
+### 22 October · host-pressure is mandatory for new-worker guidance
+
+The four-lane desk now reads the bounded host snapshot **once by default**
+and uses that same observation in the operator recovery cards, action list
+and JSON. The legacy `--host-pressure` flag remains accepted for existing
+commands but no longer controls whether this safety input is collected.
+
+- `HIGH_LOCAL_PRESSURE` or `ELEVATED_LOCAL_PRESSURE` produces
+  `HOLD_HOST_PRESSURE` for an otherwise queued new worker. This includes
+  independently observed high host pressure even if another portion of
+  procfs/PSI is partial. Existing workers are never preempted.
+- Missing or unreliable host telemetry produces
+  `HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED`; a queued task is never presented
+  as a candidate when capacity was not observed.
+- A healthy/low-pressure reading yields `NO_ADDITIONAL_HOLD`, **not**
+  authorization to add workers. Current RAM, swap, CPU, PSI and root-disk
+  pressure are advisory evidence, not proof of cgroup headroom or runner
+  assignment.
+- `host_admission` and the canonical `admission_summary.held_by_host_pressure`
+  explain the result in text/JSON; offline HTML reuses each lane's concrete
+  HOLD label and the existing host-pressure section. The older
+  `held_by_optional_host_pressure` JSON key remains only as a compatibility
+  alias; host-pressure admission is no longer optional.
+
+No new processes, worker claims, governor writes, service actions,
+CI triggers or QA suites. This is a read-only, **conservative** owner
+decision; missing or partial resource evidence never grants admission.
+
+### 21 October · actual four-worker cap required in the recovery desk
+
+The read-only local operator desk now compares **both** pieces of the
+proposed local contract: `lane_profile=portfolio-recovery` **and**
+`ai_worker_cap=4`. Previously it reported `MATCH_LOCAL_FILE` for the
+right profile even if the cap was 1, creating a misleading four-worker
+admission hint. A valid profile with a different cap now reports
+`FOUR_WORKER_CAP_MISMATCH` and
+`HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH` in all four lane cards; an
+invalid cap or unreadable/missing contract reports
+`HOLD_LOCAL_CONTRACT_UNVERIFIED`. The JSON packet includes
+`local_contract_reconciliation_required=true`, the observed numeric
+cap, the required cap and the deviation reason. Text and offline HTML
+show the same read-only facts and the recovery action list gives the
+current owner a precise next step.
+
+Active work remains `ACTIVE_OWNER_PROTECTED` even when local contract
+evidence is missing or inconsistent. This change adds **no** runtime
+worker, claim, retry, process control, GitHub dispatch, SQLite write,
+service restart, review override or deployment. Correct local source
+does **not** prove the service loaded the config, that four slots have
+actually started or that independent release/ownership gates passed.
+
+The project contract declares a *maximum* of four AI workers, not a
+guarantee of four simultaneously executing browser workers. Existing
+resource-pool admission, physical RAM/swap/CPU pressure, claim leases and
+runner availability can legitimately reduce actual concurrency. Four
+configured lanes do not imply four resumed jobs.
+
+No source-only result authorizes production mutations or GitHub merges:
+a PR is delivered on `main` only when GitHub confirms `merged=true`
+for the exact verified head and the new default-branch SHA is observed.
+An approved deploy is a distinct event; a live, recovered worker must be
+observed separately. Do not start QA suites, force CI, restart services,
+modify broker/security/research state, or reassign protected owner claims
+to make these labels turn green.
+
+## Private four-lane operator desk
+
+### 21 October · changed-project owner handoff and interactive drilldown
+
+For a **short, private owner handoff containing only changed projects**,
+reuse a prior private baseline and choose the additional existing-CLI mode:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --previous-owner-snapshot /PRIVATE-OWNER-DIRECTORY/owner-before.json \
+  --format change-brief \
+  --output /PRIVATE-OWNER-DIRECTORY/changed-projects.md
+```
+
+This mode requires the previous baseline explicitly, creates a **new**
+owner-private `.md` file using the already implemented create-only
+`O_EXCL`/`O_NOFOLLOW`/`0600` writer and makes no queue, lease, provider
+or service modifications. The report includes one P0-first/P1-second card
+per **changed** project: old/new/delta across all six P0/P1 queue fields,
+human-only owner triage, links to the canonical existing GitHub PR and
+issue inboxes, and an exact comparison time window. Counts can decrease
+without an issue being fixed; count increases do not prove a worker outage.
+No item is assigned automatically, and QA-only rows still cannot be
+separated reliably by the aggregate.
+
+If the private endpoints are incomparable (different local database,
+partial source, stale or reversed timestamps), the change brief is
+explicitly `NOT_COMPARABLE` and contains **no** spurious per-project
+differences. If they compare but no counts changed, it says precisely
+that, without claiming no external work occurred.
+
+The existing **HTML timeline table** is also now directly actionable:
+project names jump to the already present detailed offline owner card,
+which shows the current source-bound owner decision and GitHub links.
+This keeps the fast P0/P1 trend overview and the detailed owner handoff
+in one no-JavaScript, read-only, source-limited workflow. External
+Notion claims, protected-main review/CI gates and actual runtime remain
+unverified until the authorized operator checks them.
+
+### 21 October · private local P0/P1 portfolio comparison
+
+The read-only four-lane desk now offers a complete two-observation portfolio
+workflow without GitHub, Notion, network, worker or live queue writes.
+An authorized **human owner** first saves an intentionally minimal baseline:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-snapshot --output /PRIVATE-OWNER-DIRECTORY/owner-before.json
+```
+
+On a later observation, compare the current database with that private baseline:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --previous-owner-snapshot /PRIVATE-OWNER-DIRECTORY/owner-before.json \
+  --format html --output /PRIVATE-OWNER-DIRECTORY/owner-comparison.html
+```
+
+The existing `text`, `json`, `html`, `markdown`, `owner-brief`,
+and `owner-book` modes share a single source-transaction comparison. A
+`portfolio_previous_comparison` field appears in JSON only when a previous
+private snapshot has been supplied. Human-readable views expose P0/P1
+waiting and in-flight deltas and prioritise increases in P0 waiting, then
+P1 waiting, with explicit UTC endpoints. Changes are endpoint differences,
+**never continuous monitoring, failure attribution, owner freedom or
+confirmed recovery**. Dossiers for each project retain the same comparison
+state.
+
+Baseline snapshots use a small schema that intentionally contains only
+six aggregated queue counts per canonical real project, a UTC source
+timestamp, completeness state and explicit false authority flags. No
+individual queue ID, task title, lease, claim key, account or worker
+identity is copied. Private output reuses the original create-only,
+owner-private directory, symlink-denying `0600` save implementation.
+Previous files must be regular, current-user-owned, private, bounded
+(64 KiB), schema-exact, count-consistent, and strictly **older** than
+the current observation. Each baseline carries an opaque SHA256 key
+derived from the observing machine name, canonical local SQLite
+source path and local file device/inode identity; the original file path,
+hostname and inode are never exported. A different machine/database path
+**or a replaced SQLite database at the same path** therefore produces
+**NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE** rather than a misleading trend.
+A source replacement during the observation is rejected before output.
+This source identifier remains an equality hint, not cryptographic
+authentication; a process with full filesystem control could still
+forge an identity or alter its contents. Normal writes in place do not
+change the underlying device/inode fingerprint.
+Incomplete **portfolio aggregate** coverage, distinct local sources or
+a baseline older than seven days yields an explicit **NOT_COMPARABLE**
+state and no per-project deltas; no falsely precise zeros are emitted. Do not
+manually alter the saved source or interpret counter decreases as
+successful issue resolution.
+
+Use `--format owner-snapshot` for a *new* baseline filename on each
+capture. Never overwrite a prior private receipt. To inspect current
+live CI, owners or external issues, return to their authoritative
+source before any handoff; this local snapshot does not authorize
+claims, reruns, merges, deploys or runner restarts. No QA packages,
+regression suites or automated polling are added by this feature.
+
+### 21 October · offline project drilldown and local owner-state parity
+
+The existing four-lane offline `--format html` desk now has a navigable
+**owner drilldown for every canonical real portfolio project**, including
+projects with no P0/P1 observation. Its top-priority cards and urgent queue
+table link into the appropriate `<details>` project dossier. Each dossier
+separates local P0/P1 waiting and eligible hints from P0/P1 active work, links
+to the existing canonical GitHub PR and issue inboxes, and offers a single
+human-only next step. HTML is **scriptless** under the existing strict CSP;
+the user manually expands the dossier after following the fragment link.
+
+The same conservative owner-state explanation is serialized as
+`project_owner_decisions` in JSON and included in the single-project and
+portfolio Markdown handoffs, all computed from the same read-only local
+SQLite snapshot. Priority of evidence is: a positively observed active
+task preserves its owner even when the source is partial; otherwise,
+partial/unknown source is a HOLD, no local P0/P1 group is merely NOT
+OBSERVED, and a local eligible-hint is only an OWNER REVIEW REQUEST,
+not permission to claim, merge or deploy. A project with both P0 and P1
+rows retains both queue totals (rather than showing only its P0 group)
+while P0 still takes review precedence.
+
+This is a product-side operator workflow only. It creates no browser
+storage, JavaScript, connector calls, additional database reads, queue or
+Notion mutations, CI retries, automated owner assignment or releases.
+
+### 21 October · private owner brief for a specific real project
+
+The existing read-only four-lane desk now includes a targeted **owner handoff**
+for any of the thirteen canonical portfolio projects. Example:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-brief --owner-project supa \
+  --output /PRIVATE-OWNER-DIRECTORY/supa-owner-brief.md
+```
+
+The selected-project brief uses the **same** transactional SQLite snapshot as
+the four-lane dashboard: P0/P1 waiting counts, `eligible=1` local hints,
+P0/P1 currently active counts, the UTC source moment, whether that aggregate
+may be truncated/partial, and static canonical existing GitHub PR/issue links.
+The bounded owner review shortlist also retains **both P0 and P1**
+waiting/locally eligible counts when a project has both priorities. A P0
+headline is not permission to hide P1 work or infer a free queue slot.
+
+It guides an authorized owner to inspect current Notion claims and existing
+PRs, then verify exact-head required CI, reviews and protection before any
+merge. If the canonical project is absent from the aggregate, the brief
+says only **not observed locally**, never `no open work`.
+
+For a private **full-portfolio owner book**, `--format owner-book` creates
+one new Markdown file containing the same thirteen individual project dossiers
+and a bounded P0-first review shortlist, all tied to a *single* local SQLite
+snapshot. Example:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format owner-book \
+  --output /PRIVATE-OWNER-DIRECTORY/portfolio-owner-book.md
+```
+
+The owner book includes every canonical project even when that project has
+**no observed** urgent rows, rather than presenting absence as completion.
+It explicitly marks truncated or unmapped local sources, separates P0/P1
+waiting from in-flight claims, preserves canonical existing GitHub links,
+and keeps all owner, CI, release and QA-policy checks human-only.
+Both modes use the pre-existing private create-only `.md` writer; no
+additional provider calls or live worker actions occur.
+
+This is intentionally an opt-in `--format owner-brief` output and **requires**
+`--owner-project` plus a new `.md` file inside an owner-private directory.
+The original create-only, symlink-denying, `0600` output policy is reused;
+unknown project keys and selectors in other output modes are refused.
+No production queue mutation, owner reassignment, API calls, worker actions,
+QA package, CI retry or automatic scheduling is added. The aggregate still
+cannot differentiate product from QA-only queue rows; filter current work
+against the user's product-only policy before acting. It conveys no owner,
+claim, merge or deployment authority.
+
+### 21 October · prioritized, bounded human owner review queue
+
+The four-lane operator desk now turns the **existing same-transaction local
+P0/P1 queue census** into up to six explicit human review suggestions.
+They are selected P0-first, then P1, with canonical project name, local
+queued amount, locally `eligible=1` hint, currently active local tasks
+and a fixed next-step instruction to check current Notion claims and GitHub
+PRs/issues before any work takeover. More than six eligible project groups are marked **partial**, not discarded
+as a complete global inventory. A truncated upstream SQLite project-group
+window or unmapped project also propagates **partial** to the shortlist,
+even when fewer than six observed projects appear.
+
+This read-only owner shortlist appears in the console text, private HTML
+cards (with static GitHub issue/PR links), private Markdown handoff and
+machine-readable JSON, all from the same SQLite snapshot. The underlying
+full urgency table remains available. Missing local waiting rows do not
+prove absence of GitHub issues. An `eligible` queue flag is not a verified
+free worker, GitHub reviewer or release owner. Every suggestion explicitly
+reports `current_owner_verified=false`, `claim_authorized=false` and
+`merge_authorized=false`. No extra API read, queue write, claim reassignment,
+runner/CI dispatch, QA suite, merge or production release is included.
+
+The concrete read-only product is `scripts/zsentinel_four_lane_desk.py`.
+Use the zCloud SQLite source and the **current branch's matching**
+`lane_generator.py` when working from a checkout of this PR:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format html --output /PRIVATE-OWNER-DIRECTORY/new-report.html
+```
+
+JSON/text output intentionally contains no claim keys, owner identities,
+queue identifiers, raw titles, file paths or capabilities. The report is an
+offline, single-file, Dutch four-card interface with restrictive CSP and no
+external assets. HTML export refuses existing files, symlinks and non-private
+or other-user parent directories; an output is created 0600 only on explicit
+request. All other modes perform **no file writes**.
+
+The SQLite connection is `mode=ro` with `PRAGMA query_only=ON` and a
+single transactional snapshot. Both queue entries and local claim rows are
+bounded independently to a configurable maximum of 500. Above that bound,
+coverage becomes partial: **never** interpret missing rows as idle workers.
+Unparseable lease records remain ambiguous. The desk records observed
+queue `claimed/running/verifying` expiry as either expired or unknown,
+but does **not** reclaim or alter either category. It keeps queue occupancy
+distinct from the active `task_claims` table. Absence of local rows says
+nothing about Notion and other external owners.
+
+Only up to 64 in-flight queue records receive an explicit pairwise
+cross-lane capability/file overlap inspection in the private desk. More than
+64 produces an *incomplete* comparison rather than a false zero. The
+underlying lane generator continues to reserve **every** active task scope
+when assessing new candidates, independently from this optional view.
+Existing in-flight collisions trigger an advisory warning, never a forced
+reallocation.
+
+### Actual direct VPS observation (20 October)
+
+Against a read-only current `history.db` snapshot, source pinned to
+`bed05d016965e1e539afad5159384b0aba6ee517`, the desk observed
+one claimed PR-integration item, two claimed worker-recovery items and one
+queued CI/deploy item; product remediation was idle in this **local** view.
+No zSentinel rows existed in the observed local `task_claims` table.
+The view correctly warned about multiple worker-recovery queue entries
+and about claimed work without locally observed leases. These findings
+are **not** a release/worker recovery claim, global source completeness,
+permission to take a Notion claim, or evidence that an external owner
+is absent. Source syntax and this bounded, real-data functional invocation
+were inspected without starting any QA suite.
+
+### Delivery boundaries
+
+Current code in a GitHub PR is not `main`. Exact-head mandatory CI,
+independent reviews, branch protection and release authority remain
+required. An operator must separately verify GitHub `merged=true`,
+the newly observed default-branch SHA and authorized live activation
+before describing this feature as delivered or live.
+
+## Portfolio-wide urgency, without assuming ownership
+
+The same private desk now includes an explicit cross-project urgency section
+for 13 configured *real* projects. This is a **local portfolio queue census**,
+not a remote GitHub issue crawl, a new zSentinel project or an automated
+scheduler. The zSentinel recovery role is shown only in its four-lane cards
+and deliberately excluded from the external-product tally.
+
+- Only explicit P0/P1 `queued/claimed/running/verifying` rows are counted.
+- `queued_p0/queued_p1` show waiting items; `in_flight_*` are kept separate.
+- `eligible_queued_*` counts only rows with the local `eligible=1`
+  column, and is an *admission hint*, not proof that any owner/claim,
+  resource pool, external Notion task or GitHub branch is free.
+- Counts are independently grouped within the **same read-only SQLite
+  transaction** as the four lane/lease evidence. The SQL aggregate is
+  capped at 128 returned groups plus one to flag incomplete source
+  coverage. Unrecognized project IDs are not printed; they flag partial
+  coverage rather than being silently dropped.
+- The Dutch offline HTML has a responsive urgency table with these
+  counts, including local eligibility, alongside the four lane cards.
+  Raw queue titles, actor identities, credentials and source URLs are
+  never embedded in exported JSON/text/HTML.
+
+Direct read-only VPS observation from exact source
+`21115ef97bec6fb1a95ab27dc62aa6a611031afb`:
+LightUp has six locally eligible waiting P0 queue items and one P0
+in flight; zCloud has two locally eligible waiting P0 queue items;
+FTMO has one P0 plus two P1 locally eligible waiting items; HaxLab
+has one waiting P0 with **eligible=0**; zSSH has 31 locally eligible
+waiting P1 entries; Supa has one locally eligible waiting P1 and
+another P1 in flight. These are queue observations, not real-time
+GitHub issue closures, active independent claims, completion forecasts
+or runner recovery proof. Even a locally eligible item must pass
+existing external gates before another worker can take it.
+
+The source was directly parsed and its bounded read-only text view
+invoked using an exact pinned GitHub commit on the connected VPS.
+No QA, regression suite, GitHub workflow retrigger, queue mutation,
+runner action, service change or release deploy was performed.
+
+### Per-row limits for busy VPS environments
+
+The desk also bounds individual SQLite TEXT fields, not only its row counts.
+Task titles are sampled to at most 512 characters, completion criteria to
+3,072 characters and queue/claim metadata to 8,192 characters per row.
+Any oversize queue cell marks the local source *incomplete* and requires
+owner reconciliation before interpreting any lane. Oversize claim
+metadata is treated as ambiguous rather than silently admitted as a free
+claim. This is an operator observation guard, not a change to runtime
+SQLite rows or the portfolio dispatch policy.
+
+The exact `89f5d63046e125d5467c2794d9bfac1bf28c66bf` source was
+directly parsed and its real read-only VPS CLI path inspected; no suites,
+services, SQLite writes, runners or release gates were touched.
+
+## Owner-safe recovery cards and single-page handoff
+
+The desk now imports the **pure, no-side-effect** source
+`scripts/zsentinel_recovery_actions.py`. It derives at most seven bounded
+three-line action cards from the *same* read-only queue/claim snapshot:
+
+1. Problem: an observed, source-grounded missing lease, missing write scope,
+   parallel ownership risk, or local P0 waiting candidate.
+2. Next step: owner verification or independent issue/PR inspection.
+3. Status: a review/hold state such as `HOLD_PARALLEL_ADMISSION`,
+   **never** permission to mutate or override existing claims.
+
+Cards appear in the text, JSON and offline Dutch HTML desk. A separate
+owner-private Markdown handoff is created only by an explicit command:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db \
+  --format markdown --output /EXISTING-PRIVATE-DIRECTORY/NEW-handoff.md
+```
+
+Output must be a previously nonexistent `.md` file in an existing private
+directory owned by the caller. The same create-only, symlink-refusing 0600
+writer is used for HTML and Markdown. Nothing is written by the default
+read-only text or JSON modes. The handoff does not export queue IDs, actor
+identities, raw task titles or privileged metadata. It includes the sampled
+local observation time and explicitly states that GitHub/Notion claims and
+release authority were not independently verified.
+
+### Critical four-lane admission boundary: missing actual file scopes
+
+The live 20 October 2026 SQLite read-only observation found **three** active
+zSentinel queue items with **no declared conflict_scope metadata**, despite
+a separate local task_claims table containing zero zSentinel leases. A
+synthetic lane capability cannot prove that two workers will not edit the
+same file in different lanes. Previously the four-lane generator might
+label a separate queued lane free because there was no file overlap to
+compute. This was not safe evidence of non-conflict.
+
+Source commit [748a89a](https://github.com/Zennay/zCloud/commit/748a89a6d120abe5824f294ab2907d30bb54646b)
+now **blocks new queued admission for the zSentinel portfolio-recovery
+profile only**, whenever active queue tasks have no explicit
+file/capability scope. Existing task owners, current worker activity and
+the other 13 project lane profiles are unchanged. The hold is
+`active_write_scope_not_declared`. It is not an automatic release,
+queue mutation or demand that the existing worker be interrupted.
+
+Source commit [cd70620](https://github.com/Zennay/zCloud/commit/cd706209fa9fc8c9674fcb7bb4741b75055d5e83)
+and the bounded action-card code explicitly flag incomplete active scope
+coverage rather than displaying an unsupported zero-collision conclusion.
+The only way to resolve this dependency is for the actual current task
+owners to provide authorized, verified write scopes or complete their
+owned tasks. Do not infer free ownership from missing local leases.
+
+Direct pinned functional source inspection on the connected VPS at
+[4533253](https://github.com/Zennay/zCloud/commit/45332538ed56d277e643c94af7009444ec239049)
+read the existing SQLite source with `query_only=ON`, produced source-only
+HTML/Markdown in memory and reported the CI/deploy lane as **blocked**
+by an unknown active write scope. Source parse succeeded; no QA suite,
+claim, CI rerun, runner, systemd, DB writer, service or production release
+was executed.
+
+**Integration truth:** all these additions are committed to a still-open
+PR branch. Exact-head required CI, independent review, branch protection
+and release ownership remain mandatory. PR source is not main or live
+deployment, and live worker recovery remains unverified.
+
+### CLI import fix for normal operator execution
+
+At commit [c652aa6](https://github.com/Zennay/zCloud/commit/c652aa6768dfed3db288f345e2ddcba1bcea3595),
+the direct script entrypoint resolves the canonical repository root before
+importing its shared lane generator, and imports the source action adapter
+from the adjacent `scripts` package. This is necessary because
+`python3 scripts/zsentinel_four_lane_desk.py` ordinarily puts the script
+directory, rather than the repository root, first on Python's module path.
+It supports the documented operator command when the **matching PR
+sources are available together**. Running an older main checkout is not
+proof this branch's functionality is deployed.
+
+Do not copy the scripts individually to a VPS production root: use a
+source-matched, reviewed checkout after existing branch/CI/release gates
+permit integration. Until then, exact-source read-only inspection is
+distinct from installed/live product behavior.
+
+## 20 October · Complete owner-aware write-admission boundary
+
+The lane generator protects **two different sources of active ownership**:
+in-flight `portfolio_queue` rows and current `task_claims` rows. A queue
+row with an absent/invalid `conflict_scope` can no longer be ignored, and a
+current task claim with no usable file/capability scope is no longer silently
+dropped from collision admission either. Both require the existing owner to
+reconcile scope before any *new* parallel writer can be selected.
+
+The **new queued-task boundary** is intentionally less disruptive than a
+total shutdown. A queued zSentinel task lacking a declared file/capability
+scope can be selected only as the **single serialized candidate** if the
+observed project has no other active task, no current scoped or unscoped
+claim, and no already selected writer. Subsequent candidates, whether
+scoped or unscoped, cannot share that wave of admission. Existing owners
+remain untouched. Explicitly scoped tasks may proceed on independent lanes
+when their overlap check is clear. The feature only changes the zSentinel
+`portfolio-recovery` lane profile; other 13 real projects are unchanged.
+
+This is a **routing limit**, not an authorization token. The existing
+server's queue eligibility, external Notion leases, writer reservations,
+resource pool admission, GitHub exact-head checks, independent reviews,
+branch protection and release/production gates remain authoritative.
+Do not infer a free owner from an `idle` lane card: the dashboard now
+separately exposes `new_write_admission_held`, and the action router
+suppresses independent-work suggestions whenever source completeness,
+scope declarations or ownership reconciliation are unresolved.
+
+On the latest direct read-only VPS observation (exact source
+[5cb008e](https://github.com/Zennay/zCloud/commit/5cb008e9ef6906299ef58d152fea0b20e14bfc31)),
+three zSentinel in-flight tasks lacked explicit write scopes, while the
+sampled local task_claims table had zero zSentinel leases. The CI/deploy
+lane remained blocked, and the product lane was explicitly shown as idle
+**with new writer admission held**. No task was restarted, stopped,
+claimed, dispatched or deployed. Source only, not live-installed.
+
+### Reconciliation and follow-on implementation
+
+The actual runtime owner should separately reconcile current queue and
+claim epochs against Notion before changing an existing scope. Do not
+silently edit ownership metadata to make warnings vanish. In particular,
+the current `server.py::_portfolio_lane_snapshot_locked` queries only
+`eligible=1` rows in its own lane input. If an in-flight row becomes
+`eligible=0` while still `claimed/running/verifying`, the planner could
+miss that active writer. The live read-only snapshot during this run had
+**zero** such active-but-ineligible rows, so this is a latent source
+integration risk, not a claimed live outage. This server path overlaps
+the separately owned runtime PR #1571 and has **not** been modified or
+taken over in this branch; reconcile with its current owner when ready.
+
+### Same-source in-flight eligibility coverage
+
+The read-only desk now samples `eligible` on every observed
+`claimed/running/verifying` zSentinel queue row and records
+`runtime_active_filtered_by_eligibility` when it is not exactly integer
+`1`. This is separate from whether a task is queued, whether its lease
+is known, and whether its file scope is declared. When nonzero, the
+offline HTML, text, JSON, Markdown action cards and completeness flags
+surface an explicit `HOLD_RUNTIME_SOURCE_GAP`, because the separately
+owned `server.py` planner currently applies `eligible=1` even to active
+tasks. No automatic queue mutation or task reinstatement is authorized
+by this observation.
+
+Read-only current VPS direct-source inspection at exact
+[`b2c13aa`](https://github.com/Zennay/zCloud/commit/b2c13aaebb4b62f27163581fc63ea6f9dd54a253)
+observed **zero** in-flight zSentinel rows with `eligible!=1`, and
+**three** in-flight zSentinel rows without declared write scope.
+Accordingly the source-gap warning did **not** fabricate a live outage,
+while the existing scope-ownership HOLD continued to prevent new parallel
+admission. The server implementation path remains under the independent
+owner's [PR #1571](https://github.com/Zennay/zCloud/pull/1571),
+with a specific owner handoff; no conflicting server source files were
+modified by this PR.
+
+### Source-bound next step per runner family
+
+The read-only runner observation now attaches a fixed, allowlisted `recommended_next_step` to every family state, and the text/HTML operator desk renders it as a separate **Veilige vervolgstap** column. It distinguishes argv0-only evidence, executable-verified presence, worker-without-observed-listener, incomplete procfs coverage, and a complete snapshot with no recognized process. Older saved observations fall back to the same fixed mapping. The guidance never treats process presence/absence as GitHub registration, health, job assignment, or permission to restart a runner.
+
+## Optional local GitHub runner presence desk
+
+Source addition: `scripts/zsentinel_runner_presence.py`, loaded only when
+the operator explicitly selects `--runner-processes`. The operator command
+from a source-matched repository checkout is:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes \
+  --format html --output /OWNER-PRIVATE-DIRECTORY/NEW-runner-handoff.html
+```
+
+This is a **read-only** limited traversal of local `/proc`, not an
+Actions API query, SSH control path, status-changing script or authenticated
+runner endpoint. Only recognized `Runner.Listener` and `Runner.Worker`
+processes under known installation folders are counted. It never emits
+PID, raw paths, CLI arguments, env variables, tokens or credentials. No
+running jobs are interrupted and no service is restarted.
+
+Some VPS containers deny `/proc/PID/exe` even to an unprivileged
+operator. The scanner therefore offers a bounded fallback: inspect the
+kernel process name **first**, then only the executable argument zero
+of the matching process. This produces the visibly weaker evidence label
+`PROCESS_ARGV0_SEEN_NOT_VERIFIED`. Missing processes in an incomplete or
+permission-limited procfs scan must never be reported as an established
+runner outage. Raw command lines and executable paths are never exported.
+
+The runner panel appears in opt-in CLI text, private offline HTML,
+Markdown handoff and JSON. A companion read-only action card explains
+that finding a listener **cannot prove** that GitHub assigns jobs. In
+particular, an existing `Runner.Worker` protects in-flight work from
+blanket service restarts or queue drains. The scanner neither queries nor
+claims to verify runner registration, permissions, labels, GH Actions
+`runner_id`, exact-head CI or successful deployment.
+
+### Direct bounded VPS observation · 20 October
+
+Exact source
+[`ab88f887`](https://github.com/Zennay/zCloud/commit/ab88f8871f973ec339110aefb8b11438fc67c5bc)
+was fetched at its fixed SHA, parsed, then run **in memory** through the
+existing connected zSSH observation channel against read-only
+`history.db` and procfs. The private desk observed zCloud, Supa, FTMO,
+Fuckball, RaiseAI, zSSH and Elmo listener processes with argv0-only
+evidence. At the sampled instant it also observed live local
+`Runner.Worker` processes in zCloud and Supa; a subsequent observation
+may differ. Procfs coverage remained partial due OS permissions.
+GitHub Actions registration and assignment remained
+`NOT_OBSERVED`, `restart_authorized=false`. No system mutation,
+runner restart, GH Actions dispatch, QA or release occurred.
+
+An **independent GitHub Actions read-only observation** on this branch's
+then-current commit found hosted jobs still queued (including the
+CPU queue storm offline verification and regression smoke jobs). The
+owner must use existing GitHub Jobs receipts to establish actual
+`runner_id>0` and compare mandatory exact-head workflow outcomes; a
+local listener process is not that proof. The account billing/spending
+platform gate described in zCloud issue #1523 and the separately tracked
+runner-route issue #1326 remain distinct and cannot be bypassed here.
+
+### Procfs-dekking: onleesbare niet-runnerprocessen
+
+Wanneer het lezen van `/proc/<pid>/exe` wordt geweigerd, leest de observer eerst de kernelnaam `comm`. Een proces waarvan `comm` niet exact `Runner.Listener` of `Runner.Worker` is, valt buiten deze runnerbron en verlaagt de dekking niet. Alleen een kandidaat-runner waarvan `comm` of `cmdline` niet betrouwbaar leesbaar is, veroorzaakt een bronwaarschuwing; onvolledige `/proc`-traversal blijft eveneens `UNKNOWN`. Dit voorkomt dat gewone, afgeschermde processen ieder afwezigheidssignaal onbruikbaar maken, zonder afwezigheid van een runner te verzinnen.
+
+### Worker-only waarneming · 20 oktober
+
+Een Runner.Worker kan in dezelfde lokale processnapshot zichtbaar zijn
+terwijl geen Runner.Listener waargenomen is. Dat betekent **niet** dat er
+helemaal geen GitHub-runnerproces is gevonden. De optionele procesbron maakt
+nu dit onderscheid expliciet als `WORKER_SEEN_LISTENER_NOT_OBSERVED`.
+Wanneer een worker alleen via kernel-comm plus argv0 wordt herkend, telt
+dit niet ten onrechte als een zwak geverifieerde listener: de scanner houdt
+beide betrouwbaarheidsaantallen apart.
+
+De herstelagenda toont dan
+`ACTIVE_WORKER_PROTECTED_LISTENER_UNKNOWN` in plaats van een generiek
+afwezigheidsbericht. De eigenaar moet de listener en GitHub-toewijzing
+onafhankelijk inspecteren **zonder de waargenomen job te onderbreken**.
+Ook bij volledige lokale procfs-dekking zijn GitHub-registratie,
+runner-labels, claimrechten en CI-status niet bewezen. Het is een read-only
+productcorrectie op deze bestaande branch; geen herstelactie, merge of
+productie-activatie.
+
+### Veilige prioriteit in de begrensde herstelagenda
+
+De privé herstelbalie laat maximaal negen advieskaarten tegelijk zien.
+Voorheen konden vroeg toegevoegde, minder urgente kaarten de plaats van
+een later waargenomen actieve Runner.Worker innemen. Bovendien stopte de
+P0-issuekaartgenerator wanneer de lijst al negen kaarten telde, nog vóór
+een betekenisvolle prioriteitsselectie.
+
+De balie bepaalt nu eerst de kleine begrensde kandidatenlijst en
+selecteert pas daarna maximaal negen kaarten in vaste volgorde:
+**bestaande jobs beschermen**, echte urgenties en bron-/claim-HOLDs,
+brongebonden lokale P0-productissues, overige menselijke reviews, en
+pas daarna informatie over een vrije lane. De onderliggende aparte
+queue- en runner-tabellen blijven zichtbaar, ook wanneer niet elke
+advieskaart in de shortlist past.
+
+Dit wijzigt alleen het getoonde advies. Geen kaart verleent
+claimrechten, toestemming voor runnerherstart, CI-dispatch, merge of
+deploy en geen job, runtimeproces of lokale SQLite-rij is gewijzigd.
+
+### In-flight queueclaims: brongebonden start én verval
+
+De read-only vier-lane-herstelbalie controleert nu ook de **onderlinge
+volgorde** van de bestaande `claimed_at` en `claim_expires` bij lopende
+(`claimed/running/verifying`) zSentinel-taken. Een vervaldatum in de
+toekomst is niet voldoende bewijs van een betrouwbare actieve lease wanneer
+de claimstart ontbreekt, ongeldig is, in de toekomst ligt, of wanneer het
+vervalmoment niet ná de start ligt.
+
+De balie telt dit afzonderlijk als
+`inconsistent_in_flight_queue_claim_windows_observed`; de globale
+`source_complete` wordt onwaar, `ownership_reconciliation_required`
+waar en een urgente `HOLD_CLAIM_TIME_RECONCILIATION`-kaart vraagt
+de actuele claimeigenaar om beide tijdstippen te verifiëren. Het aantal
+verschijnt in de Nederlandse console, privé offline HTML, JSON en privé
+Markdown-overdracht. Bestaande claims blijven intact: geen vervaltijd,
+queue-row, actieve worker, Notion-claim, GitHub job of runtimeconfiguratie
+wordt gewijzigd. De integratie is alleen broncode in de bestaande PR.
+
+### Bestaande writer beschermen bij een onbetrouwbare actieve lease
+
+De werkelijk aangeroepen pure `lane_generator.py` voor profiel
+`portfolio-recovery` bewaart nu alle bestaande `claimed/running/verifying`
+taken als huidig bezet werk, maar **laat geen nieuwe queued schrijver toe**
+wanneer een actieve taak zijn begin- en vervaltijd niet kan bewijzen:
+ontbrekend/onjuist tijdformaat, toekomstige start, verval vóór of gelijk aan
+start, of een inmiddels verlopen vervaltermijn. Het resultaat krijgt
+`active_queue_lease_untrusted` en
+`untrusted_active_lease_count`; geen bestaande taak wordt geannuleerd
+of teruggezet. Overige projectprofielen behouden hun bestaande toelating.
+
+De read-only privé herstelbalie neemt dit concrete schedulerbesluit over,
+inclusief `new_write_admission_held` op betrokken lanes,
+`untrusted_active_leases_observed` in JSON en menselijke HTML/tekst/
+Markdown, plus de urgente kaart `HOLD_NEW_RECOVERY_WRITERS`.
+De claimeigenaar moet zijn werk en de werkelijke lease repareren voordat
+een tweede schrijver wordt toegelaten. De afwezigheid van een lokale claim
+bewijst niet dat Notion of een andere worker vrij is.
+
+Directe, alleen-lezen SQLite-observatie via de verbonden VPS op 20 oktober
+vond bij de drie geobserveerde huidige in-flight zSentinel-taken **drie
+betrouwbare, niet-verlopen bronvensters**, nul verlopen en nul foutieve
+datums. Dit is een bronmoment, geen release- of claimtoestemming.
+De aangepaste schedulerbron is uitsluitend op deze open PR beschikbaar;
+de VPS-database, lopende jobs, service en main-branch blijven onaangeraakt.
+
+### Remaining release gate
+
+The feature is source-only in the open existing PR #1572. Do not call it
+merged, deployed, live-installed or a resumed worker without the actual
+GitHub merge receipt, exact new default-branch SHA, authorized release
+action and live-state confirmation. The current source may be inspected
+read-only in memory without changing the VPS working tree.
+
+
+## 20 October product-only admission · no new QA assignments
+
+The `portfolio-recovery` planner now **refuses to admit queued,
+standalone QA, regression-test, test-suite and quality-validation packages**
+as new zSentinel recovery work. Explicit QA lane metadata and common
+QA-leading titles are both recognized; a real implementation/bug-fix ticket
+is not excluded just because its acceptance description mentions tests.
+The filter applies only to `queued` zSentinel work, not to other projects.
+
+Already `claimed`, `running` or `verifying` entries keep their existing
+reservation and identity even if their title describes QA. Neither the
+filter nor the four-lane desk cancels, releases, reassigns, edits or
+supersedes those owners. Mandatory independent GitHub CI and protected-main
+review remain unchanged.
+
+An otherwise empty lane containing only forbidden QA work is reported as
+`blocked`, never `idle` or `queued`. Every lane now provides an aggregate
+`deferred_qa_packages` count (no raw task names/IDs), shown in JSON, text,
+Markdown handoff and the private offline HTML cards. This is an operator
+exclusion signal, **not** authority to mutate the legacy backlog. A human
+queue owner decides whether to archive or reroute any pre-existing QA item.
+
+Source is delivered only on PR #1572 until GitHub confirms protected-main
+merge at the exact checked head. This change writes no production SQLite,
+runner state, scheduler, browser or GitHub Actions workflows.
+
+The bounded advisory recovery-action feed also emits `NO_NEW_QA_WORK_ADMISSION` when the desk observes deferred QA packages. The action explicitly returns these legacy items to their existing queue owner and keeps attention on real product issues and PR integration. It does not start, remove, relabel, reprioritize or claim any queued item. If higher-severity owner/runner risks fill the existing nine-card ceiling, the per-lane exclusion count remains independently visible.
+
+
+## 20 October · operator admission decision per lane
+
+The same local SQLite snapshot now supplies each of the four recovery
+lanes with an explicit **owner-safe decision**, a Dutch reason and next
+operator step in JSON, text, offline HTML and private Markdown. Examples:
+
+| Code | Meaning |
+| --- | --- |
+| `ACTIVE_OWNER_PROTECTED` | Already in flight; retain the owner. |
+| `HOLD_EXPIRED_LOCAL_CLAIM` | At least one expired local claim lease: reconcile with its owner before any new writer. |
+| `HOLD_SOURCE_RECONCILIATION` | Queue, claim or scope source incomplete. |
+| `HOLD_ACTIVE_SCOPE_CONFLICT` | In-flight writers have overlapping explicit scopes. |
+| `HOLD_EXISTING_CLAIM_OR_SCOPE` | Another existing scope or serial lane blocks new work. |
+| `HOLD_QA_PRODUCT_POLICY` | Queued QA tasks were excluded from new recovery admission. |
+| `CANDIDATE_EXTERNAL_GATES` | One local queued candidate is observed but still requires external GitHub, Notion, owner and resource gates. |
+| `NO_LOCAL_CANDIDATE` | No candidate is observed, which never implies global ownership is free. |
+
+The decision is **advice, not an authorization token**. Active work is
+protected even when its claim clock cannot be independently confirmed.
+An expired local `task_claims` lease is not silently interpreted as an
+unowned queue task; the desk and action feed surface a human
+`HOLD_EXPIRED_LOCAL_CLAIM` follow-up. This also applies to otherwise
+empty lanes. The desk never renews, releases, restarts, reassigns or
+mutates those records. Operator cards continue to hide task IDs, raw titles,
+credentials, actor identities and file paths. GitHub and Notion live sources
+are not observed by this local SQLite snapshot, so even a clean card cannot
+authorize merge or dispatch.
+
+This implementation remains on existing product PR #1572 pending
+independent exact-head CI and review, protected-main merge and separate
+authorized live activation. No QA suite was added or run.
+
+
+### Integrated operator summary and missing active owner evidence
+
+A further production-source fix covers the situation where active
+`portfolio_queue` work exists but no corresponding local
+`task_claims` lease is observed. The existing `claimed_without_local_lease_observation`
+signal now also prevents unrelated lanes from advertising an admissible
+candidate: `HOLD_ACTIVE_OWNER_UNVERIFIED` requires a reconciliation with
+the current worker and Notion/queue owner. An empty lane does **not**
+override that uncertainty.
+
+All four cards provide a stable `admission.code`, Dutch label and
+`next_step`, plus an aggregate `admission_summary` in the same source
+packet. The status line in HTML, text and private Markdown distinguishes
+active owners protected, owners/source on hold, locally identified but
+externally unapproved candidates, and absence of a local candidate. This
+is purposefully not permission to claim, dispatch, merge or deploy.
+The current read-only source preserves existing queue and claim records.
+
+Updated source commit: [8a77d3a](https://github.com/Zennay/zCloud/commit/8a77d3aac00710bdfdbbd7b36a5bd78366d78bd6).
+Still not released until exact-head protected-main review/CI and
+separate authorized deploy proof.
+
+
+## 20 October · actual scope declaration is mandatory for parallel writers
+
+A real product-integrity risk was fixed in the existing planner: ordinary
+scope normalization converts arbitrary JSON values to strings. With
+`portfolio-recovery`, a malformed entry such as `null`, a wildcard
+(`scripts/*.py`) or an absolute/path-traversal string previously risked
+being treated as a valid explicit scope. A single syntactically valid
+capability alongside an invalid file could also hide the missing file
+boundary. The zSentinel-only strict parser now rejects the **entire**
+declaration unless every value is a bounded, explicit canonical string.
+
+For **cross-project recovery code writers** an owner declaration must
+include at least one concrete **relative repository file/directory path**;
+capability-only labels (including generated `execution_lane.scope`) are
+never accepted as proof that unrelated lanes can edit safely. Files cannot
+use wildcards, absolute paths, `..`, backslashes or empty segments.
+Invalid declarations count as ambiguous, exactly like missing ones: active
+work retains its original owner and blocks new parallel admission. A
+queued task without an acceptable declaration stays restricted to the
+existing serial-only pathway; there is no automatic owner-claim repair.
+
+An example of an *owner-provided* declaration, **not** a queue patch:
+
+```json
+{
+  "conflict_scope": {
+    "files": ["scripts/zsentinel_four_lane_desk.py"],
+    "capabilities": ["zsentinel:operator-desk"]
+  }
+}
+```
+
+The real owner must replace this illustrative file with **every actual
+file/directory intended for writes**, check overlap with other open PRs
+and record it through the existing authorized queue process. No script
+may synthesize that declaration from a lane label or push it into the
+production SQLite. The connected live queue currently has three
+zSentinel tasks with generated `execution_lane.scope` but without such
+explicit `conflict_scope` declarations; those tasks are **not** assumed
+free or safe to parallelize.
+
+The read-only operator desk now reports aggregate missing versus malformed
+or empty scope declarations, and a human `HOLD_PARALLEL_ADMISSION` action
+specifying what the current owners need to supply. It never returns raw
+queue identities, owner IDs or file names. The strict policy is limited
+to zSentinel's `portfolio-recovery` profile and leaves other project's
+preexisting lane logic unchanged.
+
+Source: [aab2ecfa](https://github.com/Zennay/zCloud/commit/aab2ecfa88fa9688d4cfb399777d9482a47617d5)
+on existing PR #1572. It is **not** merged or deployed until ordinary
+independent review, exact-head mandatory CI, protected-main merge and
+authorized live verification complete.
+
+
+### Current read-only observation and correct owner counts
+
+The exact pinned source was evaluated against an existing `mode=ro` /
+`query_only=ON` `history.db` snapshot using the connected zSSH channel.
+At that moment, the local queue contained **three claimed and one queued**
+zSentinel tasks, and all three active tasks had **missing real file-scope
+declarations**. The new source conservatively classified two derived lanes
+as protecting active work and two as held pending owner verification.
+That is **three active task reservations in two lanes**, *not two owners*.
+
+The operator decision summary now carries `active_task_reservations`
+and `parallel_active_reservations` separately from the number of
+`active_owner_protected` lanes. Text, private HTML, Markdown and JSON
+no longer equate a displayed lane card with an individual owner's
+reservation. No task was released, changed, reassigned, merged or started.
+
+This evidence is a bounded **local** observation only. It is not a
+Notion lease reconciliation or GitHub source-of-truth update; it cannot
+authorize new parallel workers. Mandatory exact-head CI and independent
+reviews are still external release gates.
+
+
+## 20 October · legacy profile migration cannot grant new parallel workers
+
+A current **read-only** inspection of the connected VPS checkout found
+`project-contracts.json` declaring `zsentinel.lane_profile=platform`
+and `ai_worker_cap=2`; the separate `worker-modes.json` entry had no
+explicit lane profile. All three in-flight SQLite queue items carry
+`execution_lane.profile=product` rather than the **proposed**
+`portfolio-recovery` profile in this GitHub PR. Those two local sources
+do **not** prove which exact configuration the running service has
+loaded; no live deployed four-lane admission is asserted.
+
+Before this fix, the proposed four-lane planner reclassified those
+legacy active tasks from their titles. Even if their missing file
+scopes were later repaired, their original profile/claim provenance
+still would **not** be evidence that the active workers had safely
+migrated into the new lane model. The planner now separately tracks
+`active_profile_mismatch_count` for legacy or missing active
+`execution_lane.profile` and prevents **new queued admission** while
+such claims exist. Existing task slots, owners and active work are not
+reclaimed, restarted, relabeled or changed.
+
+The SQLite-only operator desk exposes
+`active_legacy_profile_claims_observed` in its bounded aggregate
+packet. Unoccupied lanes show `HOLD_LEGACY_PROFILE_MIGRATION`
+rather than treating the proposed profile as deployed. The prioritized
+human action explains that the authorized runtime owner must reconcile
+actual loaded configuration, original worker claims and file ownership
+*before* any profile migration. `deployed_four_lane_profile` remains
+`NOT_VERIFIED` until separately established by the runtime owner.
+
+This is not a new process gate: it preserves an existing ownership
+boundary that the in-flight legacy claims already occupy. Reconciliation
+requires existing independent review, mandatory exact-head CI,
+protected-main merge and an authorized release. The code here has
+no authority to edit live contracts, worker modes, claim leases,
+queue rows, browser sessions or services.
+
+
+### Local contract read model, without assuming deployment
+
+The existing four-lane desk can also inspect the local
+`project-contracts.json` beside the selected read-only SQLite file, or
+an explicitly selected `--contracts-file`. The new read model accepts only
+a regular, non-symlink UTF-8 JSON file up to 128 KiB. It exports **only**
+a whitelisted zSentinel profile, bounded worker cap, local observation
+state and match/mismatch status; no credentials, full file content or
+filesystem path enters operator output. Missing, invalid or inaccessible
+files remain `NOT_OBSERVED` or `UNTRUSTED_SOURCE`.
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --contracts-file /AUTHORIZED/READ-ONLY/project-contracts.json
+```
+
+If that verified **local file** disagrees with the proposed
+`portfolio-recovery` profile, prospective four-lane writer admission is
+held with `HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH`; the current owner
+must compare the loaded runtime configuration, active queue leases and
+existing file claims. The read-only file is **not** evidence of which
+configuration the service has actually loaded. The four-lane
+`deployed_four_lane_profile` claim remains `NOT_VERIFIED`.
+An owner-action card makes the discrepancy visible without touching
+production server, SQLite, Notion, browser, runner or billing state.
+
+
+## 21 oktober · P0 én P1 als brongebonden herstel-inbox
+
+De vierbaan-herstelbalie ondersteunt nu een echte **productgerichte
+P0/P1-vervolgkeuze** in de bestaande operatoractiekaarten. Eerder werden
+uitsluitend projecten met wachtende P0-items opgenomen; als er alleen
+P1-issues wachtten, bleef het productwerk onzichtbaar in de korte
+herstelactielijst. De bestaande gescheiden portfolio-aggregaten zijn
+ongewijzigd.
+
+De adapter leest maximaal dertien canonieke lokale projectaggregaten,
+ordent ze stabiel op waargenomen aantallen en gebruikt lokale eligibility
+uitsluitend als *sorteerhint*. Twee P0-projecten gaan voor; er is daarnaast
+ruimte voor een apart P1-project. Zonder P0 kunnen maximaal drie
+P1-projecten verschijnen. Elke kaart toont wachtend, lokaal eligible
+en al in behandeling **afzonderlijk**, plus de expliciete opdracht om
+eerst bestaande product-PRs, GitHub-issues en actuele claims te bekijken.
+Een P1-project op dezelfde naam als een reeds gekozen P0-project maakt
+geen dubbele projectkaart. De afzonderlijke kaart wordt niet gebruikt om
+een nieuwe claim toe te wijzen.
+
+Deze kaarten blijven menselijke suggesties met
+`PR_AND_OWNER_GATE_REQUIRED`; ze staan *onder* urgente bron-,
+eigenaars- en lease-HOLDs in het bestaande maximum van negen actiekaarten.
+Bij hoge druk mogen veiligheidswaarschuwingen dus voorrang hebben.
+Dezelfde productinformatie is beschikbaar in tekst, private Markdown,
+JSON en offline HTML via de bestaande uitvoerfuncties; geen nieuwe
+endpoints, providerverzoeken of background jobs.
+
+Code: commits
+[b489837](https://github.com/Zennay/zCloud/commit/b489837983e0274c53054c924d9c41bf1eaa4a21)
+en
+[b68a744](https://github.com/Zennay/zCloud/commit/b68a744f27aea9b0b3d2bbc53cd7bb239a0cdef9)
+op dezelfde open [PR #1572](https://github.com/Zennay/zCloud/pull/1572).
+Geen QA-suite of handmatige CI gestart en geen queue, claim, runner,
+dienst, notificatie of andere productiebron gewijzigd. De bronwijziging
+is **niet** op main of live zolang exacte-head verplichte CI,
+onafhankelijke review, branchbescherming en eigenaarsautorisatie niet
+zijn afgerond.
+
+
+### Eén klik naar bestaande GitHub-bronnen, zonder eigenaarschap aan te nemen
+
+De private offline HTML-tabel en Markdown-overdracht bieden nu per
+geobserveerd portfolio-project **Open PRs** en **Open issues**.
+Een vaste allowlist bevat uitsluitend de dertien op GitHub bevestigde
+bestaande repositories; namen of URLs uit wachtrijtitels en metadata
+worden nooit als linkdoel gebruikt. Een niet-herkend project blijft
+gewone tekst zonder link. Links openen de huidige GitHub-inbox in een
+apart tabblad met `noopener noreferrer`, zonder browser- of
+serverbackground-verzoeken vanuit het offline rapport.
+
+Deze links **halen geen actuele GitHub-status op**. De aantallen naast
+de links blijven alleen de read-only SQLite-waarneming; de gebruiker
+moet in GitHub zelf de exacte open PR, SHA, CI, review, branch protection
+en eigenaar vaststellen. De kopieerbare Markdown geeft dezelfde twee
+navigatie-ingangen. Dit is een direct bruikbare merge-first
+operatorfunctie, geen toestemming om een PR te claimen, mergen of
+deployen.
+
+Broncommit:
+[cf2db868](https://github.com/Zennay/zCloud/commit/cf2db86886d355d3048536078596840cfa90b2f0).
+Nog steeds onderdeel van **dezelfde open PR #1572**; geen live
+installatie of onafhankelijke release-acceptatie verondersteld.
+
+
+## 21 oktober · Lokale CPU-/RAM-/swapdruk zonder ongeautoriseerde workeractie
+
+Het vierbanenbureau kan nu optioneel een **read-only
+Linux-hostcapaciteitsmoment** toevoegen aan hetzelfde operatorrapport:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --format html --output /PRIVATE/NEW-report.html
+```
+
+`scripts/zsentinel_host_pressure.py` leest uitsluitend de lokale
+`/proc/meminfo` en `/proc/loadavg` (elk begrensd tot 4096 bytes,
+zonder symlink-following of filesystemwrite) en toont afgevlakte
+MemAvailable, swapgebruik en 1-minuut-load per CPU. Als bronvelden
+ontbreken of ongeldig zijn, blijft de status **UNKNOWN**; nul of
+"gezond" wordt niet verzonnen. Het resource-inzicht is expliciet
+**opt-in** met `--host-pressure`, zodat bestaande CLI-operaties geen
+nieuw /proc-werk hoeven te doen.
+
+Alle bestaande tekst-, JSON-, private Markdown- en offline HTML-weergaven
+tonen dezelfde bronbeperking. Bij lokale hoge/verhoogde druk ontstaat een
+drie-regelige menselijke eigenaaractie met
+`HOLD_CAPACITY_OWNER_REVIEW`. Geen signaal verleent nieuwe
+worker-admission; ook een lage drukmeting kan geen voldoende cgroup-,
+container-, resource-pool-, Notion-claim-, GitHub-job- of
+runnerbewijzen opleveren. Dit is **geen** nieuwe harde systeemgate.
+De bestaande planner, releasevoorwaarden en live-capaciteitsregeling
+worden niet gewijzigd.
+
+Code: [1f2e4d8](https://github.com/Zennay/zCloud/commit/1f2e4d8c02264e503734a9a02de4fa0b5056496d),
+[4920607](https://github.com/Zennay/zCloud/commit/4920607f1cfd1ef7a64419ad117a69be40bc431a),
+[a28530f](https://github.com/Zennay/zCloud/commit/a28530fd4fbe9ec67c22119956a5fcca6def21de)
+en [3238615](https://github.com/Zennay/zCloud/commit/3238615bcee5b89688c0806394e619955eac3405).
+Alle wijzigingen staan op dezelfde bestaande [product-PR #1572](https://github.com/Zennay/zCloud/pull/1572).
+Geen handmatige QA/regressie, workflow-retry, claimovername,
+onafhankelijke reviewbypass, VPS-writer, runnerrestart of deployment.
+Nog niet op main of live zolang bestaande exacte-head CI en releasegates
+openstaan.
+
+
+### Rechtstreekse read-only hostinspectie en zichtbare ernst
+
+De exacte [broncommit 93a755d](https://github.com/Zennay/zCloud/commit/93a755daac4250f97f1f5350622d7fa2af1768a0)
+van de nieuwe Linux-hostmodule is via de **verbonden zSSH** alleen
+in memory opgehaald en direct tegen host-`/proc` uitgevoerd
+(geen uitgepakte bestanden, SQLite-writes, herstarts of deploy).
+Waarneming op 21 oktober: **4.072 MiB MemAvailable (36,5%),
+swap 100% gebruikt, éénminuut-load/CPU 8,21**;
+`HIGH_LOCAL_PRESSURE`, `new_worker_authorized=false`.
+Dit is een echte lokale hostobservatie, geen bewijs voor een
+defecte GitHub-runner of het geladen workerpool-contract.
+
+De bron is daarop productmatig verder uitgewerkt:
+[684dda7](https://github.com/Zennay/zCloud/commit/684dda731ebf839af13391814b5c1e3757d834c2)
+houdt **hoge** hostdruk zichtbaar bij de maximaal negen
+herstelactiekaarten, zelfs met veel generieke queue-waarschuwingen;
+[270a930](https://github.com/Zennay/zCloud/commit/270a9302050ab5b30b8c8b944038ae385a7c65ce)
+maakt dezelfde brongebonden waarschuwing in de bovenkant van de
+offline HTML zichtbaar. Verhoogde druk geeft alleen adviserend
+eigenaaronderzoek; bij lage druk ontstaat geen vrijgave.
+
+De drie gewijzigde Python-productmodules zijn als exact gepinde
+GitHub-bron via zSSH **alleen op AST-syntax** gecontroleerd; er zijn
+geen QA-/regressiesuites geschreven of gestart. Deze bronwijzigingen
+zijn **OPEN/UNMERGED/NOT LIVE** op dezelfde PR totdat bestaande
+verplichte exacte-head CI, review, branchbescherming en release-eigenaar
+integratie toestaan.
+
+
+### 21 oktober · Schijfruimte opgenomen in hetzelfde herstelbeeld
+
+De resourcebalie signaleert nu óók hostschijfruimte als potentiële
+blokkade van bestaande CI-/runnerwerkstromen. Nieuwe bronmodule
+`scripts/zsentinel_disk_pressure.py` gebruikt alleen
+`os.statvfs("/")` (geen directoryscan of bestandsinhoud) en retourneert
+afgeronde GiB beschikbaar voor de uitvoerende gebruiker plus het aandeel
+bestandssysteemblokken dat voor **dat proces niet beschikbaar** is.
+Dat percentage is uitdrukkelijk **niet** gelijkgesteld aan bewezen
+gebruik door projecten: gereserveerde blokken kunnen inbegrepen zijn.
+
+Bij minder dan 2 GiB beschikbaar óf minstens 95% niet beschikbaar
+verschijnt `HIGH`; bij minder dan 5 GiB óf vanaf 90% verschijnt
+`ELEVATED`. Onbetrouwbare/missende statvfs-bron wordt `UNKNOWN`,
+niet `0` of `geen druk`. De bestaande optionele
+`--host-pressure` weergave combineert deze lokale metadata met de
+al bestaande begrensde RAM-, swap- en loadmeting. JSON, tekst,
+offline HTML en private Markdown gebruiken automatisch dezelfde bron;
+een ernstige situatie komt bovenaan de herstelbalie en in de
+eigenaaractie-inbox terecht. Geen automatische opslagopschoning,
+archiefmigratie, cgroup-mutatie, runner-restart of extra worker-toelating.
+
+Broncommits: [7e63e1b](https://github.com/Zennay/zCloud/commit/7e63e1b30634b31e5412181f90e396ad3a0d4bce)
+(reguliere bestandssysteemmetadata),
+[956ab62](https://github.com/Zennay/zCloud/commit/956ab62f37087b0f596f6ec29500c983ba5d11b2)
+(gecombineerde resourceclassificatie),
+[1fc311e](https://github.com/Zennay/zCloud/commit/1fc311eafdca16801615b69818c910fdc2cc17db)
+(eigenaaradvies). Dit blijft op bestaande PR #1572; geen
+main- of live-claim voordat GitHub de exacte vereiste gates bevestigt.
+
+
+### Brongebonden P0 runner/capacity-overdracht (geen automatische reparatie)
+
+Een hoge hostdrukkaart kan nu, **alleen als de operator tevens
+`--runner-processes` selecteert**, de lokale zCloud-listener-/worker-
+waarneming in de *zelfde* menselijke vervolgregel opnemen.
+Voorbeelden: listener **gezien maar GitHub-toewijzing onbewezen**;
+worker gezien terwijl lokale listener niet is waargenomen (behoud job);
+of procesbron incompleet. Geen van deze gevallen zegt dat een
+remote workflow werkelijk stuck/geslaagd is. Een geobserveerde
+zCloud-listener is niet hetzelfde als GitHub `runner_id`, labels,
+toewijzing of daadwerkelijke CI.
+
+`python3 scripts/zsentinel_four_lane_desk.py --db history.db --host-pressure --runner-processes`
+levert het samengevoegde, read-only operatorbeeld. Het blijft een
+menselijke HOLD/volgactie, zonder service-, CPUQuota-, runner-,
+claim-, opslag- of GitHub-writes. Broncommit
+[4766ff2](https://github.com/Zennay/zCloud/commit/4766ff26514bd7719875e50a19b5ed4a037e96e1)
+staat op bestaande PR #1572. Issues als
+[zCloud #1326](https://github.com/Zennay/zCloud/issues/1326)
+worden **niet** automatisch gesloten of als hersteld bestempeld.
+
+
+## 21 oktober · Kernelwachttijden voor een echte, read-only runnerdiagnose
+
+De optionele `--host-pressure` herstelbalie inspecteert nu naast
+RAM/swap/load en root-schijfruimte ook **Linux PSI** (Pressure Stall
+Information) voor CPU, geheugen en I/O. Dit is geen extra
+productie-/CI-/resource-admission gate: het is brongebonden informatie
+voor een mens die runner- en workerblokkades moet onderzoeken.
+
+Een nieuwe standalone module, `scripts/zsentinel_psi_pressure.py`,
+leest uitsluitend de drie **vaste, door de code bepaalde** paden
+`/proc/pressure/cpu`, `/proc/pressure/memory` en
+`/proc/pressure/io`. Iedere read gebruikt `O_NOFOLLOW` en
+`O_NONBLOCK`, maximaal 2 KiB; parser vereist canonieke
+`some` en (waar betekenisvol) `full`-percentages met
+`avg10`, `avg60` en `avg300`. Defecte, ontbrekende of
+onvolledige bronnen leveren **PARTIAL/UNKNOWN** op, geen gefingeerde
+nulwaarden. Onbetrouwbare CPU-`full` wordt niet gebruikt als
+beoordeling.
+
+De centrale hostindicatie gebruikt bestaande RAM-/swap-/CPU-/schijf-
+grenzen en **aanvullend** heuristische PSI-stallgrenzen om bij
+aantoonbare zware kernelwachttijden een menselijke P0-eigenaaractie
+boven algemene queueberichten zichtbaar te houden.
+De offline HTML-herstelbalie heeft een aparte CPU/geheugen/I/O-tabel
+met 10/60/300 seconden voor deels wachtende taken en 60 seconden
+volledig stilstaande geheugen-/I/O-taken. De bestaande tekst-,
+JSON- en private Markdown-overdracht bevatten dezelfde bronfeiten.
+
+Bij volledig ontbrekende RAM/load-bron kan betrouwbare hoge PSI of
+diskdruk **niet meer stilzwijgend verdwijnen**: het packet blijft
+`HOST_PARTIAL`, benoemt expliciet de niet waargenomen bronnen en
+laat de bestaand geautoriseerde eigenaar een `HOLD_CAPACITY_OWNER_REVIEW`
+zien. Anders dan een succesvolle snapshot geeft een gedeeltelijke
+snapshot nooit een gezond-signaal. Binnen de korte eigenaaractie krijgen
+volledige geheugen-/I/O-stilstanden voorrang boven een hoger maar
+minder specifiek `some`-percentage.
+
+**Direct functioneel alleen-lezen op de verbonden VPS:**
+21 oktober observeerde de bron op exact commit
+[b7e8c0e](https://github.com/Zennay/zCloud/commit/b7e8c0e49a819fe07229616dac5c9b28f63d18b0)
+1.825 MiB beschikbare RAM (16,4%), 100% gebruikte swap,
+load/CPU 35,08, 1,80 GiB beschikbare root-schijfruimte
+(98,1% onbeschikbaar) en PSI avg60: CPU-some 84,66%,
+geheugen-some 88,39% / geheugen-full 73,44%,
+I/O-some 78,14% / I/O-full 0,07%.
+Die cijfers zijn een bronmoment, geen historische trend of
+bewijs voor specifieke GitHub-runner-toewijzing. De bevoegde eigenaar
+van het bestaande [P0 #1326](https://github.com/Zennay/zCloud/issues/1326)
+kreeg de waarneming als commentaar, zonder een actieve worker te
+onderbreken.
+
+Samenhangende productbron op **dezelfde al open PR #1572**:
+[7a0698c](https://github.com/Zennay/zCloud/commit/7a0698c2841de7b2e227b9f70a96112b622aa7d9)
+(PSI), [8a67837](https://github.com/Zennay/zCloud/commit/8a678379577826e1f0f62ed78b00361532a5f753)
+(parser),
+[6e1c8ec](https://github.com/Zennay/zCloud/commit/6e1c8ece2365fee1376730f567d80cee554976a2)
+(hostintegratie),
+[32f6b40](https://github.com/Zennay/zCloud/commit/32f6b4022c76cb4c7d5d815835c9187014e3f9f2)
+(eigenaarcontext),
+[b7e8c0e](https://github.com/Zennay/zCloud/commit/b7e8c0e49a819fe07229616dac5c9b28f63d18b0)
+(offline HTML),
+[afb52a5](https://github.com/Zennay/zCloud/commit/afb52a5a45f2865a229c803589dc0e71327c4059)
+(volledige-stall-prioriteit),
+[206b095](https://github.com/Zennay/zCloud/commit/206b095408a2e0bccee51f23b1fae307f825c7b3)
+(fail-closed partial), en
+[2d83435](https://github.com/Zennay/zCloud/commit/2d8343578b5d7a5497e4f2d342d8c1b3a11f58ab)
+(partiële eigenaaralert).
+
+Geen QA-/regressiesuite, workflow-dispatch, bestandssysteemopschoning,
+serviceherstart, workerclaim, daadwerkelijke GitHub-merge of
+ongeautoriseerde deploy. Op `main` en live is niets bewezen tot
+na exacte-head CI, onafhankelijke review, eigenaarsautorisatie
+en afzonderlijke GitHub/deploy-bevestiging.
+
+
+### 21 oktober · Korte versus lange kernel-stallvensters zichtbaar
+
+Dezelfde optionele, read-only PSI-bron levert nu **per resource**
+het precieze verschil in procentpunten tussen `avg10` en
+`avg300` voor gedeeltelijk wachtende taken. De HTML-tabel bevat
+hiervoor een extra kolom; tekst, Markdown en JSON behouden de
+brongetrouwe cijfers en een expliciet
+`window_signal` in het PSI-packet.
+Na een zichtbaar verschil van minstens 15 procentpunten presenteert
+het operatorbericht `SHORT_WINDOW_PRESSURE_HIGHER`,
+`SHORT_WINDOW_PRESSURE_LOWER` of `MIXED_WINDOWS`; bij kleinere
+verschillen staat `NO_LARGE_WINDOW_DIFFERENCE`. Dat zijn alleen
+**overlappende voortschrijdende kerneltijdvensters**, geen
+persistent tijdreeksbewijs, prognose, foutclassificatie van een
+specifieke GitHub-job of permission om werknemers te stoppen.
+
+De bestaande menselijke herstelkaart vermeldt bij kortdurend
+aanzienlijk hogere druk expliciet de vergelijking, met behoud van
+de bronbeperkingen. Geen historische snapshots geschreven,
+geen claim, service, scheduler, worker, queue, CI-retry, deploy of
+schoonmaak gewijzigd.
+
+Broncommits:
+[f8d122a](https://github.com/Zennay/zCloud/commit/f8d122af0d0c5ea3e8351ee1dfc9fd7086093a5f),
+[39c4580](https://github.com/Zennay/zCloud/commit/39c4580dfd5487277e8f8f165a52e065a3d3a159),
+[ba9447d](https://github.com/Zennay/zCloud/commit/ba9447dd3386dd37f76b5e31ce419b7c67583ab1).
+Dit blijft werk op bestaande PR #1572; exacte-head verplichte CI,
+onafhankelijke review en geautoriseerde main-/live-integratie
+blijven afzonderlijk verplicht.
+
+
+### 22 October · reconcile the recovery lanes with the current five-slot contract
+
+Current `main@12079bbb` explicitly raises zSentinel's configured worker cap to
+five (`fix(zCloud): honor ten-worker selected fleet and 5-slot zSentinel cap`).
+The recovery feature still uses the four distinct `portfolio-recovery` lanes;
+those lanes are work categories, not a declaration that exactly four workers
+must run. Keep the current-main `ai_worker_cap=5` instead of reverting it to
+four while resolving this PR's contract conflict.
+
+The local read-only contract desk now requires both
+`lane_profile=portfolio-recovery` and `ai_worker_cap=5`, and reports
+`FIVE_WORKER_CAP_MISMATCH` for a different cap. The earlier 21 October
+four-worker-cap note records the then-current branch contract and is superseded
+for integration with current main. This remains local-file evidence only: it
+does not prove the live service loaded the contract, five slots are active, or
+resource admission permits five concurrent workers. Active claims, leases,
+runner assignment, required CI, independent review, branch protection and
+release authorization remain separate gates.
+
+
+### 22 October · reconcile the zCloud listener with its systemd cgroup
+
+The optional `--runner-processes` observation now reads each recognized zCloud runner process's bounded `/proc/<pid>/cgroup` metadata and compares path components with the expected `actions.runner.Zennay-zCloud.zcloud-vps-1.service` unit. It exports only counts and an enum, never the raw cgroup path, PID, command line, environment or executable path. A complete mismatch or mixed membership creates an explicit owner-review HOLD in the recovery action list; inaccessible, oversized or incomplete cgroup data remains `UNKNOWN`. This helps distinguish a listener process from membership in the expected systemd unit, but still cannot establish GitHub registration, runner labels, assigned job, or permission to restart.
+
+This source-only enhancement performs no service inspection through systemd, process control, queue/claim/SQLite writes, workflow dispatch or deployment.
+
+### 22 October · current contract cap supersedes the earlier four-worker note
+
+The earlier dated section describing `ai_worker_cap=4` records an intermediate configuration. The current `main` contract and this PR's four-lane desk now both use `lane_profile=portfolio-recovery` with `ai_worker_cap=5`; the desk requires that exact profile/cap pair for `MATCH_LOCAL_FILE`. Five is a configured maximum, not evidence that five workers are active or that resource, claim, runner, CI or release gates permit them to start.
+
+
+### 22 October · worker cgroup mismatch remains a protected owner HOLD
+
+The runner presence summary now calls out a zCloud `Runner.Worker` observed outside the expected service cgroup (or mixed worker membership) separately from listener membership. This does not label the worker stale or idle: the action explicitly preserves the job and asks the authorized runtime owner to reconcile service/cgroup identity with an actual GitHub job receipt. It never terminates, pauses, or restarts a worker.
+
+## 22 October 2026 · SQLite-queue bronpad accepteert geen directe symlink
+
+De vierbaanoperator leest de bestaande `portfolio_queue` uitsluitend via
+SQLite `mode=ro` en `query_only`. De bronadmissie weigert nu ook een
+directe symlink op het opgegeven databasepad, en de nacontrole gebruikt
+`lstat` zodat een vervangen symlink niet als hetzelfde reguliere bestand
+wordt behandeld. De device-/inode-identiteitscontrole blijft behouden.
+Dit voorkomt dat een verkeerd of omgeleid pad stilzwijgend als de bedoelde
+queuebron wordt gepresenteerd. Bij een onbetrouwbaar pad stopt de snapshot
+zonder claim-, queue-, worker- of serviceactie.

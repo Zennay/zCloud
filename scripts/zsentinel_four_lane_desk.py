@@ -1,0 +1,2267 @@
+#!/usr/bin/env python3
+"""Read-only, source-limited four-lane zSentinel operator desk.
+
+This utility NEVER claims work, changes leases, invokes runners or performs
+production actions. Queue occupancy and ownership are deliberately distinct.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+from datetime import datetime, timezone
+import html
+import json
+import os
+from pathlib import Path
+import sqlite3
+import stat
+import sys
+
+# Keep normal `python3 scripts/zsentinel_four_lane_desk.py` entrypoints
+# working regardless of the invoking directory. In ordinary script execution
+# sys.path[0] is scripts/, not necessarily the repo containing lane_generator.
+if __name__ == "__main__" and not __package__ and "__file__" in globals():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from lane_generator import (
+    classify_backlog_item,
+    generate_execution_lanes,
+    scopes_overlap,
+    recovery_scope_diagnostic,
+)
+from scripts.zsentinel_recovery_actions import suggested_actions
+from scripts.zsentinel_runner_presence import observe_local_runners, next_step_for, text_report
+from scripts.zsentinel_host_pressure import observe_host_pressure, pressure_sentence
+
+LANE_NAMES = {
+    "release-integration": "PRs naar main",
+    "product-remediation": "Productproblemen",
+    "worker-recovery": "Workers en wachtrij",
+    "ci-deploy-recovery": "CI en deployments",
+}
+LANE_ROUTING_LABELS = {
+    "PERSISTED_ACTIVE_LANE": "Bestaande actieve lane behouden",
+    "KEYWORD_CLASSIFICATION": "Taakinhoud bepaalt lane (adviserend)",
+    "PRODUCT_REMEDIATION_FALLBACK": "Geen PR-/merge-signaal; productherstel",
+    "NO_KEYWORD_FALLBACK": "Standaardlane (overige profielen)",
+    "NO_LOCAL_TASK": "Geen lokale taak",
+    "UNKNOWN": "Routebron onbekend",
+}
+ACTIVE = {"claimed", "running", "verifying"}
+VALID = ACTIVE | {"queued"}
+MAX_ROWS = 500
+MAX_TITLE = 512
+MAX_CRITERIA = 3072
+MAX_METADATA = 8192
+# Canonical real projects only; zSentinel is a recovery role, not a 14th.
+PORTFOLIO_PROJECTS = {
+    "cloud": "zCloud", "zssh": "zSSH", "ftmo": "FTMO",
+    "haxlab": "HaxLab", "supa": "Supa", "raiseai": "RaiseAI",
+    "ulab": "uLab", "lightup": "LightUp", "zguard": "zGuard",
+    "tradengine": "TradeEngine", "mixlab": "MixLab",
+    "fuckball": "Fuckball", "tuddy": "Tuddy",
+}
+PORTFOLIO_GROUP_LIMIT = 128
+OWNER_SNAPSHOT_SCHEMA = "zsentinel.portfolio-owner-local.v1"
+OWNER_SNAPSHOT_LIMIT = 65536
+# Compare bounded endpoint counts only; no durable owner IDs, queue IDs,
+# individual titles, claim secrets or process details enter this projection.
+OWNER_COUNT_FIELDS = (
+    "queued_p0", "queued_p1", "eligible_queued_p0",
+    "eligible_queued_p1", "in_flight_p0", "in_flight_p1",
+)
+
+# Verified GitHub repository names. Only this static allowlist can produce
+# outgoing navigation; never interpolate a queue title/URL or guessed repo.
+GITHUB_INBOX_REPOS = {
+    "zCloud": "zCloud", "zSSH": "zSSH", "FTMO": "Ftmo",
+    "HaxLab": "Haxlab", "Supa": "Supa", "RaiseAI": "RaiseAI",
+    "uLab": "uLab", "LightUp": "Lightup", "zGuard": "zGuard",
+    "TradeEngine": "tradengine", "MixLab": "Mixlab",
+    "Fuckball": "fuckball", "Tuddy": "Tuddy",
+}
+
+
+def github_inbox_urls(project):
+    """Static click-throughs, NOT an observation of GitHub issues or claims."""
+    slug = GITHUB_INBOX_REPOS.get(project)
+    if slug is None:
+        return None
+    root = "https://github.com/Zennay/" + slug
+    return (
+        root + "/pulls?q=is%3Apr+is%3Aopen",
+        root + "/issues?q=is%3Aissue+is%3Aopen",
+    )
+
+
+def html_inbox_links(project):
+    links = github_inbox_urls(project)
+    if links is None:
+        return ""
+    return (
+        "<small class='inbox'> "
+        "<a target='_blank' rel='noopener noreferrer' href='" + links[0]
+        + "'>Open PRs</a> · "
+        "<a target='_blank' rel='noopener noreferrer' href='" + links[1]
+        + "'>Open issues</a></small>"
+    )
+
+
+def owner_review_suggestions(portfolio, maximum=6):
+    """P0-first local owner handoff, never admission or a claim token.
+
+    Mirror the full owner CSV ordering: queued P0, active P0, queued P1,
+    then active P1. Active-only projects require owner review, not takeover.
+    """
+    suggestions = []
+    for item in portfolio:
+        p0_wait, p1_wait = item["queued_p0"], item["queued_p1"]
+        p0_active, p1_active = item["in_flight_p0"], item["in_flight_p1"]
+        if not (p0_wait or p1_wait or p0_active or p1_active):
+            continue
+        kind = ("P0_QUEUED" if p0_wait else
+                "P0_ACTIVE_OWNER" if p0_active else
+                "P1_QUEUED" if p1_wait else "P1_ACTIVE_OWNER")
+        active_only = not (p0_wait or p1_wait)
+        suggestions.append({
+            "project": item["project"],
+            "priority": "P0" if kind.startswith("P0_") else "P1",
+            "owner_review_kind": kind,
+            "queued_local": p0_wait + p1_wait,
+            "eligible_hint_local": item["eligible_queued_p0"] + item["eligible_queued_p1"],
+            "queued_p0": p0_wait, "queued_p1": p1_wait,
+            "eligible_hint_p0": item["eligible_queued_p0"],
+            "eligible_hint_p1": item["eligible_queued_p1"],
+            "active_p0": p0_active, "active_p1": p1_active,
+            "active_local": p0_active + p1_active,
+            "source": "read_only_local_queue",
+            "current_owner_verified": False,
+            "claim_authorized": False,
+            "merge_authorized": False,
+            "next_step": (
+                "Alleen actief P0/P1-werk waargenomen: controleer eerst "
+                "de bestaande eigenaar en actuele voortgang; neem geen lease, "
+                "slot of taak over." if active_only else
+                "Controleer actuele Notion-claims en bestaande GitHub PRs/issues; "
+                "behoud alle actieve eigenaars. Kies pas vrij productwerk na "
+                "exacte bron- en bevoegdheidscontrole."
+            ),
+        })
+    priority_order = {
+        "P0_QUEUED": 0, "P0_ACTIVE_OWNER": 1,
+        "P1_QUEUED": 2, "P1_ACTIVE_OWNER": 3,
+    }
+    suggestions.sort(key=lambda item: (
+        priority_order[item["owner_review_kind"]],
+        -item["queued_p0"], -item["active_p0"],
+        -item["queued_p1"], -item["active_p1"],
+        item["project"].casefold(),
+    ))
+    return suggestions[:maximum], len(suggestions) > maximum
+
+
+def host_source_coverage_table(host):
+    """Show fixed host-source coverage without turning missing data into zero."""
+    coverage = (
+        host.get("source_coverage")
+        if isinstance(host, dict) else None
+    )
+    if not isinstance(coverage, dict):
+        return (
+            "<h3>Hostbrondekking</h3><p class='warn'>"
+            "Brondekking ontbreekt; hostcapaciteit is UNKNOWN en nieuwe workers "
+            "blijven achter de bestaande toelatingspoorten.</p>"
+        )
+    labels = (
+        ("meminfo", "RAM / swap"),
+        ("loadavg", "CPU-load"),
+        ("root_disk", "Root-schijfruimte + inodes"),
+        ("psi", "Linux PSI"),
+    )
+    display = {
+        "OBSERVED": "Waargenomen",
+        "PARTIAL": "Gedeeltelijk",
+        "UNKNOWN": "Onbekend",
+    }
+    rows = []
+    incomplete = []
+    for key, label in labels:
+        state = coverage.get(key)
+        state_label = display.get(state, "Onbekend")
+        rows.append(
+            "<tr><th scope='row'>" + label + "</th><td>"
+            + state_label + "</td></tr>"
+        )
+        if state != "OBSERVED":
+            incomplete.append(label + "=" + state_label)
+    if incomplete:
+        note = (
+            "<p class='warn'>Onvolledige hostbrondekking: "
+            + html.escape(", ".join(incomplete))
+            + ". Nieuwe workers blijven op HOLD; bekende metingen blijven "
+            "informatief maar bewijzen geen vrije cgroup- of runnercapaciteit.</p>"
+        )
+    else:
+        note = (
+            "<p>Alle vier vaste hostbronnen zijn waargenomen. Dit bewijst op "
+            "zichzelf geen vrije cgroup-, claim-, worker- of runnercapaciteit.</p>"
+        )
+    return (
+        "<h3>Hostbrondekking</h3><div class='scroll'><table>"
+        "<thead><tr><th>Bron</th><th>Status</th></tr></thead><tbody>"
+        + "".join(rows) + "</tbody></table></div>" + note
+    )
+
+
+def psi_html_table(psi):
+    """Private, bounded table of direct kernel stalls; UNKNOWN is not zero."""
+    if not isinstance(psi, dict) or psi.get("status") not in ("OBSERVED", "PARTIAL"):
+        return "<p class='warn'>PSI onvolledig/onbekend: kernelbron niet betrouwbaar.</p>"
+    resources = psi.get("resources") or {}
+    rows = []
+    for key, label in (("cpu", "CPU"), ("memory", "Geheugen"), ("io", "I/O")):
+        detail = resources.get(key) or {}
+        source_observed = (
+            detail.get("status") == "OBSERVED"
+            and isinstance(detail.get("measurements"), dict)
+        )
+        values = detail.get("measurements") or {}
+        some = values.get("some") or {}
+        full = values.get("full") or {}
+        def cell(value):
+            if type(value) not in (int, float) or not 0 <= value <= 100:
+                return "Onbekend"
+            return f"{value:.2f}%"
+        contrasts = (psi.get("window_contrast") or {}).get(key) or {}
+        delta = contrasts.get("some_delta_pp")
+        short_long = (
+            f"{delta:+.2f} procentpunt" if source_observed
+            and type(delta) in (int, float) and -100 <= delta <= 100
+            else "Onbekend"
+        )
+        full_cell = (
+            "Niet gebruikt" if key == "cpu" and source_observed
+            else cell(full.get("avg60_pct")) if source_observed
+            else "Onbekend"
+        )
+        rows.append(
+            "<tr><th scope='row'>" + label + "</th><td>"
+            + (cell(some.get("avg10_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + (cell(some.get("avg60_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + (cell(some.get("avg300_pct")) if source_observed else "Onbekend") + "</td><td>"
+            + full_cell + "</td><td>" + short_long + "</td></tr>"
+        )
+    coverage_note = ""
+    if psi.get("status") == "PARTIAL":
+        hint = psi.get("pressure_hint", "UNKNOWN")
+        basis = [
+            item for item in psi.get("pressure_basis", [])
+            if item in ("cpu", "memory", "io")
+        ]
+        if hint in ("HIGH", "ELEVATED") and basis:
+            coverage_note = (
+                "<p class='warn'>PSI gedeeltelijk: waargenomen bron(nen) tonen "
+                + html.escape(hint) + " druk (" + html.escape(", ".join(basis))
+                + "); ontbrekende bronnen blijven onbekend. Dit is geen volledige hostmeting.</p>"
+            )
+        else:
+            coverage_note = (
+                "<p class='warn'>PSI gedeeltelijk: geen drukdrempel aangetoond "
+                "in de waargenomen bronnen; ontbrekende bronnen kunnen druk verbergen.</p>"
+            )
+    return (
+        "<p>Linux PSI: percentage tijd met taakvertraging. CPU-full is "
+        "niet betrouwbaar vergelijkbaar en wordt niet als bewijs gebruikt.</p>"
+        + coverage_note
+        + "<div class='scroll'><table><thead><tr><th>Bron</th>"
+        "<th>Deels wachtend 10s</th><th>Deels wachtend 60s</th>"
+        "<th>Deels wachtend 300s</th><th>Volledig stil 60s</th>"
+        "<th>Verschil 10s - 300s</th>"
+        "</tr></thead><tbody>" + "".join(rows)
+        + "</tbody></table></div>"
+        "<p>Het vensterverschil vergelijkt overlappende gemiddelden, "
+        "geen gemeten historische verandering of toekomstige voorspelling. "
+        "Geen diagnose van een specifieke GitHub-job of proces.</p>"
+    )
+
+
+def _utc(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        date = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        return date.astimezone(timezone.utc) if date.tzinfo else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def operator_admission(
+    lane, source_complete, cross_lane_complete, collision_count,
+    expired_local_leases, missing_local_claim, active_profile_mismatch,
+    local_config_mismatch, local_config_unverified, host_admission,
+    host_pressure=None,
+):
+    """Map a local lane observation to human-only admission guidance.
+
+    This deliberately never claims a task and is not an admission token.
+    Unverified sources, in-flight ownership and scope collisions retain
+    precedence over the absence of a queued task.
+    """
+    state = str(lane.get("status") or "idle").lower()
+    deferred = max(0, int(lane.get("deferred_qa_packages") or 0))
+    deferred_ineligible = max(0, int(lane.get("deferred_ineligible_packages") or 0))
+    deferred_assigned = max(0, int(lane.get("deferred_assigned_packages") or 0))
+    blocked = lane.get("blocked_by") or []
+    source_coverage = (
+        host_pressure.get("source_coverage")
+        if isinstance(host_pressure, dict) else None
+    )
+    source_labels = {
+        "meminfo": "RAM/swap", "loadavg": "load/CPU",
+        "root_disk": "root-schijfruimte/inodes", "psi": "PSI",
+    }
+    incomplete_sources = []
+    if isinstance(source_coverage, dict):
+        for key in ("meminfo", "loadavg", "root_disk", "psi"):
+            if source_coverage.get(key) in ("UNKNOWN", "PARTIAL"):
+                incomplete_sources.append(source_labels[key] + "=" + source_coverage[key])
+    source_note = (
+        " Ontbrekende/partiële bronnen: " + ", ".join(incomplete_sources) + "."
+        if incomplete_sources else
+        " De brondekking is niet volledig bevestigd."
+        if host_admission == "HOST_SOURCE_UNVERIFIED" else ""
+    )
+    if state in ACTIVE:
+        return {
+            "code": "ACTIVE_OWNER_PROTECTED",
+            "label": "Bestaande eigenaar behouden",
+            "next_step": "Controleer actuele claimhouder en voortgang; neem deze taak niet over.",
+        }
+    if local_config_mismatch:
+        return {
+            "code": "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
+            "label": "Vierbaanprofiel of actuele cap van vijf workers ontbreekt",
+            "next_step": "Laat de runtime-eigenaar profiel en ai_worker_cap=5 met de geladen serviceconfiguratie vergelijken; wijzig geen actieve claims.",
+        }
+    if local_config_unverified:
+        return {
+            "code": "HOLD_LOCAL_CONTRACT_UNVERIFIED",
+            "label": "Lokaal workercontract niet betrouwbaar gelezen",
+            "next_step": "Vraag de runtime-eigenaar om een geldig lokaal projectcontract en controleer de geladen serviceconfiguratie; geen nieuwe schrijver vrijgeven.",
+        }
+    if expired_local_leases:
+        return {
+            "code": "HOLD_EXPIRED_LOCAL_CLAIM",
+            "label": "Verlopen lokale lease(s) aangetroffen",
+            "next_step": "Laat de bestaande claimeigenaar de daadwerkelijke taakstatus vergelijken; niet opnieuw claimen.",
+        }
+    if active_profile_mismatch:
+        return {
+            "code": "HOLD_LEGACY_PROFILE_MIGRATION",
+            "label": "Actieve taken horen bij een ander baanprofiel",
+            "next_step": "Laat de runtime-eigenaar het gedeployde profiel en bestaande claims verenigen; migreer geen actieve eigenaar automatisch.",
+        }
+    if missing_local_claim:
+        return {
+            "code": "HOLD_ACTIVE_OWNER_UNVERIFIED",
+            "label": "Actieve wachtrij zonder lokaal leasebewijs",
+            "next_step": "Vraag de huidige worker-/Notion-eigenaar om de live claim te bevestigen; start geen tweede schrijver.",
+        }
+    if not source_complete or not cross_lane_complete:
+        return {
+            "code": "HOLD_SOURCE_RECONCILIATION",
+            "label": "Bron- of scopecertificaat ontbreekt",
+            "next_step": "Laat de huidige runtime-eigenaar ontbrekende claims, scopes en dekking vaststellen.",
+        }
+    if collision_count:
+        return {
+            "code": "HOLD_ACTIVE_SCOPE_CONFLICT",
+            "label": "Actieve of gereserveerde schrijfscopes overlappen",
+            "next_step": "Laat de betrokken bestaande worker- en reserveringseigenaren het bestandsconflict oplossen.",
+        }
+    if state == "blocked" and any(
+        record.get("reason") == "queued_worker_slot_scope_conflict"
+        for record in blocked
+    ):
+        return {
+            "code": "HOLD_ASSIGNED_WORKER_SCOPE_CONFLICT",
+            "label": "Gereserveerd workerslot overlapt met nieuw schrijfbereik",
+            "next_step": "Laat de bestaande toegewezen worker eigenaar blijven en vraag bron-/bestandscope-afstemming; wijs geen tweede schrijver toe.",
+        }
+    if state == "blocked" and deferred_assigned and all(
+        record.get("reason") == "queued_worker_slot_reserved"
+        for record in blocked
+    ):
+        return {
+            "code": "HOLD_QUEUE_WORKER_SLOT_RESERVED",
+            "label": "Wachtwerk is al aan een workerslot gekoppeld",
+            "next_step": "Controleer de bestaande slot-/queue-eigenaar; neem de taak niet over en maak het workerslot niet automatisch vrij.",
+        }
+    if blocked:
+        return {
+            "code": "HOLD_EXISTING_CLAIM_OR_SCOPE",
+            "label": "Conflict of seriële schrijfgrens",
+            "next_step": "Vergelijk actieve leases en bestandsbereiken met de huidige eigenaren.",
+        }
+    if state == "blocked" and deferred_ineligible:
+        return {
+            "code": "HOLD_QUEUE_NOT_ELIGIBLE",
+            "label": "Wachtwerk zonder expliciete lokale eligible-vrijgave",
+            "next_step": "Laat de bestaande queue-/Notion-eigenaar verifiëren waarom eligible niet 1 is; activeer of herclaim niets automatisch.",
+        }
+    if state == "blocked" and deferred:
+        return {
+            "code": "HOLD_QA_PRODUCT_POLICY",
+            "label": "Alleen uitgesloten QA-werk over",
+            "next_step": "Laat de wachtrijeigenaar QA apart beheren; kies echt productwerk.",
+        }
+    if state == "queued" and host_admission == "PRESSURE_HOLD":
+        return {
+            "code": "HOLD_HOST_PRESSURE",
+            "label": "Nieuwe worker uitgesteld door gemeten hostdruk",
+            "next_step": (
+                "Behoud lopende workers; laat de bevoegde host-/runner-eigenaar "
+                "RAM, swap, PSI en schijfruimte beoordelen voordat een nieuwe "
+                "schrijftaak start." + source_note
+            ),
+        }
+    if state == "queued" and host_admission == "HOST_SOURCE_UNVERIFIED":
+        return {
+            "code": "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED",
+            "label": "Hostdrukmeting ontbreekt of is niet volledig betrouwbaar",
+            "next_step": (
+                "Laat de hosteigenaar betrouwbare host-/cgroup-bronnen bevestigen; "
+                "start geen extra worker op basis van ontbrekende telemetrie."
+                + source_note
+            ),
+        }
+    if state == "queued":
+        return {
+            "code": "CANDIDATE_EXTERNAL_GATES",
+            "label": "Lokale kandidaat, niet geautoriseerd",
+            "next_step": "Controleer GitHub-PR, Notion-claim, eigenaar en resourcegates vóór start.",
+        }
+    return {
+        "code": "NO_LOCAL_CANDIDATE",
+        "label": "Geen lokale kandidaat waargenomen",
+        "next_step": "Controleer Notion en GitHub op onbeheerde productissues; claim niets automatisch.",
+    }
+
+
+def observe_local_contract(path):
+    """Bounded read-only local *file* evidence; never claims loaded runtime state."""
+    packet = {
+        "status": "NOT_OBSERVED",
+        "profile": "UNKNOWN",
+        "worker_cap": None,
+        "required_worker_cap": 5,
+        "profile_deviation_reason": "LOCAL_CONTRACT_NOT_OBSERVED",
+        "matches_proposed_profile": "NOT_INFERABLE",
+        "loaded_runtime_profile": "NOT_VERIFIED",
+    }
+    fd = None
+    try:
+        fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 131072:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        raw = os.read(fd, 131073)
+        if len(raw) > 131072:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        document = json.loads(raw.decode("utf-8"))
+        projects = document.get("projects") if isinstance(document, dict) else None
+        config = projects.get("zsentinel") if isinstance(projects, dict) else None
+        if not isinstance(config, dict):
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        profile = config.get("lane_profile")
+        cap = config.get("ai_worker_cap")
+        if not isinstance(profile, str) or not 0 < len(profile) < 64:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        if profile not in ("portfolio-recovery", "platform", "product"):
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        packet["profile"] = profile
+        # The correct lane name with a worker cap of one is not a
+        # five-slot contract. Preserve the distinction in every view.
+        if type(cap) is not int or not 0 <= cap <= 8:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            packet["profile_deviation_reason"] = "INVALID_WORKER_CAP"
+            return packet
+        packet["worker_cap"] = cap
+        packet["profile_deviation_reason"] = (
+            "MATCH_LOCAL_CONTRACT" if profile == "portfolio-recovery" and cap == 5
+            else "LANE_PROFILE_MISMATCH" if profile != "portfolio-recovery"
+            else "FIVE_WORKER_CAP_MISMATCH"
+        )
+        packet["matches_proposed_profile"] = (
+            "MATCH_LOCAL_FILE"
+            if packet["profile_deviation_reason"] == "MATCH_LOCAL_CONTRACT"
+            else "MISMATCH_LOCAL_FILE"
+        )
+        packet["status"] = "OBSERVED_LOCAL_FILE"
+    except (OSError, ValueError, UnicodeError, TypeError):
+        packet["status"] = "NOT_OBSERVED"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return packet
+
+
+def collect(database, maximum, include_runner_processes=False, contracts_file=None, include_host_pressure=True):
+    """Capture one bounded, read-only SQLite snapshot without owner identities."""
+    path = Path(database).absolute()
+    # Reject a symlink at the supplied database path instead of silently
+    # following it to a different queue timeline or source file.
+    try:
+        source_before = path.lstat()
+    except OSError as exc:
+        raise ValueError("SQLite source unavailable") from exc
+    if stat.S_ISLNK(source_before.st_mode) or not stat.S_ISREG(source_before.st_mode):
+        raise ValueError("Regular non-symlink portfolio SQLite source required")
+    contract_path = Path(contracts_file).absolute() if contracts_file else (
+        path.parent / "project-contracts.json"
+    )
+    local_contract = observe_local_contract(contract_path)
+    # Path equality alone would trust a restored/replaced SQLite DB as the
+    # same timeline. Bind owner receipts to the actual local file identity.
+    uri = path.as_uri() + "?mode=ro"
+    db = sqlite3.connect(uri, uri=True, timeout=2)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("PRAGMA busy_timeout=2000")
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN")
+        queue_rows = db.execute(
+            """SELECT queue_id, project_id,
+                      substr(title, 1, 512) AS title,
+                      length(title) AS title_size,
+                      substr(completion_criteria, 1, 3072) AS completion_criteria,
+                      length(completion_criteria) AS criteria_size,
+                      priority, status, eligible, worker_slot, created_at, claimed_at, claim_expires,
+                      substr(metadata_json, 1, 8192) AS metadata_json,
+                      length(metadata_json) AS metadata_size
+                 FROM portfolio_queue WHERE project_id=?
+                   AND lower(status) IN ('queued','claimed','running','verifying')
+                 ORDER BY created_at, queue_id LIMIT ?""",
+            ("zsentinel", maximum + 1),
+        ).fetchall()
+        claim_rows = db.execute(
+            """SELECT project_id, lease_until,
+                      substr(metadata_json, 1, 8192) AS metadata_json,
+                      length(metadata_json) AS metadata_size
+                 FROM task_claims WHERE project_id=? LIMIT ?""",
+            ("zsentinel", maximum + 1),
+        ).fetchall()
+        priority_rows = db.execute(
+            """SELECT project_id, UPPER(priority) AS priority,
+                      LOWER(status) AS status, COUNT(*) AS amount,
+                      SUM(CASE WHEN LOWER(status)='queued' AND eligible=1
+                               THEN 1 ELSE 0 END) AS queue_eligible
+                 FROM portfolio_queue
+                WHERE UPPER(priority) IN ('P0','P1')
+                  AND LOWER(status) IN ('queued','claimed','running','verifying')
+                GROUP BY project_id, UPPER(priority), LOWER(status)
+                ORDER BY priority, project_id, status LIMIT ?""",
+            (PORTFOLIO_GROUP_LIMIT + 1,),
+        ).fetchall()
+        db.execute("ROLLBACK")
+    finally:
+        db.close()
+
+    queue_partial = len(queue_rows) > maximum
+    claims_partial = len(claim_rows) > maximum
+    portfolio_partial = len(priority_rows) > PORTFOLIO_GROUP_LIMIT
+    unknown_project_groups = 0
+    portfolio_counts = {}
+    for row in priority_rows[:PORTFOLIO_GROUP_LIMIT]:
+        project_id = row["project_id"]
+        # zSentinel is this desk's role queue, shown by the four lane cards,
+        # not an unknown fourteenth product or missing portfolio source.
+        if project_id == "zsentinel":
+            continue
+        if project_id not in PORTFOLIO_PROJECTS:
+            unknown_project_groups += 1
+            continue
+        values = portfolio_counts.setdefault(project_id, {
+            "project": PORTFOLIO_PROJECTS[project_id],
+            "queued_p0": 0, "queued_p1": 0, "in_flight_p0": 0,
+            "in_flight_p1": 0, "eligible_queued_p0": 0, "eligible_queued_p1": 0,
+        })
+        key = ("queued_" if row["status"] == "queued" else "in_flight_") + row["priority"].lower()
+        values[key] += int(row["amount"])
+        if row["status"] == "queued":
+            values["eligible_queued_" + row["priority"].lower()] += int(
+                row["queue_eligible"] or 0
+            )
+    portfolio = sorted(
+        (value for value in portfolio_counts.values() if any(
+            value[key] for key in ("queued_p0", "queued_p1", "in_flight_p0", "in_flight_p1")
+        )),
+        key=lambda v: (-v["queued_p0"], -v["queued_p1"], v["project"]),
+    )
+    queue = [dict(row) for row in queue_rows[:maximum]]
+    truncated_queue_fields = sum(
+        (item["title_size"] or 0) > MAX_TITLE
+        or (item["criteria_size"] or 0) > MAX_CRITERIA
+        or (item["metadata_size"] or 0) > MAX_METADATA
+        for item in queue
+    )
+    # Oversize metadata cannot be trusted for safe conflict admission.
+    # We still expose bounded observations, but never infer free ownership.
+    now = datetime.now(timezone.utc)
+    claims = []
+    expired = 0
+    ambiguous = 0
+    expired_queue_claims = 0
+    unknown_queue_claim_expiry = 0
+    inconsistent_queue_claim_windows = 0
+    runtime_shadowed_active = 0
+    missing_active_declarations = 0
+    invalid_active_declarations = 0
+    for item in queue:
+        if str(item.get("status", "")).lower() not in ACTIVE:
+            continue
+        declaration = recovery_scope_diagnostic(item)
+        if declaration == "missing_declaration":
+            missing_active_declarations += 1
+        elif declaration == "invalid_or_empty_declaration":
+            invalid_active_declarations += 1
+        # The runtime currently filters eligible=1 for all lane inputs.
+        if item.get("eligible") != 1:
+            runtime_shadowed_active += 1
+        expiry = _utc(item.get("claim_expires"))
+        claimed = _utc(item.get("claimed_at"))
+        # A future expiry cannot certify an invalid start timestamp.
+        # Preserve the present owner; only flag the source discrepancy.
+        if expiry is None:
+            unknown_queue_claim_expiry += 1
+        elif claimed is None or claimed > now or expiry <= claimed:
+            inconsistent_queue_claim_windows += 1
+        elif expiry <= now:
+            expired_queue_claims += 1
+    for row in claim_rows[:maximum]:
+        if (row["metadata_size"] or 0) > MAX_METADATA:
+            ambiguous += 1
+            continue
+        until = _utc(row["lease_until"])
+        if until is None:
+            ambiguous += 1
+            continue
+        if until <= now:
+            expired += 1
+            continue
+        raw = row["metadata_json"]
+        try:
+            metadata = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            ambiguous += 1
+            continue
+        if not isinstance(metadata, dict):
+            ambiguous += 1
+            continue
+        # Internal scope only; no owner_id/claim_key/worker_id ever loaded.
+        claims.append({"project_id": "zsentinel", "metadata": metadata})
+        if not isinstance(metadata.get("conflict_scope"), dict):
+            ambiguous += 1
+
+    project = {"id": "zsentinel", "lane_profile": "portfolio-recovery"}
+    lanes = generate_execution_lanes(project, queue, claims)
+    unknown_active_scopes = max(
+        (lane.get("unknown_active_scope_count", 0) for lane in lanes), default=0
+    )
+    unknown_claim_scopes = max(
+        (lane.get("unknown_claim_scope_count", 0) for lane in lanes), default=0
+    )
+    unknown_assigned_scopes = max(
+        (lane.get("unknown_assigned_scope_count", 0) for lane in lanes), default=0
+    )
+    untrusted_assigned_profiles = max(
+        (lane.get("untrusted_assigned_profile_count", 0) for lane in lanes), default=0
+    )
+    untrusted_active_leases = max(
+        (lane.get("untrusted_active_lease_count", 0) for lane in lanes), default=0
+    )
+    active_profile_mismatch = max(
+        (lane.get("active_profile_mismatch_count", 0) for lane in lanes),
+        default=0,
+    )
+    local_config_mismatch = (
+        local_contract["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE"
+    )
+    local_config_unverified = local_contract["status"] != "OBSERVED_LOCAL_FILE"
+    # Optional host observation influences *advisory* new-work HOLD only.
+    # It never interrupts existing owners and cannot grant an extra slot.
+    host_pressure = observe_host_pressure() if include_host_pressure else None
+    if host_pressure is None:
+        # Missing telemetry is a HOLD, never an implicit capacity pass.
+        host_admission = "HOST_SOURCE_UNVERIFIED"
+    elif host_pressure.get("pressure_hint") in (
+        "HIGH_LOCAL_PRESSURE", "ELEVATED_LOCAL_PRESSURE"
+    ):
+        host_admission = "PRESSURE_HOLD"
+    elif host_pressure.get("status") != "HOST_SNAPSHOT_OBSERVED":
+        host_admission = "HOST_SOURCE_UNVERIFIED"
+    else:
+        host_admission = "NO_ADDITIONAL_HOLD"
+    # Diagnostic only. The dispatch path itself remains governed by the
+    # existing lane generator and actual external claim/release gates.
+    # Existing queued tasks assigned to a worker slot already reserve file
+    # scopes. Compare them with live active tasks as well; otherwise two
+    # separately reserved lanes can collide without any operator warning.
+    protected_items = [
+        classify_backlog_item(project, item)
+        for item in queue
+        if (str(item.get("status", "")).lower() in ACTIVE
+            or (str(item.get("status", "")).lower() == "queued"
+                and item.get("worker_slot") is not None))
+    ]
+    collision_counts = {lane_id: 0 for lane_id in LANE_NAMES}
+    cross_lane_coverage = (
+        len(protected_items) <= 64 and not queue_partial
+        and not truncated_queue_fields
+        and unknown_active_scopes == 0 and unknown_claim_scopes == 0
+        and unknown_assigned_scopes == 0 and untrusted_assigned_profiles == 0
+    )
+    if cross_lane_coverage:
+        for index, left in enumerate(protected_items):
+            for right in protected_items[index + 1:]:
+                if left["lane_id"] == right["lane_id"]:
+                    continue
+                overlap = scopes_overlap(left["scope"], right["scope"])
+                if overlap["capabilities"] or overlap["files"]:
+                    collision_counts[left["lane_id"]] += 1
+                    collision_counts[right["lane_id"]] += 1
+    observed = {status: sum(
+        str(row.get("status", "")).lower() == status for row in queue
+    ) for status in sorted(VALID)}
+    # Build source trust once, then apply it consistently in every lane card.
+    source_complete = not (
+        queue_partial or claims_partial or ambiguous or truncated_queue_fields
+        or unknown_active_scopes or unknown_claim_scopes or unknown_assigned_scopes
+        or untrusted_assigned_profiles or runtime_shadowed_active
+        or portfolio_partial or unknown_project_groups
+        or inconsistent_queue_claim_windows or untrusted_active_leases
+        or active_profile_mismatch or local_config_mismatch
+        or local_config_unverified
+    )
+    missing_local_claim = (
+        sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
+    )
+    visible = []
+    for lane in lanes:
+        conflicts = lane.get("blocked_by") or []
+        admission = operator_admission(
+            lane, source_complete, cross_lane_coverage,
+            collision_counts[lane["lane_id"]], expired, missing_local_claim,
+            active_profile_mismatch, local_config_mismatch,
+            local_config_unverified, host_admission, host_pressure,
+        )
+        visible.append({
+            "id": lane["lane_id"],
+            "admission": admission,
+            "name": LANE_NAMES[lane["lane_id"]],
+            "status": lane["status"],
+            "routing_origin": lane.get("routing_origin", "UNKNOWN"),
+            "candidate_observed": lane.get("queue_id") is not None,
+            "active_backlog_count": lane.get("active_backlog_count", 0),
+            "deferred_qa_packages": lane.get("deferred_qa_packages", 0),
+            "deferred_ineligible_packages": lane.get("deferred_ineligible_packages", 0),
+            "deferred_assigned_packages": lane.get("deferred_assigned_packages", 0),
+            "assigned_slot_scope_conflicts": lane.get("assigned_slot_scope_conflict_count", 0),
+            "untrusted_assigned_profile_count": lane.get("untrusted_assigned_profile_count", 0),
+            "parallel_active_warning": lane.get("parallel_active_warning", False),
+            "serialized_unscoped_queue_admitted": lane.get(
+                "serialized_unscoped_queue_admitted", False
+            ),
+            "new_write_admission_held": (
+                admission["code"] != "CANDIDATE_EXTERNAL_GATES"
+            ),
+            "active_cross_lane_scope_conflicts": (
+                collision_counts[lane["lane_id"]] if cross_lane_coverage else None
+            ),
+            "conflicting_claims": sum(
+                item.get("kind") == "claim" for item in conflicts
+            ),
+            "conflicting_queue_entries": sum(
+                item.get("kind") == "queue"
+                and item.get("reason") != "queued_worker_slot_reserved"
+                for item in conflicts
+            ),
+            # Scope, queue IDs and worker/claim identity are intentionally absent.
+        })
+    protected_lanes = sum(
+        lane["admission"]["code"] == "ACTIVE_OWNER_PROTECTED" for lane in visible
+    )
+    active_task_reservations = sum(
+        lane["active_backlog_count"] for lane in visible
+    )
+    admission_counts = {
+        "active_owner_protected": protected_lanes,
+        "active_task_reservations": active_task_reservations,
+        "parallel_active_reservations": max(0, active_task_reservations - protected_lanes),
+        "held_for_owner_or_source": sum(lane["admission"]["code"].startswith("HOLD_") for lane in visible),
+        "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
+        "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
+        "held_by_host_pressure": sum(lane["admission"]["code"] in ("HOLD_HOST_PRESSURE", "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED") for lane in visible),
+        # Preserve the old field name for consumers of earlier private snapshots.
+        "held_by_optional_host_pressure": sum(lane["admission"]["code"] in ("HOLD_HOST_PRESSURE", "HOLD_HOST_PRESSURE_SOURCE_UNVERIFIED") for lane in visible),
+    }
+    owner_shortlist, shortlist_partial = owner_review_suggestions(portfolio)
+    # Truncated source groups can hide whole projects despite few observed cards.
+    shortlist_partial = shortlist_partial or portfolio_partial or bool(unknown_project_groups)
+    packet = {
+        "schema": "zsentinel.four-lane-desk.v1",
+        "observed_utc": now.replace(microsecond=0).isoformat(),
+        "profile": "portfolio-recovery",
+        "observed_queue": observed,
+        "portfolio_urgent_local": portfolio,
+        "owner_review_shortlist": owner_shortlist,
+        "owner_review_shortlist_partial": shortlist_partial,
+        "portfolio_priority_partial": portfolio_partial,
+        "portfolio_unknown_project_groups": unknown_project_groups,
+        "queue_partial": queue_partial,
+        "truncated_queue_fields_observed": truncated_queue_fields,
+        "active_write_scopes_not_declared": unknown_active_scopes,
+        "active_scope_declarations_missing": missing_active_declarations,
+        "active_scope_declarations_invalid_or_empty": invalid_active_declarations,
+        "active_legacy_profile_claims_observed": active_profile_mismatch,
+        "deployed_four_lane_profile": "NOT_VERIFIED",
+        "local_contract_evidence": local_contract,
+        "local_contract_reconciliation_required": local_config_mismatch or local_config_unverified,
+        "host_admission": host_admission,
+        "active_claim_scopes_not_declared": unknown_claim_scopes,
+        "queued_assigned_scopes_not_declared": unknown_assigned_scopes,
+        "queued_assigned_lanes_untrusted": untrusted_assigned_profiles,
+        "untrusted_active_leases_observed": untrusted_active_leases,
+        "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
+        "active_local_leases_observed": len(claims),
+        "expired_local_leases_observed": expired,
+        "ambiguous_local_claims": ambiguous,
+        "claims_partial": claims_partial,
+        "expired_in_flight_queue_claims_observed": expired_queue_claims,
+        "unknown_in_flight_queue_expiry_observed": unknown_queue_claim_expiry,
+        "inconsistent_in_flight_queue_claim_windows_observed": inconsistent_queue_claim_windows,
+        "claimed_without_local_lease_observation": (
+            missing_local_claim
+        ),
+        "active_cross_lane_coverage_complete": cross_lane_coverage,
+        "owner_free": "NOT_INFERABLE",
+        "external_notion_claims": "NOT_OBSERVED",
+        "merge_authorized": False,
+        "dispatch_authorized": False,
+        "release_authorized": False,
+        "lanes": visible,
+        "admission_summary": admission_counts,
+        "source_complete": source_complete,
+        "ownership_reconciliation_required": bool(
+            expired or expired_queue_claims or unknown_queue_claim_expiry
+            or inconsistent_queue_claim_windows or untrusted_active_leases
+            or ambiguous or queue_partial or claims_partial
+            or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
+            or unknown_assigned_scopes or untrusted_assigned_profiles
+            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
+            or not cross_lane_coverage
+            or active_profile_mismatch or local_config_mismatch
+            or local_config_unverified or any(collision_counts.values())
+            or missing_local_claim
+        ),
+    }
+    source_after = path.lstat()
+    if (stat.S_ISLNK(source_after.st_mode)
+            or (source_before.st_dev, source_before.st_ino) !=
+               (source_after.st_dev, source_after.st_ino)
+            or not stat.S_ISREG(source_after.st_mode)):
+        raise ValueError("Portfolio SQLite source changed during observation")
+    packet["portfolio_source_key"] = hashlib.sha256(
+        (os.uname().nodename + "\\x00" + str(path.resolve())
+         + "\\x00" + str(source_after.st_dev) + ":" + str(source_after.st_ino))
+        .encode("utf-8")
+    ).hexdigest()
+    packet["runner_processes"] = (
+        observe_local_runners() if include_runner_processes else None
+    )
+    packet["host_pressure"] = host_pressure
+    packet["recovery_actions"] = suggested_actions(packet)
+    packet["project_owner_decisions"] = {
+        project_id: project_review_status(packet, project_id)
+        for project_id in sorted(PORTFOLIO_PROJECTS)
+    }
+    return packet
+
+
+
+def portfolio_changes_lines(data, markdown=False):
+    """Human-readable endpoint deltas; no suggestion of automatic recovery."""
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        return []
+    lines = [
+        ("## Verandering sinds privé vorig bronmoment" if markdown else
+         "Verandering sinds privé vorig bronmoment (twee eindpunten):"),
+        "Vorige bron UTC: " + history["previous_observed_utc"],
+        "Huidige bron UTC: " + history["current_observed_utc"],
+        "Bronafstand (uur): " + str(history["elapsed_hours"]),
+        "Vergelijkbaarheid: " + history["status"],
+        history["note"],
+    ]
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        lines.append("Geen betekenisvolle projectdelta's gepubliceerd.")
+        return lines
+    if not history["changed_projects"]:
+        lines.append(
+            "Geen verandering in lokale P0/P1-counts op de twee bronmomenten; "
+            "geen bewijs dat daartussen niets gebeurd is."
+        )
+    for item in history["changed_projects"]:
+        delta = item["delta"]
+        lines.append(
+            item["project"] + " · " + item["kind"]
+            + " · P0 wacht " + f"{delta['queued_p0']:+d}"
+            + ", P1 wacht " + f"{delta['queued_p1']:+d}"
+            + ", P0 actief " + f"{delta['in_flight_p0']:+d}"
+            + ", P1 actief " + f"{delta['in_flight_p1']:+d}"
+            + " (bronmomentverschil, geen oorzaakbewijs)."
+        )
+    return lines
+
+
+def portfolio_changes_html(data):
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        return ""
+    rows = []
+    if history["status"] == "COMPARABLE_ENDPOINTS":
+        for item in history["changed_projects"]:
+            delta = item["delta"]
+            links = html_inbox_links(item["project"])
+            triage = data["project_owner_decisions"][item["project_id"]]
+            rows.append(
+                "<tr><th scope='row'><a href='#project-" +
+                html.escape(item["project_id"], quote=True) + "'>" +
+                html.escape(item["project"]) + "</a>" +
+                links + "</th><td>" + html.escape(item["kind"]) +
+                "<br><small>" + html.escape(triage["code"]) +
+                "</small></td><td>" + f"{delta['queued_p0']:+d}" +
+                "</td><td>" + f"{delta['queued_p1']:+d}" +
+                "</td><td>" + f"{delta['in_flight_p0']:+d}" +
+                "</td><td>" + f"{delta['in_flight_p1']:+d}" +
+                "</td></tr>"
+            )
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        body = ("<p class='warn'>Bronnen niet vergelijkbaar; "
+                "er worden geen projectverschillen afgeleid.</p>")
+    elif not rows:
+        body = ("<p>Geen countverschillen tussen deze bronmomenten, "
+                "niet bewezen dat er tussentijds geen werk was.</p>")
+    else:
+        body = (
+            "<div class='scroll'><table><thead><tr>"
+            "<th>Project</th><th>Signaal</th><th>Δ P0 wacht</th>"
+            "<th>Δ P1 wacht</th><th>Δ P0 actief</th><th>Δ P1 actief</th>"
+            "</tr></thead><tbody>" + "".join(rows) +
+            "</tbody></table></div>"
+        )
+    return (
+        "<section class='notice' id='owner-change-panel'>"
+        "<h2>Portfolioverschil sinds privé bronmoment</h2>"
+        "<p>Projectnamen openen het brongebonden eigenaarsoverzicht; "
+        "de triagecode is alleen lokaal advies. Broncount-delta's "
+        "bewijzen geen acties of eigenaars.</p>"
+        "<p>Vorige UTC " + html.escape(history["previous_observed_utc"]) +
+        " · huidige UTC " + html.escape(history["current_observed_utc"]) +
+        " · status " + html.escape(history["status"]) + "</p>"
+        "<p>" + html.escape(history["note"]) + "</p>" + body +
+        "<p>Lokale P0/P1-delta's bewijzen geen workeruitval, oplossing, "
+        "vrij eigenaarschap of releasebevoegdheid.</p></section>"
+    )
+
+
+
+def text_view(data):
+    out = [
+        "zSentinel · herstelbalie (alleen lezen)",
+        "Bron: lokale, begrensde SQLite-snapshot; eigenaarvrijheid NIET afleidbaar.",
+    ]
+    summary = data["admission_summary"]
+    out.append(
+        "Beslisoverzicht: " + str(summary["active_task_reservations"])
+        + " actieve taakreserveringen in " + str(summary["active_owner_protected"])
+        + " beschermde banen (" + str(summary["parallel_active_reservations"])
+        + " extra in dezelfde baan); " + str(summary["held_for_owner_or_source"])
+        + " banen HOLD; " + str(summary["local_candidate_external_gates"])
+        + " lokale kandidaten met externe gates; "
+        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak; "
+        + str(summary["held_by_host_pressure"])
+        + " kandidaatbanen HOLD wegens gemeten hostdruk of ontbrekende telemetrie."
+    )
+    for lane in data["lanes"]:
+        extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
+        if lane["deferred_qa_packages"]:
+            extra += f" | {lane['deferred_qa_packages']} QA-taken uitgesloten"
+        if lane["deferred_ineligible_packages"]:
+            extra += f" | {lane['deferred_ineligible_packages']} niet-eligible taken uitgesloten"
+        if lane["deferred_assigned_packages"]:
+            extra += f" | {lane['deferred_assigned_packages']} al aan worker gekoppelde taken beschermd"
+        if lane["assigned_slot_scope_conflicts"]:
+            extra += f" | {lane['assigned_slot_scope_conflicts']} overlap(pen) met gereserveerde slots"
+        if lane["serialized_unscoped_queue_admitted"]:
+            extra += " | MAXIMAAL EEN SCHRIJVER ZONDER SCOPE"
+        if lane["new_write_admission_held"]:
+            extra += " | NIEUWE SCHRIJFACTIE NIET VRIJGEGEVEN"
+        if lane["active_cross_lane_scope_conflicts"]:
+            extra += " | CONFLICT MET ANDERE ACTIEVE OF GERESERVEERDE BAAN"
+        elif lane["active_cross_lane_scope_conflicts"] is None:
+            extra += " | ACTIEVE/GERESERVEERDE SCOPEDEKKING ONVOLLEDIG"
+        out.append(
+            f"{lane['name']}: {lane['status']}; actieve taken "
+            f"{lane['active_backlog_count']}; conflicten "
+            f"{lane['conflicting_claims'] + lane['conflicting_queue_entries']}{extra}"
+        )
+        out.append("  Route: " + LANE_ROUTING_LABELS.get(
+            lane["routing_origin"], LANE_ROUTING_LABELS["UNKNOWN"]))
+        out.append("  Beslissing: " + lane["admission"]["code"] +
+                   " · " + lane["admission"]["label"])
+        out.append("  Volgende stap: " + lane["admission"]["next_step"])
+    out.append("Herstelacties (probleem / veilige vervolgactie / status):")
+    for item in data["recovery_actions"]:
+        out.append("  " + item["problem"])
+        out.append("  Actie: " + item["next_step"])
+        out.append("  Status: " + item["status"])
+    if data.get("runner_processes") is not None:
+        out.append(text_report(data["runner_processes"]))
+    if data.get("host_pressure") is not None:
+        out.append(pressure_sentence(data["host_pressure"]))
+    out.append("Prioritaire eigenaaroverdracht (NIET vrijgegeven, lokale bron):")
+    for item in data["owner_review_shortlist"]:
+        out.append(
+            f"  {item['priority']} {item['project']} [{item['owner_review_kind']}]: "
+            f"P0 wacht {item['queued_p0']} (eligible-hint {item['eligible_hint_p0']}), "
+            f"P1 wacht {item['queued_p1']} (eligible-hint {item['eligible_hint_p1']}), "
+            f"P0 {item['active_p0']} / P1 {item['active_p1']} actief; huidige eigenaar ONBEKEND."
+        )
+        out.append("  Vervolg: " + item["next_step"])
+    if data["owner_review_shortlist_partial"]:
+        out.append("  ONVOLLEDIG: shortlist of lokale projectbron; controleer de bron.")
+    out.extend(portfolio_changes_lines(data))
+    out.append("Open lokale P0/P1-queue per echt project (adviserend):")
+    for item in data["portfolio_urgent_local"]:
+        out.append(
+            f"  {item['project']}: P0 wacht {item['queued_p0']} "
+            f"(eligible {item['eligible_queued_p0']}); P1 wacht {item['queued_p1']} "
+            f"(eligible {item['eligible_queued_p1']}); "
+            f"P0 in behandeling {item['in_flight_p0']}; "
+            f"P1 in behandeling {item['in_flight_p1']}"
+        )
+    if data["portfolio_priority_partial"] or data["portfolio_unknown_project_groups"]:
+        out.append("  LET OP: portfolio-dekking gedeeltelijk of onbekende project-ID.")
+    out.append(
+        "Lokale claims: " + str(data["active_local_leases_observed"])
+        + "; onduidelijk " + str(data["ambiguous_local_claims"])
+    )
+    if data["claimed_without_local_lease_observation"]:
+        out.append("LET OP: claimed wachtrij-items zonder waargenomen lokale lease.")
+    if data["expired_local_leases_observed"]:
+        out.append("HOLD: " + str(data["expired_local_leases_observed"])
+                   + " verlopen lokale leases waargenomen; eigenaarstatus handmatig controleren.")
+    if data["expired_in_flight_queue_claims_observed"]:
+        out.append("VERLOPEN queue-claimtermijnen: "
+                   + str(data["expired_in_flight_queue_claims_observed"])
+                   + " (niet automatisch herclaimen).")
+    if data["unknown_in_flight_queue_expiry_observed"]:
+        out.append("Onbekende queue-claimtermijnen: "
+                   + str(data["unknown_in_flight_queue_expiry_observed"])
+                   + " (controleer eigenaar).")
+    if data["untrusted_active_leases_observed"]:
+        out.append("HOLD: " + str(data["untrusted_active_leases_observed"])
+                   + " actieve taakleases zijn op dit bronmoment onbetrouwbaar; "
+                   "nieuwe schrijflanes niet vrijgegeven.")
+    if data["inconsistent_in_flight_queue_claim_windows_observed"]:
+        out.append("HOLD: " +
+                   str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+                   + " actieve queue-claimvensters hebben onmogelijke of ontbrekende start; "
+                   "behoud huidige eigenaar.")
+    config = data["local_contract_evidence"]
+    out.append(
+        "Lokaal contract: " + config["status"] + "; profiel "
+        + config["profile"] + "; worker-cap " + str(config["worker_cap"])
+        + "/4 vereist; " + config["profile_deviation_reason"]
+        + "; geladen service NIET geverifieerd."
+    )
+    if data["queued_assigned_lanes_untrusted"]:
+        out.append("HOLD: " + str(data["queued_assigned_lanes_untrusted"])
+                   + " reeds toegewezen wachtrijtaken missen een betrouwbare "
+                     "profiel-/laneherkomst; geen nieuwe schrijver.")
+    if data["queued_assigned_scopes_not_declared"]:
+        out.append("HOLD: " + str(data["queued_assigned_scopes_not_declared"])
+                   + " toegewezen queued taken zonder volledige schrijfscope; "
+                     "behoud huidige slottoewijzing.")
+    if data["active_legacy_profile_claims_observed"]:
+        out.append("MIGRATIE-HOLD: "
+                   + str(data["active_legacy_profile_claims_observed"])
+                   + " actieve taken vallen onder een ander of onbekend baanprofiel.")
+    if data["active_write_scopes_not_declared"]:
+        out.append(
+            "Schrijfscopes actief: " + str(data["active_scope_declarations_missing"])
+            + " ontbreken; " + str(data["active_scope_declarations_invalid_or_empty"])
+            + " ongeldig/leeg (geen bestandsvrije parallelle werkruimte bewezen)."
+        )
+        out.append("HOLD: " + str(data["active_write_scopes_not_declared"])
+                   + " actieve taken hebben geen expliciete schrijf-scope; "
+                   + "nieuwe parallelle toelating geblokkeerd.")
+    if data["active_claim_scopes_not_declared"]:
+        out.append("HOLD: " + str(data["active_claim_scopes_not_declared"])
+                   + " lokale claims hebben geen expliciete schrijf-scope; "
+                   + "geen nieuwe parallelle toelating.")
+    if data["runtime_active_filtered_by_eligibility"]:
+        out.append(
+            "RUNTIME SOURCEGAP: " + str(data["runtime_active_filtered_by_eligibility"])
+            + " actieve taken met eligible!=1 worden mogelijk door server.py"
+            + " uit de plannerbron gefilterd."
+        )
+    if data["truncated_queue_fields_observed"]:
+        out.append("LET OP: " + str(data["truncated_queue_fields_observed"])
+                   + " te grote bronvelden; geen eigenaarvrijheid afleidbaar.")
+    if not data["source_complete"]:
+        out.append("LET OP: bron deels onvolledig; geen automatische herverdeling.")
+    out.append("Geen claim-, merge-, runner- of deployautorisatie.")
+    return "\n".join(out) + "\n"
+
+
+
+def project_review_status(data, project_id):
+    """Conservative local project decision; never implies owner freedom."""
+    if project_id not in PORTFOLIO_PROJECTS:
+        raise ValueError("Unknown canonical project")
+    name = PORTFOLIO_PROJECTS[project_id]
+    matches = [row for row in data["portfolio_urgent_local"]
+               if row["project"] == name]
+    if len(matches) > 1:
+        raise ValueError("Duplicate canonical project in local snapshot")
+    item = matches[0] if matches else None
+    incomplete = (data["portfolio_priority_partial"]
+                  or bool(data["portfolio_unknown_project_groups"])
+                  or not data["source_complete"])
+    if item is not None and (item["in_flight_p0"] or item["in_flight_p1"]):
+        code = "HOLD_ACTIVE_OWNER"
+        message = ("Actieve lokale taken aangetroffen; behoud bestaande "
+                   "eigenaars, bespreek wachtrijwerk met hen. "
+                   "Controleer daarnaast bronvolledigheid en externe claims.")
+    elif incomplete:
+        code = "HOLD_LOCAL_SOURCE_PARTIAL"
+        message = ("Lokale bron niet volledig; vraag eerst actuele "
+                   "Notion/GitHub- en eigenaarsbewijzen op.")
+    elif item is None:
+        code = "NO_URGENT_LOCAL_OBSERVATION"
+        message = ("Geen P0/P1-groep lokaal waargenomen; controleer "
+                   "bestaande GitHub-issues en lopende Notion-claims.")
+    elif item["queued_p0"] or item["queued_p1"]:
+        if item["eligible_queued_p0"] or item["eligible_queued_p1"]:
+            code = "OWNER_REVIEW_REQUIRED"
+            message = ("Lokale wachtrijkandidaat zichtbaar; controleer "
+                       "actuele Notion-claims, open product-PRs, verplichte "
+                       "CI/review en rechten voor enige nieuwe actie.")
+        else:
+            code = "HOLD_NO_LOCAL_ELIGIBLE_HINT"
+            message = ("P0/P1-wachtwerk aanwezig maar lokaal niet eligible; "
+                       "vraag de bestaande wachtrijeigenaar om de reden.")
+    else:
+        code = "NO_URGENT_LOCAL_OBSERVATION"
+        message = ("Alleen lopende of geen urgente taken gezien; "
+                   "controleer externe bronnen voor productwerk.")
+    return {"code": code, "next_step": message,
+            "local_only": True, "owner_authorized": False}
+
+
+def project_cards_html(data):
+    """All canonical projects as navigable offline HTML, no browser scripts."""
+    observed = {row["project"]: row for row in data["portfolio_urgent_local"]}
+    blocks = []
+    for project_id, name in sorted(PORTFOLIO_PROJECTS.items(),
+                                   key=lambda pair: pair[1].casefold()):
+        row = observed.get(name)
+        status = data["project_owner_decisions"][project_id]
+        if row:
+            numbers = (
+                "P0 wacht: " + str(row["queued_p0"]) +
+                " (eligible-hint " + str(row["eligible_queued_p0"]) + "); "
+                "P1 wacht: " + str(row["queued_p1"]) +
+                " (eligible-hint " + str(row["eligible_queued_p1"]) + "); "
+                "P0 actief: " + str(row["in_flight_p0"]) +
+                "; P1 actief: " + str(row["in_flight_p1"]) + "."
+            )
+        else:
+            numbers = ("Geen lokale P0/P1-bronrij gezien; "
+                       "dit is geen bewijs van ontbrekend werk.")
+        blocks.append(
+            "<details id='project-" + project_id + "'><summary>"
+            + html.escape(name) + " · " + html.escape(status["code"])
+            + "</summary><p>" + html.escape(numbers) + "</p><p>"
+            + html.escape(status["next_step"]) + "</p>"
+            + html_inbox_links(name) + "</details>"
+        )
+    return (
+        "<section class='notice' id='project-owner-dossiers'>"
+        "<h2>Projecten · eigenaarsoverleg</h2>"
+        "<p>Dertien echte portfolio-projecten uit één SQLite-bronmoment. "
+        "Open een project voor wachtrijcontext, handmatige vervolgstap "
+        "en de bestaande GitHub-inbox; ontbrekend is niet nul. "
+        "Geen eigenaar, claim of release is geautoriseerd.</p>"
+        + "".join(blocks) + "</section>"
+    )
+
+
+def html_view(data):
+    cards = []
+    for lane in data["lanes"]:
+        status = html.escape(str(lane["status"]))
+        warning = (
+            "<p class='warn'>Meerdere actieve taken; controleer eigenaars.</p>"
+            if lane["parallel_active_warning"] else ""
+        )
+        count = lane["conflicting_claims"] + lane["conflicting_queue_entries"]
+        if lane["deferred_qa_packages"]:
+            warning += ("<p class=\u0027warn\u0027>" + str(lane["deferred_qa_packages"])
+                        + " wachtende QA-/validatietaken uitgesloten van nieuwe toelating.</p>")
+        if lane["deferred_ineligible_packages"]:
+            warning += ("<p class='warn'>" + str(lane["deferred_ineligible_packages"])
+                        + " niet-eligible wachtrijtaken niet toegelaten als nieuwe worker.</p>")
+        if lane["deferred_assigned_packages"]:
+            warning += ("<p class='warn'>" + str(lane["deferred_assigned_packages"])
+                        + " reeds toegewezen workerslots beschermd tegen dubbele selectie.</p>")
+        if lane["assigned_slot_scope_conflicts"]:
+            warning += ("<p class='warn'>" + str(lane["assigned_slot_scope_conflicts"])
+                        + " bron-/bestandscopeconflicten met gereserveerde slots; geen tweede schrijver.</p>")
+        if lane["serialized_unscoped_queue_admitted"]:
+            warning += "<p class='warn'>Wachtende taak zonder schrijfscope: uitsluitend seriële kandidaat, geen claimautorisatie.</p>"
+        if lane["new_write_admission_held"]:
+            warning += "<p class='warn'>Nieuwe schrijfopdracht niet vrijgegeven.</p>"
+        if lane["active_cross_lane_scope_conflicts"]:
+            warning += "<p class='warn'>Actief of gereserveerd scopeconflict met andere herstelbaan.</p>"
+        elif lane["active_cross_lane_scope_conflicts"] is None:
+            warning += "<p class='warn'>Actieve/gereserveerde scopevergelijking onvolledig.</p>"
+        cards.append(
+            "<article><div class='eyebrow'>Herstelbaan</div><h2>"
+            + html.escape(lane["name"]) + "</h2><p class='state'>"
+            + status + "</p><p>Routeherkomst: "
+            + html.escape(LANE_ROUTING_LABELS.get(
+                lane["routing_origin"], LANE_ROUTING_LABELS["UNKNOWN"]))
+            + "</p><dl><div><dt>Actief waargenomen</dt><dd>"
+            + str(lane["active_backlog_count"])
+            + "</dd></div><div><dt>Scopeconflicten</dt><dd>"
+            + str(count) + "</dd></div></dl>" + warning
+            + "<p class='state' style='font-size:1rem'>"
+            + html.escape(lane["admission"]["label"]) + "</p>"
+            + "<p class='eyebrow'>" + html.escape(lane["admission"]["code"])
+            + "</p><p>" + html.escape(lane["admission"]["next_step"])
+            + "</p></article>"
+        )
+    warnings = []
+    config = data["local_contract_evidence"]
+    if config["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE":
+        warnings.append(
+            "Het lokale projectcontract heeft profiel " + config["profile"]
+            + " met worker-cap " + str(config["worker_cap"])
+            + " in plaats van portfolio-recovery én ai_worker_cap=5. "
+              "Dit is geen bewijs van het geladen serviceprofiel."
+        )
+    elif config["status"] != "OBSERVED_LOCAL_FILE":
+        warnings.append("Lokaal projectcontract niet betrouwbaar waargenomen; live profiel onbekend.")
+    if data["queued_assigned_lanes_untrusted"]:
+        warnings.append(
+            str(data["queued_assigned_lanes_untrusted"])
+            + " queued workerreserveringen zonder betrouwbaar profiel/lane: geen nieuwe schrijvers."
+        )
+    if data["queued_assigned_scopes_not_declared"]:
+        warnings.append(
+            str(data["queued_assigned_scopes_not_declared"])
+            + " queued workerreserveringen zonder valide bestandscope: eigenaar moet reconciliëren."
+        )
+    if data["expired_local_leases_observed"]:
+        warnings.append(
+            str(data["expired_local_leases_observed"])
+            + " verlopen lokale leases waargenomen; controleer de bestaande eigenaar voordat er nieuw werk start."
+        )
+    if data["claimed_without_local_lease_observation"]:
+        warnings.append(
+            "Claimed taken zonder zichtbare lokale lease: niet herclaimen."
+        )
+    if data["expired_in_flight_queue_claims_observed"]:
+        warnings.append(
+            str(data["expired_in_flight_queue_claims_observed"])
+            + " actieve wachtrijclaims hebben een verlopen termijn; alleen eigenaar kan herstellen."
+        )
+    if data["unknown_in_flight_queue_expiry_observed"]:
+        warnings.append(
+            str(data["unknown_in_flight_queue_expiry_observed"])
+            + " actieve wachtrijclaims hebben geen betrouwbaar vervalmoment."
+        )
+    if data["untrusted_active_leases_observed"]:
+        warnings.append(
+            str(data["untrusted_active_leases_observed"])
+            + " actieve queueleases zijn verlopen of onbetrouwbaar; "
+              "behoud huidige eigenaars en geef geen nieuwe schrijver vrij."
+        )
+    if data["inconsistent_in_flight_queue_claim_windows_observed"]:
+        warnings.append(
+            str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+            + " actieve queue-claimvensters hebben een ontbrekende/toekomstige start of "
+              "niet-vooruitlopende vervaltijd; geen herclaim zonder eigenaar."
+        )
+    if data["active_legacy_profile_claims_observed"]:
+        warnings.append(
+            str(data["active_legacy_profile_claims_observed"])
+            + " actieve claims hebben een legacy/onbekend profiel; eigenaars behouden hun claims."
+        )
+    if data["active_write_scopes_not_declared"]:
+        warnings.append(
+            "Actieve schrijfscopes: " + str(data["active_scope_declarations_missing"])
+            + " ontbrekende verklaringen; "
+            + str(data["active_scope_declarations_invalid_or_empty"])
+            + " ongeldig of zonder expliciet bestandenbereik."
+        )
+        warnings.append(
+            str(data["active_write_scopes_not_declared"])
+            + " actieve taken missen een declaratie van bestands-/capability-scope. "
+            "Nieuwe parallelle toelating blijft geblokkeerd tot de eigenaar dit oplost."
+        )
+    if data["active_claim_scopes_not_declared"]:
+        warnings.append(
+            str(data["active_claim_scopes_not_declared"])
+            + " actieve lokale claims missen een declaratie van schrijf-scope. "
+            "Geen tweede schrijver toelaten zonder bewijs van externe eigenaars."
+        )
+    if data["runtime_active_filtered_by_eligibility"]:
+        warnings.append(
+            str(data["runtime_active_filtered_by_eligibility"])
+            + " actieve taken zijn niet eligible en kunnen in de huidige "
+            "serverplanner ontbreken. Controleer de bron met de runtime-eigenaar."
+        )
+    if data["truncated_queue_fields_observed"]:
+        warnings.append(
+            "Sommige bronvelden overschrijden de grens voor veilig lokaal lezen."
+        )
+    if not data["source_complete"]:
+        warnings.append(
+            "Gedeeltelijke of ambigue lokale bron: geen automatische herverdeling."
+        )
+    if not data["active_cross_lane_coverage_complete"]:
+        warnings.append("Actieve en workerslot-gereserveerde cross-lane scopevergelijking is beperkt tot 64 taken.")
+    warnings.append(
+        "Queue-eligible betekent alleen een lokaal veld, niet dat de taak "
+        "claimbaar is: controleer de externe eigenaar en releasegates."
+    )
+    warnings.append(
+        "Externe Notion-claims en releasegates zijn niet waargenomen; "
+        "dit overzicht verleent geen schrijfrechten."
+    )
+    details = "".join("<li>" + html.escape(item) + "</li>" for item in warnings)
+    action_cards = "".join(
+        "<article><h3>" + html.escape(item["problem"]) + "</h3>"
+        + "<p>" + html.escape(item["next_step"]) + "</p>"
+        + "<p class='eyebrow'>" + html.escape(item["status"]) + "</p></article>"
+        for item in data["recovery_actions"]
+    )
+    host_section = ""
+    host = data.get("host_pressure")
+    if host is not None:
+        host_section = (
+            "<section class='notice'><h2>Hostdruk (adviserend)</h2><p>"
+            + html.escape(pressure_sentence(host))
+            + "</p>" + host_source_coverage_table(host)
+            + psi_html_table(host.get("psi"))
+            + "<p>Deze hostmeting bewijst geen vrije cgroup-, "
+            "worker-, Notion- of runnercapaciteit; nieuwe workers blijven "
+            "achter bestaande resource- en eigenaarspoorten.</p></section>"
+        )
+    runner_section = ""
+    proc = data.get("runner_processes")
+    if proc is not None:
+        families = "".join(
+            "<tr><th scope='row'>" + html.escape(name) + "</th>"
+            "<td>" + str(item["listeners"]) + "</td><td>"
+            + str(item["workers"]) + "</td><td>"
+            + html.escape(item["local_observation"]) + "</td><td>"
+            + html.escape(item.get("recommended_next_step") or next_step_for(item["local_observation"])) + "</td></tr>"
+            for name, item in sorted(proc["families"].items())
+            if item["listeners"] or item["workers"]
+        )
+        if not families:
+            families = "<tr><td colspan='5'>Geen herkenbare processen. Geen uitvalbewijs.</td></tr>"
+        incomplete = (
+            "<p class='warn'>Procesbron onvolledig: ontbrekende processen niet bewezen.</p>"
+            if not proc["source_complete"] else ""
+        )
+        runner_section = (
+            "<section class='notice'><h2>Lokale GitHub-runners</h2>"
+            "<p>Een listenerproces betekent niet dat GitHub een job toewijst, "
+            "dat runnerlabels kloppen of dat CI geslaagd is.</p>"
+            "<div class='scroll'><table><thead><tr>"
+            "<th>Runner</th><th>Listener</th><th>Worker</th><th>Waarneming</th><th>Veilige vervolgstap</th>"
+            "</tr></thead><tbody>" + families + "</tbody></table></div>"
+            + incomplete + "</section>"
+        )
+    owner_cards = "".join(
+        "<article><div class='eyebrow'>Lokale owner triage · geen claimvrijgave</div>"
+        "<h3>" + html.escape(item["priority"]) + " · "
+        + html.escape(item["project"]) + "</h3><p><strong>"
+        + html.escape({
+            "P0_QUEUED": "P0 wacht · eigenaar controleren",
+            "P0_ACTIVE_OWNER": "P0 al actief · eigenaar behouden",
+            "P1_QUEUED": "P1 wacht · eigenaar controleren",
+            "P1_ACTIVE_OWNER": "P1 al actief · eigenaar behouden",
+        }[item["owner_review_kind"]]) + "</strong></p><p>"
+        + "P0 wacht " + str(item["queued_p0"]) + " (eligible-hint "
+        + str(item["eligible_hint_p0"]) + "); P1 wacht "
+        + str(item["queued_p1"]) + " (eligible-hint "
+        + str(item["eligible_hint_p1"]) + "); "
+        + "P0 " + str(item["active_p0"]) + " / P1 " + str(item["active_p1"]) + " lokaal actief.</p><p>
+        + html.escape(item["next_step"]) + "</p>"
+        + html_inbox_links(item["project"]) + "<p><a href='#project-"
+        + next(project_id for project_id, project_name in PORTFOLIO_PROJECTS.items()
+               if project_name == item["project"])
+        + "'>Open lokaal projectdossier ↓</a></p></article>"
+        for item in data["owner_review_shortlist"]
+    )
+    owner_panel = (
+        "<section class='notice'><h2>Eerst beoordelen · menselijke eigenaaroverdracht</h2>"
+        "<p>Gesorteerd op lokaal wachtende P0, actieve P0, wachtende P1 en actieve P1. "
+        "Dit zijn GEEN vrije claims of actuele GitHub/Notion-waarnemingen.</p>"
+        "<div class='grid'>" + owner_cards + "</div>"
+        + ("<p class='warn'>Shortlist of lokale projectbron onvolledig; "
+           "controleer de oorspronkelijke projectbron.</p>"
+           if data["owner_review_shortlist_partial"] else "")
+        + ("<p>Geen lokale P0/P1-wacht- of actieve projecten in deze bron; "
+           "geen bewijs dat er geen open GitHub-issues zijn.</p>"
+           if not owner_cards else "")
+        + "</section>"
+    )
+    portfolio_rows = "".join(
+        "<tr><th scope='row'><a href='#project-"
+        + next(project_id for project_id, project_name in PORTFOLIO_PROJECTS.items()
+               if project_name == item["project"])
+        + "'>" + html.escape(item["project"]) + "</a>"
+        + html_inbox_links(item["project"]) + "</th>"
+        + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
+        + str(item["eligible_queued_p0"]) + ")</small></td><td>"
+        + str(item["queued_p1"]) + " <small>(eligible "
+        + str(item["eligible_queued_p1"]) + ")</small></td><td>"
+        + str(item["in_flight_p0"]) + "</td><td>"
+        + str(item["in_flight_p1"]) + "</td></tr>"
+        for item in data["portfolio_urgent_local"]
+    ) or "<tr><td colspan='5'>Geen urgente bronrijen waargenomen; niet gelijk aan geen issues.</td></tr>"
+    portfolio_note = (
+        "<p class='warn'>Gedeeltelijke projectbron of niet-herkende projectgroep.</p>"
+        if data["portfolio_priority_partial"] or data["portfolio_unknown_project_groups"]
+        else "<p>Alleen lokale wachtrij, geen live GitHub-issue- of Notion-claimbewijs.</p>"
+    )
+    summary = data["admission_summary"]
+    admission_banner = (
+        "<p class='warn' role='status'>"
+        + str(summary["active_task_reservations"]) + " actieve taken in "
+        + str(summary["active_owner_protected"]) + " beschermde banen · "
+        + str(summary["parallel_active_reservations"])
+        + " extra taakreserveringen binnen dezelfde baan · "
+        + str(summary["held_for_owner_or_source"]) + " baan/banen HOLD · "
+        + str(summary["local_candidate_external_gates"]) + " lokale kandidaten zonder externe toelating · "
+        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak.</p>"
+    )
+    pressure = data.get("host_pressure")
+    host_notice = (
+        "<p class='warn' role='status'>"
+        + html.escape(pressure_sentence(pressure))
+        + "</p>"
+        if pressure is not None else ""
+    )
+    return (
+        "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta http-equiv='Content-Security-Policy' "
+        "content=\"default-src 'none'; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none'\">"
+        "<title>zSentinel · herstelbalie</title><style>"
+        ":root{color-scheme:dark}body{background:#0b1020;color:#eef2ff;"
+        "font:16px system-ui,sans-serif;margin:0;padding:clamp(20px,4vw,50px)}"
+        "main{max-width:1120px;margin:auto}header{margin-bottom:32px}"
+        "h1{font-size:clamp(2rem,5vw,3.4rem);margin:8px 0}p{line-height:1.5}"
+        ".eyebrow{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;"
+        "color:#93a7ce}.grid{display:grid;grid-template-columns:"
+        "repeat(auto-fit,minmax(240px,1fr));gap:16px}"
+        "article,.notice{border:1px solid #30415c;border-radius:18px;"
+        "padding:22px;background:#172136}article h2{font-size:1.15rem}"
+        ".state{font-size:1.4rem;font-weight:700;color:#b9d0ff}"
+        "dl{display:grid;grid-template-columns:1fr 1fr;gap:12px}"
+        "dt{color:#9eb2d3;font-size:.82rem}dd{font-size:1.8rem;"
+        "margin:4px 0;font-weight:700}.warn{color:#ffca83}"
+        ".notice{margin-top:22px;background:#151d2e}"
+        "table{border-collapse:collapse;width:100%;text-align:right}"
+        "th,td{padding:10px 8px;border-bottom:1px solid #30415c}"
+        "th:first-child{text-align:left}table{font-size:.9rem}"
+        ".inbox{display:block;font-size:.78rem;margin-top:5px}"
+        "a{color:#b9d0ff}a:focus-visible{outline:2px solid #ffca83}"
+        ".scroll{overflow:auto}li{margin:8px 0}h3{font-size:1rem;line-height:1.4}"
+         "details{border-top:1px solid #30415c;padding:14px 4px;scroll-margin-top:18px}"
+         "details:target{outline:2px solid #ffca83;outline-offset:4px}"
+         "summary{cursor:pointer;font-weight:650;padding:5px}details p{margin:9px 0}"
+        "footer{color:#a8b7d4;margin-top:28px}"
+        "</style></head><body><main><header><div class='eyebrow'>"
+        "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
+        "<p>Actueel lokaal bronmoment: "
+        + html.escape(data["observed_utc"]) + "</p>"
+        + admission_banner + host_notice + "</header><div class='grid'>"
+        + "".join(cards) + "</div>" + owner_panel + "<section class='notice'>"
+        "<h2>Veilige herstelacties</h2><p>Elke kaart: probleem, actie en status. Alleen advies.</p>"
+        "<div class='grid'>" + action_cards + "</div></section><section class='notice'>"
+        "<h2>Portfolio · urgente lokale wachtrij</h2>"
+        "<p>Deze tabel is alleen een prioriteitenhint. Bestaande claims en eigenaars blijven leidend.</p>"
+        "<div class='scroll'><table><thead><tr><th scope='col'>Project</th>"
+        "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
+        "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
+        "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
+        + portfolio_note + "</section>" + portfolio_changes_html(data)
+        + project_cards_html(data)
+        + host_section + runner_section
+        + "<section class='notice'><h2>Grenzen en "
+        "vervolgactie</h2><ul>" + details + "</ul></section>"
+        "<footer>Alleen lokale read-only bron. Geen claim, CI-start, merge, "
+        "runneractie of deployment uitgevoerd.</footer></main></body></html>"
+    )
+
+
+def markdown_view(data):
+    """Portable private owner handoff: three lines per action, no raw queue fields."""
+    lines = [
+        "# zSentinel | Hersteloverdracht",
+        "",
+        "**Lokale bron:** " + data["observed_utc"],
+        "**Context:** alleen read-only wachtrijobservatie; Notion-claims en"
+        " GitHub-releasegates NIET gecontroleerd.",
+        "**Lokaal contract:** "
+        + data["local_contract_evidence"]["status"] + " / "
+        + data["local_contract_evidence"]["profile"]
+        + " (geladen service: NIET GEVERIFIEERD).",
+        "**Beslisoverzicht:** "
+        + str(data["admission_summary"]["active_task_reservations"])
+        + " actieve taken in "
+        + str(data["admission_summary"]["active_owner_protected"])
+        + " beschermde banen ("
+        + str(data["admission_summary"]["parallel_active_reservations"])
+        + " extra binnen dezelfde baan); "
+        + str(data["admission_summary"]["held_for_owner_or_source"])
+        + " banen HOLD; "
+        + str(data["admission_summary"]["local_candidate_external_gates"])
+        + " lokale kandidaten zonder externe toelating.",
+        "",
+        "## Actiekaarten",
+    ]
+    for lane in data["lanes"]:
+        lines.extend((
+            "",
+            "### " + lane["name"],
+            "- **Bronstatus:** " + lane["status"],
+            "- **Beslissing:** " + lane["admission"]["code"]
+            + " — " + lane["admission"]["label"],
+            "- **Vervolgactie:** " + lane["admission"]["next_step"],
+            "- **Uitgestelde QA-opdrachten:** " + str(lane["deferred_qa_packages"]),
+            "- **Niet-eligible wachtrijtaken:** " + str(lane["deferred_ineligible_packages"]),
+            "- **Bestaande queued workerslot-reserveringen:** " + str(lane["deferred_assigned_packages"]),
+            "- **Scopeconflicten met gereserveerde slots:** " + str(lane["assigned_slot_scope_conflicts"]),
+        ))
+    lines.extend(("", "## Geprioriteerde herstelacties"))
+    for action in data["recovery_actions"]:
+        lines.extend((
+            "",
+            "- **Probleem:** " + action["problem"],
+            "  **Actie:** " + action["next_step"],
+            "  **Status:** " + action["status"],
+        ))
+    if data.get("runner_processes") is not None:
+        lines.extend(("", "## Runnerprocessen (alleen /proc)", "",
+                      text_report(data["runner_processes"]), ""))
+    if data.get("host_pressure") is not None:
+        lines.extend(("", "## Hostdruk (adviserend)", "",
+                      pressure_sentence(data["host_pressure"]),
+                      "Geen autorisatie voor extra workers of serviceacties.", ""))
+    lines.extend(("", *portfolio_changes_lines(data, markdown=True),
+                  "", "## Prioritaire eigenaaroverdracht (lokaal; niet geclaimd)", ""))
+    for item in data["owner_review_shortlist"]:
+        inbox = github_inbox_urls(item["project"])
+        name = item["project"]
+        if inbox:
+            name += f" ([open PRs]({inbox[0]}) · [open issues]({inbox[1]}))"
+        lines.extend((
+            "",
+            "### " + item["priority"] + " · " + name,
+            "- **Werkcategorie lokaal:** " + item["owner_review_kind"],
+            "- **P0 wacht lokaal / eligible-hint:** " + str(item["queued_p0"])
+            + " / " + str(item["eligible_hint_p0"]),
+            "- **P1 wacht lokaal / eligible-hint:** " + str(item["queued_p1"])
+            + " / " + str(item["eligible_hint_p1"]),
+            "- **Actief P0 / P1 lokaal (niet overnemen):** " + str(item["active_p0"]) + " / " + str(item["active_p1"]),
+            "- **Huidige externe eigenaar:** ONBEKEND.",
+            "- **Vervolg:** " + item["next_step"],
+        ))
+    if data["owner_review_shortlist_partial"]:
+        lines.extend(("", "Shortlist of lokale projectbron onvolledig: geen volledig projectbeeld."))
+    lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
+                  "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
+                  "| --- | ---: | ---: | ---: | ---: |"))
+    for item in data["portfolio_urgent_local"]:
+        inbox = github_inbox_urls(item["project"])
+        project_cell = item["project"]
+        if inbox:
+            project_cell += f" ([PRs]({inbox[0]}) · [issues]({inbox[1]}))"
+        lines.append(
+            f"| {project_cell} | {item['queued_p0']} "
+            f"(eligible {item['eligible_queued_p0']}) | {item['queued_p1']} "
+            f"(eligible {item['eligible_queued_p1']}) | "
+            f"{item['in_flight_p0']} | {item['in_flight_p1']} |"
+        )
+    lines.extend((
+        "",
+        "## Integriteit en bevoegdheden",
+        "",
+        "- Lokale bron volledig: "
+        + ("ja" if data["source_complete"] else "nee/onbekend"),
+        "- Actieve queueleases niet toelaatbaar voor nieuwe schrijvers: "
+        + str(data["untrusted_active_leases_observed"])
+        + " (houder blijft eigenaar).",
+        "- Actieve claims met legacy of onbekend baanprofiel: "
+        + str(data["active_legacy_profile_claims_observed"])
+        + " (geen automatische profielmigratie).",
+        "- Schrijfscopes: " + str(data["active_scope_declarations_missing"])
+        + " ontbrekend; " + str(data["active_scope_declarations_invalid_or_empty"])
+        + " ongeldig/leeg; niet herclaimen of invullen namens eigenaar.",
+        "- Onbetrouwbare actieve queue-claimvensters: "
+        + str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+        + " (geen automatische herclaim).",
+        "- Actuele externe eigenaarvrijheid: NIET AFLEIDBAAR.",
+        "- De term eligible betekent uitsluitend het lokale wachtrijveld.",
+        "- Geen claim, serviceherstart, workflow, merge, release of deploy geautoriseerd.",
+        "- Source-read is geen bevestiging van GitHub merged=true of een hervatte worker.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
+
+
+def owner_snapshot(data):
+    """Create a minimal private all-project summary, never a queue receipt."""
+    reverse = {name: key for key, name in PORTFOLIO_PROJECTS.items()}
+    rows = {key: {field: 0 for field in OWNER_COUNT_FIELDS}
+            for key in sorted(PORTFOLIO_PROJECTS)}
+    for item in data["portfolio_urgent_local"]:
+        key = reverse.get(item["project"])
+        if key is None:
+            raise ValueError("Unmapped portfolio project in local owner snapshot")
+        if (any(type(item[field]) is not int or
+                not 0 <= item[field] <= 1000000
+                for field in OWNER_COUNT_FIELDS)
+                or item["eligible_queued_p0"] > item["queued_p0"]
+                or item["eligible_queued_p1"] > item["queued_p1"]):
+            raise ValueError("Invalid bounded portfolio aggregate")
+        rows[key] = {field: item[field] for field in OWNER_COUNT_FIELDS}
+    return {
+        "schema": OWNER_SNAPSHOT_SCHEMA,
+        "observed_utc": data["observed_utc"],
+        "source_key": data["portfolio_source_key"],
+        "coverage_complete": bool(
+            not data["portfolio_priority_partial"]
+            and not data["portfolio_unknown_project_groups"]
+        ),
+        "projects": rows,
+        "owner_verified": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "release_authorized": False,
+    }
+
+
+def read_owner_snapshot(path):
+    """Read only the current owner's regular 0600 file; no source discovery."""
+    fd = os.open(
+        str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+                or not 1 <= info.st_size <= OWNER_SNAPSHOT_LIMIT):
+            raise ValueError("Owner-private regular snapshot required")
+        raw = os.read(fd, OWNER_SNAPSHOT_LIMIT + 1)
+        if len(raw) > OWNER_SNAPSHOT_LIMIT:
+            raise ValueError("Owner snapshot too large")
+    finally:
+        os.close(fd)
+    doc = json.loads(raw.decode("utf-8"))
+    if (type(doc) is not dict
+            or set(doc) != {
+                "schema", "observed_utc", "source_key",
+                "coverage_complete", "projects",
+                "owner_verified", "claim_authorized", "merge_authorized",
+                "release_authorized",
+            }
+            or doc["schema"] != OWNER_SNAPSHOT_SCHEMA
+            or type(doc["source_key"]) is not str
+            or len(doc["source_key"]) != 64
+            or any(char not in "0123456789abcdef"
+                   for char in doc["source_key"])
+            or type(doc["coverage_complete"]) is not bool
+            or any(doc[key] is not False for key in (
+                "owner_verified", "claim_authorized", "merge_authorized",
+                "release_authorized"
+            ))
+            or type(doc["projects"]) is not dict
+            or set(doc["projects"]) != set(PORTFOLIO_PROJECTS)
+            or _utc(doc["observed_utc"]) is None):
+        raise ValueError("Untrusted owner snapshot structure or authority")
+    for project in doc["projects"].values():
+        if (type(project) is not dict
+                or set(project) != set(OWNER_COUNT_FIELDS)
+                or any(type(value) is not int or not 0 <= value <= 1000000
+                       for value in project.values())
+                or project["eligible_queued_p0"] > project["queued_p0"]
+                or project["eligible_queued_p1"] > project["queued_p1"]):
+            raise ValueError("Contradictory historical portfolio counts")
+    return doc
+
+
+def owner_snapshot_changes(data, previous):
+    """Compare only two endpoints; never assert continuous queue movement."""
+    current = owner_snapshot(data)
+    prior_time, time_now = (_utc(previous["observed_utc"]),
+                            _utc(current["observed_utc"]))
+    if not prior_time or not time_now or prior_time >= time_now:
+        raise ValueError("Owner snapshots must be strictly chronological")
+    seconds = (time_now - prior_time).total_seconds()
+    status = "COMPARABLE_ENDPOINTS"
+    if previous["source_key"] != current["source_key"]:
+        status = "NOT_COMPARABLE_DIFFERENT_LOCAL_SOURCE"
+    elif not previous["coverage_complete"] or not current["coverage_complete"]:
+        status = "NOT_COMPARABLE_PARTIAL_SOURCE"
+    elif seconds > 7 * 86400:
+        status = "NOT_COMPARABLE_OLD_BASELINE"
+    rows = []
+    if status == "COMPARABLE_ENDPOINTS":
+        for project_id, name in sorted(PORTFOLIO_PROJECTS.items()):
+            old = previous["projects"][project_id]
+            new = current["projects"][project_id]
+            change = {field: new[field] - old[field]
+                      for field in OWNER_COUNT_FIELDS}
+            if not any(change.values()):
+                continue
+            kind = (
+                "P0_WAIT_INCREASED" if change["queued_p0"] > 0 else
+                "P1_WAIT_INCREASED" if change["queued_p1"] > 0 else
+                "ENDPOINT_COUNT_CHANGED"
+            )
+            rows.append({
+                "project": name,
+                "project_id": project_id,
+                "kind": kind,
+                "delta": change,
+                "previous": old,
+                "current": new,
+                "owner_verified": False,
+                "claim_authorized": False,
+            })
+        rank = {"P0_WAIT_INCREASED": 0, "P1_WAIT_INCREASED": 1,
+                "ENDPOINT_COUNT_CHANGED": 2}
+        rows.sort(key=lambda item: (
+            rank[item["kind"]], -item["delta"]["queued_p0"],
+            -item["delta"]["queued_p1"], item["project"]
+        ))
+    return {
+        "status": status,
+        "previous_observed_utc": previous["observed_utc"],
+        "current_observed_utc": current["observed_utc"],
+        "elapsed_hours": round(seconds / 3600, 2),
+        "changed_projects": rows,
+        "comparison_authorizes_owner_action": False,
+        "note": ("Twee lokale eindpunten, geen continu log of oorzaakbewijs. "
+                 "Actuele externe claims en releasegates blijven ONBEKEND."
+                 if status == "COMPARABLE_ENDPOINTS" else
+                 "Brondekking of bronleeftijd verhindert verantwoorde "
+                 "projectdelta's; geen nultelling of herstelbewijs."),
+    }
+
+
+
+def project_owner_brief(data, project_id):
+    """Human-only, privacy-bounded project handoff from an existing snapshot.
+
+    This does not fetch GitHub/Notion and never infers global ownership from
+    absent local rows. The project ID is a canonical caller-selected key.
+    """
+    if project_id not in PORTFOLIO_PROJECTS:
+        raise ValueError("Unknown canonical portfolio project")
+    name = PORTFOLIO_PROJECTS[project_id]
+    matches = [row for row in data["portfolio_urgent_local"]
+               if row["project"] == name]
+    if len(matches) > 1:
+        raise ValueError("Duplicate observed source project")
+    row = matches[0] if matches else None
+    partial = (not data["source_complete"]
+               or data["portfolio_priority_partial"]
+               or bool(data["portfolio_unknown_project_groups"]))
+    source_note = (
+        "ONVOLLEDIG: het lokale bronvenster mist mogelijk projectrijen."
+        if partial else
+        "De geobserveerde lokale SQL-projectgroepering is volledig; "
+        "externe Notion/GitHub-projectdekking blijft onbekend."
+    )
+    lines = [
+        "# zSentinel · privé projecteigenaaroverdracht",
+        "",
+        "**Project:** " + name,
+        "**Bronmoment (UTC):** " + data["observed_utc"],
+        "**Bron:** alleen lokale, read-only SQLite-wachtrij.",
+        "**Dekking:** " + source_note,
+        "**Actuele eigenaar:** NIET GEVERIFIEERD.",
+        "**Claim-/merge-/deploybevoegdheid:** NEE.",
+        "**Brongebonden eigenaarstriage:** " +
+        data["project_owner_decisions"][project_id]["code"],
+        "**Handmatig vervolg:** " +
+        data["project_owner_decisions"][project_id]["next_step"],
+        "",
+        "## Lokale P0/P1-observaties",
+        "",
+    ]
+    if row:
+        lines.extend((
+            "| Prioriteit | Wacht lokaal | Eligible-hint lokaal | Actief lokaal |",
+            "| --- | ---: | ---: | ---: |",
+            f"| P0 | {row['queued_p0']} | {row['eligible_queued_p0']} | {row['in_flight_p0']} |",
+            f"| P1 | {row['queued_p1']} | {row['eligible_queued_p1']} | {row['in_flight_p1']} |",
+            "",
+            ("**Eerste menselijke review:** P0-wachtwerk in de lokale bron."
+             if row["queued_p0"] else
+             "**Eerste menselijke review:** P1-wachtwerk in de lokale bron."
+             if row["queued_p1"] else
+             "**Geen wachtende P0/P1-rij geobserveerd; actieve eigenaars behouden hun werk."),
+        ))
+        if row["in_flight_p0"] or row["in_flight_p1"]:
+            lines.append(
+                "**Actieve taken aanwezig:** neem bestaande claims niet over "
+                "en herschik deze niet zonder de huidige eigenaar."
+            )
+        if not row["eligible_queued_p0"] and not row["eligible_queued_p1"]:
+            lines.append("**Geen eligible-hint:** ook lokaal is geen vrije kandidaat bevestigd.")
+    else:
+        lines.extend((
+            "Geen P0/P1-rij voor dit project in het lokale bronvenster. "
+            "Dit is GEEN bewijs dat GitHub geen open issues heeft, "
+            "Notion geen actieve claims heeft of het project klaar is.",
+        ))
+    history = data.get("portfolio_previous_comparison")
+    if history is not None:
+        lines.extend(("", "## Verschil tussen lokale bronmomenten", "",
+                      "**Vergelijkbaarheid:** " + history["status"],
+                      history["note"]))
+        if history["status"] == "COMPARABLE_ENDPOINTS":
+            match = next(
+                (item for item in history["changed_projects"]
+                 if item["project_id"] == project_id), None)
+            if match is None:
+                lines.append(
+                    "Geen lokaal P0/P1-countverschil op de twee eindpunten; "
+                    "geen bewijs van ongewijzigd tussentijds werk."
+                )
+            else:
+                delta = match["delta"]
+                lines.extend((
+                    "**Bronverschilsignaal:** " + match["kind"],
+                    "**P0 wacht:** " + f"{delta['queued_p0']:+d}",
+                    "**P1 wacht:** " + f"{delta['queued_p1']:+d}",
+                    "**P0 actief:** " + f"{delta['in_flight_p0']:+d}",
+                    "**P1 actief:** " + f"{delta['in_flight_p1']:+d}",
+                ))
+    links = github_inbox_urls(name)
+    lines.extend(("", "## Bestaande productbronnen", ""))
+    if links:
+        lines.extend((
+            "- [Open bestaande GitHub PRs](" + links[0] + ")",
+            "- [Open GitHub issues](" + links[1] + ")",
+        ))
+    else:
+        lines.append("- Canonieke GitHub-repositorymapping ONBEKEND.")
+    lines.extend((
+        "- Controleer vóór elke wijziging actuele Notion-claims, "
+        "andere PR-eigenaren en de concrete productissue.",
+        "- Volg de merge-eerst procedure: bestaand PR, huidige HEAD, "
+        "verplichte exacte-head CI, onafhankelijke review, branch protection.",
+        "- Neem QA-only werk niet op als producttaak; deze lokale "
+        "SQL-aggregatie onderscheidt QA-rijen niet betrouwbaar.",
+        "",
+        "## Niet uitgevoerd / niet bewezen",
+        "",
+        "Geen GitHub/Notion live bronrequest, geen queue- of leasewijziging, "
+        "geen automatische claim, workflow, release of herstelactie. "
+        "GitHub merged=true en productiegedrag zijn NIET geverifieerd.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
+def owner_actions_csv(data):
+    """Export all canonical project owner-actions from one read-only snapshot.
+
+    Unlike the six-entry on-screen shortlist, this handoff never drops a project.
+    Missing group rows are UNKNOWN externally, never permission to take over.
+    It contains no raw queue IDs, worker slots, claims, titles or file scopes.
+    """
+    counts = {row["project"]: row for row in data["portfolio_urgent_local"]}
+    if len(counts) != len(data["portfolio_urgent_local"]):
+        raise ValueError("Duplicate source project in local owner handoff")
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow((
+        "project", "owner_review_order", "priority_hint_local", "queued_p0_local", "queued_p1_local",
+        "eligible_hint_p0_local", "eligible_hint_p1_local",
+        "in_flight_p0_local", "in_flight_p1_local",
+        "owner_action", "next_human_step",
+        "existing_open_prs_url", "existing_open_issues_url",
+        "snapshot_utc", "local_source_key_sha256",
+        "local_source_complete", "portfolio_groups_complete",
+        "host_admission_observation", "held_local_recovery_lanes",
+        "external_github_issue_coverage", "external_notion_claim_coverage",
+        "owner_verified", "claim_authorized", "merge_authorized",
+        "deploy_authorized",
+    ))
+    portfolio_groups_complete = (
+        not data["portfolio_priority_partial"]
+        and not bool(data["portfolio_unknown_project_groups"])
+    )
+    def owner_priority(item):
+        _project_id, name = item
+        row = counts.get(name)
+        if row:
+            if row["queued_p0"]:
+                return (0, name.casefold())
+            if row["in_flight_p0"]:
+                return (1, name.casefold())
+            if row["queued_p1"]:
+                return (2, name.casefold())
+            if row["in_flight_p1"]:
+                return (3, name.casefold())
+            return (4, name.casefold())
+        return (5, name.casefold())
+
+    # The full 13-project export stays bounded but now surfaces urgent P0
+    # candidate/owner blocks before lower-priority or unobserved projects.
+    for project_id, project_name in sorted(
+        PORTFOLIO_PROJECTS.items(), key=owner_priority
+    ):
+        row = counts.get(project_name)
+        action = data["project_owner_decisions"][project_id]
+        order = owner_priority((project_id, project_name))[0]
+        category = ("P0_QUEUED" if order == 0 else
+                    "P0_ACTIVE_OWNER" if order == 1 else
+                    "P1_QUEUED" if order == 2 else
+                    "P1_ACTIVE_OWNER" if order == 3 else
+                    "OTHER_LOCAL" if order == 4 else "UNOBSERVED")
+        links = github_inbox_urls(project_name)
+        if links is None:
+            raise ValueError("Missing verified project GitHub navigation mapping")
+        rank = ("P0" if row and (row["queued_p0"] or row["in_flight_p0"]) else
+                "P1" if row and (row["queued_p1"] or row["in_flight_p1"]) else "UNKNOWN")
+        # These are fixed product enums and canonical project names; never
+        # interpolate untrusted row titles or GitHub issue body into Excel.
+        writer.writerow((
+            project_name, category, rank,
+            row["queued_p0"] if row else "UNKNOWN",
+            row["queued_p1"] if row else "UNKNOWN",
+            row["eligible_queued_p0"] if row else "UNKNOWN",
+            row["eligible_queued_p1"] if row else "UNKNOWN",
+            row["in_flight_p0"] if row else "UNKNOWN",
+            row["in_flight_p1"] if row else "UNKNOWN",
+            action["code"], action["next_step"],
+            links[0], links[1],
+            data["observed_utc"], data["portfolio_source_key"],
+            str(bool(data["source_complete"])).lower(),
+            str(portfolio_groups_complete).lower(),
+            data["host_admission"],
+            data["admission_summary"]["held_for_owner_or_source"],
+            "UNKNOWN", "UNKNOWN", "false", "false", "false", "false",
+        ))
+    return buffer.getvalue()
+
+
+def portfolio_owner_book(data):
+    """Portable complete private owner brief for all canonical real projects."""
+    partial = not data["source_complete"] or data["portfolio_priority_partial"]
+    if data["portfolio_unknown_project_groups"]:
+        partial = True
+    contents = [
+        "# zSentinel · privé portfolio-eigenaarboek",
+        "",
+        "**Bronmoment (UTC):** " + data["observed_utc"],
+        "**Geselecteerde projecten:** " + str(len(PORTFOLIO_PROJECTS)),
+        "**Brondekking:** " + (
+            "GEDEELTELIJK — niet alle lokale projectrijen zijn zeker waargenomen."
+            if partial else
+            "Lokale SQL-projectgroepen volledig waargenomen; externe bronnen ONBEKEND."
+        ),
+        "**Bevoegdheden:** geen actieve eigenaar geverifieerd; geen claim, CI, merge of deploy.",
+        "**Scope:** uitsluitend de dertien canonieke echte projecten; zSentinel is een rol.",
+        "",
+        "## Volgorde van menselijke opvolging",
+        "",
+    ]
+    for item in data["owner_review_shortlist"]:
+        contents.append(
+            "- " + item["priority"] + " " + item["project"] +
+            " [" + item["owner_review_kind"] + "]: P0 wacht " + str(item["queued_p0"]) +
+            ", P1 wacht " + str(item["queued_p1"]) + " in lokale bron; " +
+            "P0 " + str(item["active_p0"]) + " / P1 " + str(item["active_p1"]) + " actief; huidige eigenaar ONBEKEND."
+        )
+    if data["owner_review_shortlist_partial"]:
+        contents.append(
+            "- ONVOLLEDIG: bovenste shortlist is begrensd of lokale bron onvolledig."
+        )
+    if not data["owner_review_shortlist"]:
+        contents.append(
+            "- Geen lokaal P0/P1-wacht- of actief werk in deze steekproef; "
+            "er kunnen elders wel open issues of actieve claims zijn."
+        )
+    contents.extend(("", *portfolio_changes_lines(data, markdown=True), ""))
+    contents.extend((
+        "",
+        "## Dossiers per echt project",
+        "",
+        "Onderstaande dertien dossiers komen uit hetzelfde begrensde "
+        "SQLite-bronmoment; volgorde is alfabetisch, geen werktoewijzing.",
+        "",
+    ))
+    for project_id in sorted(PORTFOLIO_PROJECTS):
+        contents.extend((
+            "---",
+            "",
+            project_owner_brief(data, project_id).replace(
+                "# zSentinel · privé projecteigenaaroverdracht",
+                "### Project " + PORTFOLIO_PROJECTS[project_id], 1
+            ),
+            "",
+        ))
+    return "\n".join(contents)
+
+
+
+def owner_change_brief(data):
+    """A compact source-tied owner handoff only for changed P0/P1 groups.
+
+    It can never issue a claim, escalation or retry. Historic counts are
+    explicit endpoint observations, not an event history or issue resolution.
+    """
+    history = data.get("portfolio_previous_comparison")
+    if history is None:
+        raise ValueError("Private change brief requires previous local snapshot")
+    lines = [
+        "# zSentinel · privé veranderde portfolio-projecten",
+        "",
+        "**Vergelijking:** " + history["status"],
+        "**Vorige lokale bron UTC:** " + history["previous_observed_utc"],
+        "**Huidige lokale bron UTC:** " + history["current_observed_utc"],
+        "**Bronafstand (uur):** " + str(history["elapsed_hours"]),
+        "**Context:** " + history["note"],
+        "**Autorisatie:** eigenaar niet geverifieerd, geen claim, workflow, "
+        "herstel, merge of release.",
+        "**Selectie:** alleen gewijzigde P0/P1-groepscounts binnen "
+        "twee lokale eindpunten; geen bewijs van tussentijdse events.",
+        "",
+    ]
+    if history["status"] != "COMPARABLE_ENDPOINTS":
+        lines.extend((
+            "## Vergelijking niet betrouwbaar",
+            "",
+            "Er worden geen projectverschillen of escalaties weergegeven. "
+            "Maak een nieuwe betrouwbare privé-baseline van dezelfde "
+            "bron en controleer externe claims vóór uitvoering.",
+            "",
+        ))
+        return "\n".join(lines)
+    changed = history["changed_projects"]
+    lines.extend((
+        "## Menselijke opvolging van gewijzigde projecten",
+        "",
+        "**Aantal projecten met countverschil:** " + str(len(changed)),
+        "**Reviewvolgorde:** P0-wachtgroei, daarna P1-wachtgroei, "
+        "daarna overige countverschillen. Dit is geen taaktoewijzing.",
+        "",
+    ))
+    if not changed:
+        lines.extend((
+            "Geen countverschil tussen de twee bronmomenten waargenomen. "
+            "Dit is geen bewijs dat er geen open GitHub-issues zijn, "
+            "geen worker is vastgelopen of geen werk heeft plaatsgevonden.",
+            "",
+        ))
+    for index, item in enumerate(changed, 1):
+        project_id, name = item["project_id"], item["project"]
+        old, current, delta = (item["previous"], item["current"],
+                               item["delta"])
+        owner = data["project_owner_decisions"][project_id]
+        if owner["owner_authorized"] is not False:
+            raise ValueError("Change brief cannot convey owner authority")
+        links = github_inbox_urls(name)
+        lines.extend((
+            "### " + str(index) + ". " + name,
+            "",
+            "**Waarneming:** " + item["kind"],
+            "**Huidige eigenaar:** NIET GEVERIFIEERD; "
+            "bestaande actieve claims niet overnemen.",
+            "**Lokale eigenaarstriage:** " + owner["code"],
+            "**Handmatige vervolgstap:** " + owner["next_step"],
+            "",
+            "| Wachtrijveld | Vorige bron | Huidige bron | Verschil |",
+            "| --- | ---: | ---: | ---: |",
+        ))
+        labels = {
+            "queued_p0": "P0 wacht",
+            "queued_p1": "P1 wacht",
+            "eligible_queued_p0": "P0 eligible-hint",
+            "eligible_queued_p1": "P1 eligible-hint",
+            "in_flight_p0": "P0 actief",
+            "in_flight_p1": "P1 actief",
+        }
+        for field in OWNER_COUNT_FIELDS:
+            lines.append(
+                "| " + labels[field] + " | " + str(old[field])
+                + " | " + str(current[field]) + " | "
+                + f"{delta[field]:+d}" + " |"
+            )
+        lines.extend(("", "**Bestaande GitHub-bronnen (niet live opgevraagd):**"))
+        if links:
+            lines.extend((
+                "- [Open product-PRs](" + links[0] + ")",
+                "- [Open productissues](" + links[1] + ")",
+            ))
+        else:
+            lines.append("- Canonieke GitHub-route onbekend.")
+        lines.extend((
+            "- Controleer de huidige Notion-eigenaars, actuele PR-HEAD, "
+            "verplichte exacte-head CI, onafhankelijke review en "
+            "branch protection voordat je werk toewijst of merge uitvoert.",
+            "",
+        ))
+    lines.extend((
+        "## Bron- en releasegrenzen",
+        "",
+        "Deze handoff gebruikt uitsluitend de bestaande read-only "
+        "SQLite-aggregatie en een vooraf opgeslagen owner-private baseline. "
+        "Aantalverschillen geven geen directe oorzaak van een eventuele "
+        "toename of afname en bewijzen geen echte fixes, actieve eigenaar, "
+        "runnerherstel of productie-integratie. QA-only werk is niet "
+        "onderscheidbaar uit deze aggregatie en wordt niet toegewezen. "
+        "Er is geen remote write of automatische actie uitgevoerd.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
+
+def save_private(path, markup, extension=".html"):
+    dest = Path(path)
+    if dest.suffix.lower() != extension or dest.name in ("", ".", ".."):
+        raise ValueError("New private report with requested extension required")
+    directory = os.open(
+        str(dest.parent), os.O_RDONLY | os.O_DIRECTORY
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise ValueError("Private owner directory required")
+        fd = os.open(
+            dest.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as target:
+                target.write(markup)
+                target.flush()
+                os.fsync(target.fileno())
+        except BaseException:
+            os.unlink(dest.name, dir_fd=directory)
+            raise
+    finally:
+        os.close(directory)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Read-only four-lane zSentinel occupancy desk"
+    )
+    parser.add_argument("--db", default="history.db", help="Read-only SQLite source")
+    parser.add_argument("--contracts-file", default=None,
+                        help="Optional local contract JSON; default sibling of DB; read-only")
+    parser.add_argument("--max-rows", type=int, default=250)
+    parser.add_argument("--runner-processes", action="store_true",
+                        help="Read only local /proc listener presence; no job or online proof")
+    parser.add_argument("--host-pressure", action="store_true", default=True,
+                        help="Legacy compatibility alias; bounded host RAM/swap/load and root disk headroom are now always observed before candidate guidance")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief", "owner-actions-csv"), default="text")
+    parser.add_argument("--owner-project", choices=tuple(sorted(PORTFOLIO_PROJECTS)),
+                        help="Canonical project id for a private single-project owner brief")
+    parser.add_argument("--output", help="New owner-private file: .html, .md or .json")
+    parser.add_argument("--previous-owner-snapshot",
+                        help="Existing owner-private .json snapshot for endpoint comparison")
+    args = parser.parse_args()
+    if not 1 <= args.max_rows <= MAX_ROWS:
+        parser.error("--max-rows must be between 1 and 500")
+    if (args.format in ("html", "markdown", "owner-brief", "owner-book", "owner-snapshot", "change-brief", "owner-actions-csv")) != bool(args.output):
+        parser.error("Private HTML/Markdown requires --output, other formats cannot write files")
+    if (args.format == "owner-brief") != bool(args.owner_project):
+        parser.error("--format owner-brief requires --owner-project; other modes reject it")
+    if args.format == "change-brief" and not args.previous_owner_snapshot:
+        parser.error("--format change-brief requires --previous-owner-snapshot")
+    try:
+        packet = collect(args.db, args.max_rows,
+                         include_runner_processes=args.runner_processes,
+                         contracts_file=args.contracts_file,
+                         include_host_pressure=True)
+        packet["portfolio_previous_comparison"] = (
+            owner_snapshot_changes(packet, read_owner_snapshot(
+                args.previous_owner_snapshot))
+            if args.previous_owner_snapshot else None
+        )
+        if args.format == "owner-actions-csv":
+            save_private(args.output, owner_actions_csv(packet), ".csv")
+            print("Privé portfolio-eigenaaracties geëxporteerd (0600); geen claim, CI of release.")
+        elif args.format == "owner-snapshot":
+            snapshot_json = json.dumps(owner_snapshot(packet), ensure_ascii=False,
+                                       indent=2, sort_keys=True) + "\n"
+            save_private(args.output, snapshot_json, ".json")
+            print("Privé minimaal eigenaarssnapshot gemaakt (0600); geen queue- of bronwijziging.")
+        elif args.format == "html":
+            save_private(args.output, html_view(packet), ".html")
+            print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
+        elif args.format == "markdown":
+            save_private(args.output, markdown_view(packet), ".md")
+            print("Privé hersteloverdracht gemaakt (0600); geen systeemactie.")
+        elif args.format == "owner-brief":
+            save_private(args.output, project_owner_brief(packet, args.owner_project), ".md")
+            print("Privé projecteigenaaroverdracht gemaakt (0600); geen externe actie.")
+        elif args.format == "owner-book":
+            save_private(args.output, portfolio_owner_book(packet), ".md")
+            print("Privé portfolio-eigenaarboek gemaakt (0600); geen externe actie.")
+        elif args.format == "change-brief":
+            save_private(args.output, owner_change_brief(packet), ".md")
+            print("Privé gewijzigde-projectenoverdracht gemaakt (0600); geen externe actie.")
+        elif args.format == "json":
+            print(json.dumps(packet, ensure_ascii=False, sort_keys=True))
+        else:
+            print(text_view(packet), end="")
+    except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
+        parser.exit(1, "Geen betrouwbaar lokaal bronoverzicht; geen actie.\n")
+
+
+if __name__ == "__main__":
+    main()

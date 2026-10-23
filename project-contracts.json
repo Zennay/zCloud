@@ -262,7 +262,7 @@
     },
     "zsentinel": {
       "queue_mode": "execution",
-      "lane_profile": "platform",
+      "lane_profile": "portfolio-recovery",
       "ai_worker_cap": 5,
       "autonomy": {
         "mode": "ai_worker",

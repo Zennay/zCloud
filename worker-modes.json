@@ -9,7 +9,7 @@
     "phase": "Cross-project open-work recovery",
     "status": "active",
     "priority": "high",
-    "next_step": "Pick the highest-impact unowned, safe open P0/P1 issue across projects; implement, test, commit and close only after verification. Move to the next safe task instead of waiting.",
+    "next_step": "Vier onafhankelijke herstelbanen: merge bestaande veilige PRs eerst, herstel open P0/P1 bugs, ontstop worker/queue en los CI/deploy-blokkades op. Iedere worker controleert actuele Notion/GitHub claims en eigen scope, respecteert RAM-/swap-/diskheadroom en GitHub-gates; geen QA-suites.",
     "milestone_revision": "zsentinel-worker-role-20261016",
     "milestones": [
       {
@@ -17,6 +17,7 @@
         "done": false,
         "progress": 0
       }
-    ]
+    ],
+    "lane_profile": "portfolio-recovery"
   }
 ]
