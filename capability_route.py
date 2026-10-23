@@ -54,11 +54,19 @@ def choose_execution_route(item: dict) -> dict:
                 metadata = {}
                 metadata_invalid = True
 
-    explicit = str(metadata.get("execution_capability") or "").strip().lower()
+    explicit_present = "execution_capability" in metadata
+    raw_explicit = metadata.get("execution_capability")
+    explicit = raw_explicit.strip().lower() if isinstance(raw_explicit, str) else ""
     if metadata_invalid:
         capability = "none"
         selection_source = "metadata_error"
         route_reason = "invalid_metadata_json"
+    elif explicit_present and explicit not in ("none", "browser", "system"):
+        # A present-but-empty or wrong-typed capability is a configuration
+        # error, not permission to infer another execution route.
+        capability = "none"
+        selection_source = "explicit"
+        route_reason = "unsupported_explicit_capability"
     elif explicit == "none":
         capability = "none"
         selection_source = "explicit"
@@ -67,12 +75,6 @@ def choose_execution_route(item: dict) -> dict:
         capability = explicit
         selection_source = "explicit"
         route_reason = "explicit_capability"
-    elif explicit:
-        # A typo or unsupported explicit capability must never fall back to
-        # keyword heuristics that could select an unintended execution tool.
-        capability = "none"
-        selection_source = "explicit"
-        route_reason = "unsupported_explicit_capability"
     else:
         task_text = " ".join(
             str(item.get(key) or "")
