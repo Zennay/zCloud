@@ -46,6 +46,13 @@ def _value(value, suffix=""):
     return "Onbekend" if value is None else f"{escape(str(value))}{suffix}"
 
 
+def _psi_value(host, kind):
+    """Render one PSI source independently while preserving legacy receipts."""
+    flag = host.get(f"memory_psi_{kind}_observed")
+    observed = flag if type(flag) is bool else host.get("memory_psi_observed") is True
+    return host.get(f"memory_psi_{kind}_avg10_percent") if observed else None
+
+
 def classify(unit):
     """Present service evidence without inventing a successful GitHub job."""
     state = unit.get("state", "unknown")
@@ -249,7 +256,7 @@ def render_comparison(comparison):
         "host_load": ("Systeemload", ""),
         "memory_available_gib": ("Beschikbaar RAM", " GiB"),
         "swap_used_percent": ("Swapgebruik", " procentpunt"),
-        "disk_unavailable_percent": ("Rootruimte niet beschikbaar", " procentpunt"),
+        "disk_unavailable_percent": ("Rootvolume niet vrij voor gebruiker", " procentpunt"),
         "root_available_gib": ("Rootruimte beschikbaar", " GiB"),
         "root_inode_available_percent": ("Root-inodes beschikbaar", " procentpunt"),
     }
@@ -567,16 +574,12 @@ def render(data):
             if host.get("swap_status") == "OBSERVED"
             else "Niet van toepassing" if host.get("swap_status") == "NO_SWAP_CONFIGURED"
             else "Onbekend"),
-        box("Geheugen-PSI some avg10 (host)", _value(
-            host.get("memory_psi_some_avg10_percent")
-            if host.get("memory_psi_observed") is True else None, "%")),
-        box("Geheugen-PSI full avg10 (host)", _value(
-            host.get("memory_psi_full_avg10_percent")
-            if host.get("memory_psi_observed") is True else None, "%")),
+        box("Geheugen-PSI some avg10 (host)", _value(_psi_value(host, "some"), "%")),
+        box("Geheugen-PSI full avg10 (host)", _value(_psi_value(host, "full"), "%")),
         box("Kernel-OOM sinds huidige boot (alle processen)", _value(
             host.get("kernel_oom_kills_since_boot")
             if host.get("kernel_oom_counter_observed") is True else None)),
-        box("Root niet beschikbaar", _value(host["disk_unavailable_percent"], "%")),
+        box("Rootvolume niet vrij voor gebruiker", _value(host["disk_unavailable_percent"], "%")),
         box("Root beschikbaar", _value(host.get("root_available_gib"), " GiB")),
         box("Root-inodes beschikbaar", _value(host.get("root_inode_available_percent"), "%")),
     ])
