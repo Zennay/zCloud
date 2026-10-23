@@ -245,7 +245,8 @@ class GovernedExecTests(unittest.TestCase):
                 )
                 conn.commit()
             stdout, stderr = wrapper.communicate(timeout=12)
-            self.assertNotEqual(0, wrapper.returncode, (stdout, stderr))
+            self.assertEqual(75, wrapper.returncode, (stdout, stderr))
+            self.assertIn("resource_lease_generation_lost", stderr)
             deadline = time.monotonic() + 2.0
             running = True
             while time.monotonic() < deadline:
