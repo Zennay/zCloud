@@ -406,6 +406,8 @@ def _notion_owner_status_summary(observed, source_mode, registry):
         raise ValueError("saved Notion snapshot cannot assert current work clocks")
     windows = observed.get("status_source_windows")
     status_windows = []
+    if mode[0] == "notion_readonly_data_source_pages" and windows is None:
+        raise ValueError("live Notion handoff lacks per-status source windows")
     if windows is not None:
         expected = (("Claimed", 1), ("Running", 1), ("Verifying", 2))
         if (mode[0] != "notion_readonly_data_source_pages"
