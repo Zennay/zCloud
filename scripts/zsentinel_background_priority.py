@@ -343,6 +343,8 @@ def memory_oom_observation():
         "memory_psi_full_avg10_percent": psi_full,
         "kernel_oom_kills_since_boot": kills,
         "memory_psi_observed": psi_some is not None and psi_full is not None,
+        "memory_psi_some_observed": psi_some is not None,
+        "memory_psi_full_observed": psi_full is not None,
         "kernel_oom_counter_observed": kills is not None,
     }
 
@@ -475,15 +477,18 @@ def pressure_reasons(s):
     # missing PSI remains unknown and does not fabricate a healthy zero.
     psi_full = s.get("memory_psi_full_avg10_percent")
     psi_some = s.get("memory_psi_some_avg10_percent")
+    elevated_memory_stalls = False
     if (type(psi_full) in (int, float) and math.isfinite(psi_full)
             and 0 <= psi_full <= 100):
         if psi_full >= MEMORY_PSI_FULL_URGENT_PERCENT:
             urgent.append("critical-memory-pressure-stalls")
         elif psi_full >= MEMORY_PSI_FULL_MODERATE_PERCENT:
-            moderate.append("elevated-memory-pressure-stalls")
+            elevated_memory_stalls = True
     if (type(psi_some) in (int, float) and math.isfinite(psi_some)
             and 0 <= psi_some <= 100
             and psi_some >= MEMORY_PSI_SOME_MODERATE_PERCENT):
+        elevated_memory_stalls = True
+    if elevated_memory_stalls and "critical-memory-pressure-stalls" not in urgent:
         moderate.append("elevated-memory-pressure-stalls")
 
     swap = s["swap_used_percent"]
@@ -729,11 +734,17 @@ def human_preview(data):
     print("Vrije root-inodes: " +
           (str(data.get("root_inode_available_percent")) + "%" if
            data.get("root_inode_available_percent") is not None else "onbekend"))
+    some_observed = (data.get("memory_psi_some_observed") is True or
+                      ("memory_psi_some_observed" not in data and
+                       data.get("memory_psi_observed") is True))
+    full_observed = (data.get("memory_psi_full_observed") is True or
+                     ("memory_psi_full_observed" not in data and
+                      data.get("memory_psi_observed") is True))
     print("Hostbrede memory PSI (laatste 10 s): some " +
-          (str(data.get("memory_psi_some_avg10_percent")) + "%" if
-           data.get("memory_psi_observed") is True else "onbekend") +
+          (str(data.get("memory_psi_some_avg10_percent")) + "%"
+           if some_observed else "onbekend") +
           "; full " + (str(data.get("memory_psi_full_avg10_percent")) + "%"
-                        if data.get("memory_psi_observed") is True else "onbekend"))
+                       if full_observed else "onbekend"))
     print("Kernel-OOM sinds huidige Linux-boot (alle processen, GEEN runner-attributie): " +
           (str(data["kernel_oom_kills_since_boot"])
            if data.get("kernel_oom_counter_observed") is True else "onbekend"))
