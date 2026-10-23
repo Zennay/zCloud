@@ -1,0 +1,40 @@
+# Resource-lease admission integrity (zSentinel, 18 October 2026)
+
+Fixes [#1271](https://github.com/Zennay/zCloud/issues/1271), [#1272](https://github.com/Zennay/zCloud/issues/1272) and [#1274](https://github.com/Zennay/zCloud/issues/1274) in the **core** resource lease writer, not just the CLI.
+
+## Operator-visible behavior
+
+- An owner ID must be a nonblank UTF-8 string of 1–200 Python Unicode characters with no NUL or unpaired surrogate. Invalid acquire requests return `acquired: false`, `reason: invalid_owner_id`; invalid releases return `released: false`. No cleanup, insert, update or deletion occurs on this denial.
+- A metadata argument must be a JSON-serializable object (or omitted). Serialized canonical JSON must be complete, finite and no more than **4000 UTF-8 bytes**. Invalid acquisition/renewal returns `acquired: false`, `reason: invalid_resource_metadata` **before** the expired-lease cleanup or any persistent write.
+- Valid 200-character owner IDs are stored unchanged, queried unchanged, renewed unchanged and released unchanged. Different 201-character identities are rejected before they could collide after truncation.
+- Valid metadata of exactly 4000 bytes is stored unchanged; longer or non-finite/non-JSON data is rejected. Renewal rejection preserves the previous lease and its metadata. No raw supplied metadata is echoed into response messages.
+- Internal impossible post-write missing lease reads raise a deterministic runtime exception rather than returning a misleading `acquired: true, lease: null`.
+- New acquire requests from SQLite autocommit connections are refused *before* expired-lease cleanup, capacity counting or insertion, returning `acquired: false`, `reason: transactional_resource_connection_required`. This includes legacy `isolation_level=None` and Python 3.12+ `autocommit=True`. Python 3.12+ `autocommit=False` is a valid transactional connection. The existing cleanup `DELETE` on a transactional connection obtains a write reservation before checking pool slots, preventing two holders from separately admitting into one slot. Previously acquired leases remain releasable even if called on an autocommit connection; releasing cannot overallocate capacity.
+
+## Existing runtime admission code integrated from older PR #1270
+
+The same source branch now brings the **already implemented production hunks** of [#1270](https://github.com/Zennay/zCloud/pull/1270) forward into current-main integration, rather than leaving them indefinitely on an aging draft:
+
+- Pool slot configuration accepts only genuine nonnegative integers; Python `true` and `false` are denied rather than interpreted as 1 and 0 slots.
+- Receipt freshness reference and observation timestamps must have explicit timezone offsets; naive timestamps are rejected rather than interpreted in the host's timezone.
+- Any observation strictly in the future is **invalid**, not artificially clamped to age zero. Positive age is rounded up to a whole second so a subsecond-over-boundary receipt does not appear fresh.
+
+Only the existing product-source adjustments were ported from #1270; **no old or new QA files were copied, written or manually run**. Original owner/review and source conflict reconciliation remain necessary. This is an independent main-targeted integration candidate, not a claim that #1270 has merged.
+
+## Composed producer integrity from existing open PRs
+
+The current integration branch now carries the previously authored **product-source** changes of [#1545](https://github.com/Zennay/zCloud/pull/1545), without modifying its branch: `record_receipt()` persists complete phase, action, commit SHA, blocker, next gate and source fields or rejects them before INSERT; `scripts/zcloud_runtime.py receipt` validates provenance, evidence schema and size before even opening the SQLite database. The original operator contract has been preserved verbatim in `docs/zsentinel-receipt-write-integrity.md`.
+
+It also composes the **source logic**, not the QA suites, of draft [#1275](https://github.com/Zennay/zCloud/pull/1275): the resource CLI validates owner identity and finite, complete ≤4000-byte UTF-8 metadata before opening/initializing SQLite; it then calls the same core owner/metadata validators. A denied CLI request therefore cannot create an empty production database either.
+
+This consolidates core-writer and CLI integrity while retaining separate upstream PR review and non-overlapping source ownership. The original open PRs remain intact; neither can be considered merged or deployed simply because its production hunk is present in this composed candidate.
+
+## Read-only resource display integration
+
+The resource governor now has a backwards-compatible `resource_status(connection, prune_expired=False)` read option. It **filters out** expired resource leases without deleting rows. The default `prune_expired=True` behavior for existing authorized writers remains available. This exact helper contract is also present in [worker/GET integration PR #1549](https://github.com/Zennay/zCloud/pull/1549) so the two branches can be reconciled without silently losing the read-only resource display behavior. Neither branch mutates production SQLite or extends the runtime trust boundary.
+
+## Integration and limits
+
+This patch changes only the resource-lease admission portion of `project_runtime.py`; it does not modify the API, server, worker claims, resource capacity, resource pool allocation algorithm, queue, migrations, CI, or live SQLite. The existing draft [#1270](https://github.com/Zennay/zCloud/pull/1270) owns separate receipt freshness/pool-slot validation hunks, and open [#1545](https://github.com/Zennay/zCloud/pull/1545) owns separate receipt-provenance hunks. These need routine independent integration review against current main. The autocommit admission boundary of [#1274](https://github.com/Zennay/zCloud/issues/1274) is addressed conservatively by rejecting unsupported connections. It does not add cross-process scheduling, change the number of slots, nor authorize production resource activation.
+
+No QA tests or regression suites were added or manually executed under the 17 October product-delivery instruction. Existing mandatory automated CI and branch/review/release gates remain authoritative. A merged source fix is not evidence of the VPS listener, worker continuation, or deployment.

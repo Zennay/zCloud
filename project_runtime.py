@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 import json
 import sqlite3
@@ -19,6 +20,33 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_MAX_RECEIPT_CLOCK_SKEW_SECONDS = 120
+
+
+def validated_receipt_timestamp(
+    value: str | None = None, *, now: datetime | None = None
+) -> str:
+    """Normalize a bounded timezone-aware observation timestamp to canonical UTC."""
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None or reference.utcoffset() is None:
+        raise ValueError("receipt validation clock must be timezone-aware")
+    reference = reference.astimezone(timezone.utc)
+    if value is None or value == "":
+        return reference.isoformat().replace("+00:00", "Z")
+    if type(value) is not str or not 1 <= len(value) <= 48 or "\x00" in value:
+        raise ValueError("receipt observed_at must be a bounded timezone-aware ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("receipt observed_at must include a timezone")
+        normalized = parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
+        raise ValueError("invalid receipt observed_at timestamp") from exc
+    if normalized > reference + timedelta(seconds=_MAX_RECEIPT_CLOCK_SKEW_SECONDS):
+        raise ValueError("receipt observed_at is too far in the future")
+    return normalized.isoformat().replace("+00:00", "Z")
+
+
 def load_contracts(path: Path | None = None) -> dict:
     target = path or CONTRACT_FILE
     raw = json.loads(target.read_text(encoding="utf-8"))
@@ -31,7 +59,7 @@ def load_contracts(path: Path | None = None) -> dict:
     if not isinstance(pools, dict) or not pools:
         raise ValueError("project-contracts.json resource_pools must be a non-empty object")
     for name, pool in pools.items():
-        if not isinstance(pool, dict) or not isinstance(pool.get("slots"), int) or pool["slots"] < 0:
+        if not isinstance(pool, dict) or type(pool.get("slots")) is not int or pool["slots"] < 0:
             raise ValueError(f"resource pool {name!r} requires non-negative integer slots")
     for project_id, contract in projects.items():
         if not isinstance(contract, dict):
@@ -165,6 +193,40 @@ def _receipt_payload(row) -> dict | None:
     return item
 
 
+_RECEIPT_TEXT_LIMITS = {
+    "phase": 240,
+    "action": 1000,
+    "commit_sha": 80,
+    "blocker": 1000,
+    "next_gate": 1000,
+    "source": 300,
+}
+
+
+def validated_receipt_text(**fields: str) -> dict[str, str]:
+    """Preserve exact stored values or fail before a receipt write.
+
+    Errors name only the field and limit; never echo confidential contents.
+    Values retain the prior optional None/empty-string normalization.
+    """
+    unexpected = set(fields) - set(_RECEIPT_TEXT_LIMITS)
+    if unexpected:
+        raise ValueError("unknown receipt text fields")
+    result: dict[str, str] = {}
+    for name, value in fields.items():
+        text = str(value or "")
+        if len(text) > _RECEIPT_TEXT_LIMITS[name]:
+            raise ValueError(f"receipt {name} exceeds {_RECEIPT_TEXT_LIMITS[name]} characters")
+        if "\x00" in text:
+            raise ValueError(f"receipt {name} contains a NUL character")
+        try:
+            text.encode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError(f"receipt {name} contains invalid Unicode") from exc
+        result[name] = text
+    return result
+
+
 def record_receipt(
     connection: sqlite3.Connection,
     project_id: str,
@@ -183,8 +245,12 @@ def record_receipt(
     ci_status = str(ci_status or "").lower()
     if ci_status not in {"", "queued", "in_progress", "success", "failure", "cancelled", "skipped"}:
         raise ValueError("unsupported ci_status")
-    observed_at = str(observed_at or _now())
+    observed_at = validated_receipt_timestamp(observed_at)
     created_at = _now()
+    text_fields = validated_receipt_text(
+        phase=phase, action=action, commit_sha=commit_sha, blocker=blocker,
+        next_gate=next_gate, source=source,
+    )
     evidence_json = _serialize_receipt_evidence(evidence)
     cursor = connection.execute(
         """INSERT INTO project_state_receipts(
@@ -193,13 +259,13 @@ def record_receipt(
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         (
             str(project_id),
-            str(phase or "")[:240],
-            str(action or "")[:1000],
-            str(commit_sha or "")[:80],
+            text_fields["phase"],
+            text_fields["action"],
+            text_fields["commit_sha"],
             ci_status,
-            str(blocker or "")[:1000],
-            str(next_gate or "")[:1000],
-            str(source or "")[:300],
+            text_fields["blocker"],
+            text_fields["next_gate"],
+            text_fields["source"],
             observed_at,
             evidence_json,
             created_at,
@@ -233,7 +299,10 @@ def receipt_coverage(
     project_ids = sorted({str(project_id).strip() for project_id in project_ids if str(project_id).strip()})
     max_age_seconds = max(60, int(max_age_seconds or 24 * 3600))
     try:
-        reference = datetime.fromisoformat(str(now_value)).astimezone(timezone.utc) if now_value else datetime.now(timezone.utc)
+        reference = datetime.fromisoformat(str(now_value)) if now_value else datetime.now(timezone.utc)
+        if reference.tzinfo is None or reference.utcoffset() is None:
+            raise ValueError("receipt coverage reference must include an explicit timezone")
+        reference = reference.astimezone(timezone.utc)
     except Exception as exc:
         raise ValueError("invalid receipt coverage reference time") from exc
     receipts = latest_receipts(connection)
@@ -251,11 +320,17 @@ def receipt_coverage(
             invalid.append(project_id)
             continue
         try:
-            observed = datetime.fromisoformat(str(receipt.get("observed_at") or "")).astimezone(timezone.utc)
+            observed = datetime.fromisoformat(str(receipt.get("observed_at") or ""))
+            if observed.tzinfo is None or observed.utcoffset() is None:
+                raise ValueError("receipt observation must include an explicit timezone")
+            observed = observed.astimezone(timezone.utc)
         except Exception:
             invalid.append(project_id)
             continue
-        age_seconds = max(0, int((reference - observed).total_seconds()))
+        if observed > reference:
+            invalid.append(project_id)
+            continue
+        age_seconds = ceil((reference - observed).total_seconds())
         receipt_ids[project_id] = receipt.get("id")
         if age_seconds > max_age_seconds:
             stale.append({"project_id": project_id, "age_seconds": age_seconds, "receipt_id": receipt.get("id")})
@@ -313,6 +388,34 @@ def _lease_payload(row) -> dict | None:
     return item
 
 
+def _valid_resource_owner(owner_id: object) -> bool:
+    """Do not truncate lease identities: lookup, renewal and release must agree."""
+    if (not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 200
+            or not owner_id.strip() or "\x00" in owner_id):
+        return False
+    try:
+        owner_id.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _resource_metadata_json(metadata: dict | None) -> str | None:
+    """Serialize a complete JSON object or deny admission before SQLite writes."""
+    if metadata is not None and not isinstance(metadata, dict):
+        return None
+    try:
+        encoded = json.dumps(
+            {} if metadata is None else metadata,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+        if len(encoded.encode("utf-8")) > 4000:
+            return None
+    except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+        return None
+    return encoded
+
+
 def _cleanup_expired(connection: sqlite3.Connection, now_value: str | None = None) -> None:
     connection.execute("DELETE FROM resource_leases WHERE lease_until<=?", (now_value or _now(),))
 
@@ -325,6 +428,18 @@ def acquire_resource(
     lease_seconds: int = 1800,
     metadata: dict | None = None,
 ) -> dict:
+    if not _valid_resource_owner(owner_id):
+        return {"acquired": False, "reason": "invalid_owner_id", "project_id": project_id}
+    metadata_json = _resource_metadata_json(metadata)
+    if metadata_json is None:
+        return {"acquired": False, "reason": "invalid_resource_metadata", "project_id": project_id}
+    # The cleanup DELETE reserves a write transaction for the capacity COUNT
+    # only on transactional connections. Autocommit could release its lock
+    # before INSERT, admitting two different owners into a one-slot pool.
+    auto = getattr(connection, "autocommit", None)
+    if auto is True or (auto is not False and connection.isolation_level is None):
+        return {"acquired": False, "reason": "transactional_resource_connection_required",
+                "project_id": project_id}
     contracts = load_contracts()
     contract = project_contract(project_id, contracts)
     compute = dict(contract.get("compute") or {})
@@ -347,7 +462,7 @@ def acquire_resource(
             "UPDATE resource_leases SET lease_until=?,metadata_json=? WHERE project_id=? AND owner_id=?",
             (
                 until,
-                json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:4000],
+                metadata_json,
                 project_id,
                 owner_id,
             ),
@@ -356,6 +471,8 @@ def acquire_resource(
             "SELECT * FROM resource_leases WHERE project_id=? AND owner_id=?",
             (project_id, owner_id),
         ).fetchone()
+        if row is None:
+            raise RuntimeError("resource_lease_renewal_missing")
         return {"acquired": True, "renewed": True, "lease": _lease_payload(row)}
     used = int(
         connection.execute(
@@ -386,24 +503,28 @@ def acquire_resource(
         ) VALUES(?,?,?,?,?,?,?,?,?)""",
         (
             project_id,
-            str(owner_id)[:200],
+            owner_id,
             pool_name,
             str(compute.get("class") or "unknown"),
             float(compute.get("cpu_soft_cores") or 0),
             int(compute.get("memory_soft_mb") or 0),
             ts,
             until,
-            json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:4000],
+            metadata_json,
         ),
     )
     row = connection.execute(
         "SELECT * FROM resource_leases WHERE project_id=? AND owner_id=?",
         (project_id, owner_id),
     ).fetchone()
+    if row is None:
+        raise RuntimeError("resource_lease_insert_missing")
     return {"acquired": True, "renewed": False, "lease": _lease_payload(row)}
 
 
 def release_resource(connection: sqlite3.Connection, project_id: str, owner_id: str) -> dict:
+    if not _valid_resource_owner(owner_id):
+        return {"released": False, "reason": "invalid_owner_id"}
     cursor = connection.execute(
         "DELETE FROM resource_leases WHERE project_id=? AND owner_id=?",
         (project_id, owner_id),
@@ -411,10 +532,12 @@ def release_resource(connection: sqlite3.Connection, project_id: str, owner_id: 
     return {"released": cursor.rowcount == 1}
 
 
-def resource_status(connection: sqlite3.Connection) -> dict:
+def resource_status(connection: sqlite3.Connection, *, prune_expired: bool = True) -> dict:
+    """Display active leases without mutating SQLite for diagnostic GET calls."""
     contracts = load_contracts()
     ts = _now()
-    _cleanup_expired(connection, ts)
+    if prune_expired:
+        _cleanup_expired(connection, ts)
     rows = connection.execute(
         "SELECT * FROM resource_leases WHERE lease_until>? ORDER BY pool,acquired_at", (ts,)
     ).fetchall()

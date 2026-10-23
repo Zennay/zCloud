@@ -35,6 +35,10 @@ def main(argv=None) -> int:
     receipt.add_argument("--blocker", default="")
     receipt.add_argument("--next-gate", default="")
     receipt.add_argument("--source", default="cli")
+    receipt.add_argument(
+        "--observed-at",
+        help="Timezone-aware ISO-8601 source observation time; defaults to current UTC",
+    )
     receipt.add_argument("--evidence-json", default="{}")
 
     acquire = sub.add_parser("acquire")
@@ -50,12 +54,40 @@ def main(argv=None) -> int:
     sub.add_parser("status")
 
     args = parser.parse_args(argv)
+    # A rejected receipt must not even initialize its SQLite database. This
+    # applies to CLI producers in addition to the core record_receipt guard.
+    evidence = None
+    observed_at = None
+    if args.command == "receipt":
+        runtime.project_contract(args.project)
+        observed_at = runtime.validated_receipt_timestamp(args.observed_at)
+        runtime.validated_receipt_text(
+            phase=args.phase, action=args.action, commit_sha=args.commit,
+            blocker=args.blocker, next_gate=args.next_gate, source=args.source,
+        )
+        normalized_status = str(args.ci_status or "").lower()
+        if normalized_status not in {
+            "", "queued", "in_progress", "success", "failure", "cancelled", "skipped"
+        }:
+            raise ValueError("unsupported ci_status")
+        evidence = json.loads(args.evidence_json)
+        if not isinstance(evidence, dict):
+            raise ValueError("--evidence-json must be an object")
+        runtime._serialize_receipt_evidence(evidence)
+    if args.command in {"acquire", "release"}:
+        if not runtime._valid_resource_owner(args.owner):
+            raise ValueError("--owner must be nonempty, valid UTF-8, NUL-free and <= 200 characters")
+    if args.command == "acquire":
+        runtime.project_contract(args.project)
+        args.validated_metadata = json.loads(
+            args.metadata_json,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("invalid resource metadata")),
+        )
+        if runtime._resource_metadata_json(args.validated_metadata) is None:
+            raise ValueError("--metadata-json must be a finite object of <= 4000 UTF-8 bytes")
     conn = connect(args.db)
     try:
         if args.command == "receipt":
-            evidence = json.loads(args.evidence_json)
-            if not isinstance(evidence, dict):
-                raise ValueError("--evidence-json must be an object")
             result = runtime.record_receipt(
                 conn,
                 args.project,
@@ -66,21 +98,19 @@ def main(argv=None) -> int:
                 blocker=args.blocker,
                 next_gate=args.next_gate,
                 source=args.source,
+                observed_at=observed_at,
                 evidence=evidence,
             )
             conn.commit()
             print(json.dumps({"ok": True, "receipt": result}, ensure_ascii=False, sort_keys=True))
             return 0
         if args.command == "acquire":
-            metadata = json.loads(args.metadata_json)
-            if not isinstance(metadata, dict):
-                raise ValueError("--metadata-json must be an object")
             result = runtime.acquire_resource(
                 conn,
                 args.project,
                 args.owner,
                 lease_seconds=args.lease_seconds,
-                metadata=metadata,
+                metadata=args.validated_metadata,
             )
             conn.commit()
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
