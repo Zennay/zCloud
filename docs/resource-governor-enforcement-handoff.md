@@ -618,6 +618,36 @@ These are focused arithmetic checks, **not** existing CI,
 a complete integration test, or a live
 FTMO/HaxLab/LightUp governor canary.
 
+## Exact-head regression execution · 23 October
+
+The existing `tests/test_zcloud_governed_exec.py` module now includes four
+targeted regression cases for dedicated-heavy versus shared/ancestor
+cgroup memory arithmetic, unknown-origin expired heavy PIDs, detached
+same-service workers and PID-less pre-renewal crash recovery. No
+additional test framework or workflow was introduced.
+
+A real isolated test execution against the immutable current PR-head
+executor and tests, with `project_runtime.py` and
+`lane_generator.py` from the recorded `main` source, completed:
+**8 tests, 0 failures, 0 errors**, including the four existing
+execution/lease tests. The test harness used an automatically cleaned
+temporary directory, its own in-memory or temporary SQLite and
+lightweight bounded subprocesses, **not production `history.db`**.
+This is separate from queued GitHub Actions CI and not a live shared-pool
+concurrency receipt.
+
+The first run identified a real host compatibility bug:
+`/sys/fs/cgroup/memory.max` is absent at the cgroup-v2 **mount root**
+on the connected Linux VPS, although `/sys/fs/cgroup/cgroup.controllers`
+and subordinate memory controls exist. The earlier source tried to
+read the root's `memory.max` unconditionally and three original
+execution tests failed. The executor now treats a missing **mount
+root only** `memory.max` as unlimited. Missing or unreadable memory
+controls at a real child/ancestor cgroup still fail closed. An
+additional test fixture verifies both root-present and root-absent
+cases. After correcting that source defect and fixture, all eight
+targeted cases passed.
+
 ## What remains before this milestone is DONE
 
 This is not yet complete production enforcement. The existing FTMO entrypoint,
