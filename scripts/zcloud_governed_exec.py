@@ -157,7 +157,8 @@ def _bounded_cpu_count(value, available: int) -> int:
     return max(1, min(max(1, int(available)), requested))
 
 
-def _apply_process_limits(project_id: str, parent_pid: int | None = None) -> None:
+def _apply_process_limits(project_id: str, parent_pid: int | None = None,
+                          compute: dict | None = None) -> None:
     """Apply inherited Linux process bounds from the canonical project contract."""
     if sys.platform == "linux" and parent_pid is not None:
         # If the governor wrapper itself is SIGKILLed or crashes, Linux
@@ -171,7 +172,11 @@ def _apply_process_limits(project_id: str, parent_pid: int | None = None) -> Non
         if os.getppid() != parent_pid:
             os._exit(75)
 
-    compute = dict(runtime.project_contract(project_id).get("compute") or {})
+    # The admitted compute contract must be identical to the inherited
+    # child limits; reloading it in the fork could select a different pool
+    # or budget if configuration changes between admission and launch.
+    compute = dict(compute if compute is not None else
+                   (runtime.project_contract(project_id).get("compute") or {}))
 
     if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
         allowed = sorted(os.sched_getaffinity(0))
@@ -541,7 +546,7 @@ def run_governed(
         proc = subprocess.Popen(
             list(command),
             env=env,
-            preexec_fn=lambda: _apply_process_limits(project_id, wrapper_pid),
+            preexec_fn=lambda: _apply_process_limits(project_id, wrapper_pid, compute),
             start_new_session=True,
         )
         if termination_requested is not None:
