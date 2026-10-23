@@ -155,7 +155,7 @@ def _legacy_haxlab_training_active() -> bool:
                 if name not in {"node", "nodejs"}:
                     continue
                 try:
-                    tokens = (directory / "cmdline").read_bytes().split(b"\\x00")
+                    tokens = (directory / "cmdline").read_bytes().split(b"\x00")
                 except FileNotFoundError:
                     continue
                 except OSError as exc:
