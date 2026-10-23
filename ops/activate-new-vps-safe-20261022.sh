@@ -129,33 +129,51 @@ command -v awk >/dev/null 2>&1 || {
   exit 3
 }
 
-# Explicit, narrowly scoped operator action. No production containers started.
-# Do not start Docker if the archive service does not establish its real mount.
-systemctl enable --now "$ARCHIVE_UNIT"
-
+# Explicit operator action: start existing units first, verify their *actual*
+# readiness, then persist enablement. A broken archive or Docker daemon must
+# not be permanently enabled simply because systemd accepted the start.
+# Never stop any pre-existing service or runner as an implicit rollback.
+systemctl start "$ARCHIVE_UNIT" || {
+  echo 'ERROR: archive service failed to start; no Docker action attempted' >&2
+  exit 4
+}
 systemctl is-active --quiet "$ARCHIVE_UNIT" || {
-  echo 'ERROR: archive service not active after enable' >&2
+  echo 'ERROR: archive service is not active; no Docker action attempted' >&2
   exit 4
 }
 archive_mount_is_verified || {
-  echo "ERROR: archive service is active but $ARCHIVE_MOUNT is not a verified read-only fuse.rclone mount" >&2
+  echo "ERROR: $ARCHIVE_MOUNT is not a verified read-only fuse.rclone mount; Docker not started" >&2
   exit 4
 }
-systemctl enable --now "$DOCKER_UNIT"
+systemctl start "$DOCKER_UNIT" || {
+  echo 'ERROR: Docker service failed to start; no service enablement attempted' >&2
+  exit 4
+}
 systemctl is-active --quiet "$DOCKER_UNIT" || {
-  echo 'ERROR: Docker service not active after enable' >&2
+  echo 'ERROR: Docker service not active; no service enablement attempted' >&2
   exit 4
 }
 DOCKER_VERSION="$(docker_api_version)" || {
-  echo 'ERROR: Docker daemon API did not respond within 10 seconds' >&2
+  echo 'ERROR: Docker daemon API did not respond within 10 seconds; no service enablement attempted' >&2
   exit 4
 }
 [[ -n "$DOCKER_VERSION" ]] || {
-  echo 'ERROR: Docker daemon returned no server version' >&2
+  echo 'ERROR: Docker daemon returned no server version; no service enablement attempted' >&2
   exit 4
 }
 echo "Docker API reachable: server_version=$DOCKER_VERSION"
 
-echo 'BASE_SERVICES_READY: Docker API reachable and external archive mount verified.'
+# Persist desired base-service start-on-boot only after both probes pass.
+# If an enable step fails, report partial configuration rather than claiming
+# ready. Do not tear down services that could already serve other owners.
+systemctl enable "$ARCHIVE_UNIT" || {
+  echo 'ERROR: archive unit enable failed; running services have not been stopped' >&2
+  exit 4
+}
+systemctl enable "$DOCKER_UNIT" || {
+  echo 'ERROR: Docker unit enable failed; archive may already be enabled; manual reconciliation required' >&2
+  exit 4
+}
+echo 'BASE_SERVICES_READY: Docker API responsive, read-only archive verified, both units enabled.'
 echo 'No GitHub runners, zCloud, training, browser or containers altered.'
 echo 'The final SQLite writer fence, independent training disk and worker registration are separate gated cutovers.'
