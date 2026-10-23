@@ -105,6 +105,46 @@ def _admission_denied(result: dict) -> None:
     }, sort_keys=True), file=sys.stderr)
 
 
+def _group_rss_bytes(group_id: int) -> int:
+    """Read bounded aggregate resident memory for the inherited process group.
+
+    Per-process RLIMIT_AS does not bound a whole forked training workload.
+    Unobservable /proc data is unsafe admission evidence, not zero usage.
+    """
+    used = 0
+    inspected = 0
+    try:
+        with os.scandir("/proc") as processes:
+            for item in processes:
+                if not item.name.isdecimal():
+                    continue
+                inspected += 1
+                if inspected > 20000:
+                    raise RuntimeError("resource_process_inventory_unbounded")
+                try:
+                    stat_fields = (Path("/proc") / item.name / "stat").read_text().rpartition(")")[2].split()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RuntimeError("resource_process_inventory_unavailable") from exc
+                if len(stat_fields) < 3:
+                    raise RuntimeError("resource_process_stat_invalid")
+                if int(stat_fields[2]) != group_id or stat_fields[0] in {"Z", "X"}:
+                    continue
+                try:
+                    statm = (Path("/proc") / item.name / "statm").read_text().split()
+                    if len(statm) < 2:
+                        raise RuntimeError("resource_process_memory_unavailable")
+                    used += int(statm[1]) * os.sysconf("SC_PAGE_SIZE")
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError) as exc:
+                    raise RuntimeError("resource_process_memory_unavailable") from exc
+    except OSError as exc:
+        raise RuntimeError("resource_process_inventory_unavailable") from exc
+    return used
+
+
 def _signal_process_group(proc: subprocess.Popen | None, signum: int) -> None:
     if proc is None:
         return
@@ -171,6 +211,10 @@ def run_governed(
 
     lease_seconds = max(60, min(6 * 3600, int(lease_seconds or 300)))
     renew_seconds = max(5, min(int(renew_seconds or 60), max(5, lease_seconds // 2)))
+    compute = dict(runtime.project_contract(project_id).get("compute") or {})
+    memory_budget = int(compute.get("memory_soft_mb") or 0) * 1024 * 1024
+    if compute.get("pool") == "heavy" and memory_budget <= 0:
+        raise RuntimeError("heavy_memory_budget_unavailable")
     conn = connect(Path(db_path))
     proc = None
     old_handlers = {}
@@ -237,12 +281,27 @@ def run_governed(
             signal.signal(signum, forward)
 
         next_renewal = time.monotonic() + renew_seconds
+        next_memory_check = time.monotonic()
         while True:
             returncode = proc.poll()
             if returncode is not None:
                 return _exit_code(returncode)
 
             now = time.monotonic()
+            if memory_budget > 0 and now >= next_memory_check:
+                try:
+                    memory_used = _group_rss_bytes(proc.pid)
+                    if memory_used > memory_budget:
+                        _stop_process_group(proc)
+                        print('{"acquired":false,"reason":"governed_group_memory_budget_exceeded"}',
+                              file=sys.stderr)
+                        return 75
+                except RuntimeError:
+                    _stop_process_group(proc)
+                    print('{"acquired":false,"reason":"governed_group_memory_evidence_unavailable"}',
+                          file=sys.stderr)
+                    return 75
+                next_memory_check = now + 2.0
             if now >= next_renewal:
                 renewed = runtime.acquire_resource(
                     conn,
