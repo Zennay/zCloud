@@ -28,3 +28,7 @@ The no-new-QA user policy remains in force: do not author, expand, or manually r
 - PR-first and no endless draft/test-only loops.
 - Other safe tasks continue when a single PR is gated.
 - A blocked or failed release gate does not become automatic rollout permission.
+
+## 23 October 2026 — periodic merge & live turns
+
+Continuation turns are normally the short `Ga door met <project>.`, which let workers drift back to building while finished PRs stayed open. Every `RELEASE_TURN_EVERY`-th continuation turn (default 3, `server.py`) the browser engine appends `project_release_turn_prompt`: a dedicated mission to merge open, unclaimed PRs through GitHub, roll merged `main` out via the project's existing deploy route where its release gates allow it, verify the live SHA, and report per PR merged / live / blocked. All gates above still apply; the turn grants no bypass.

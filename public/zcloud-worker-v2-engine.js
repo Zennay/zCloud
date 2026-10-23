@@ -188,10 +188,25 @@
     const part=/^Werk verder aan ([^.\n]{2,80})\./.exec(full)?.[1]||"";
     const project=part.startsWith("het herstel van ")?"zSentinel":
       (part||String(target?.base_project_id||id.split("::w")[0]));
-    return "Ga door met "+project+".";
+    const short="Ga door met "+project+".";
+    return releaseTurnDue()?short+" "+String(target.release_turn_prompt).trim():short;
+  }
+  // Every Nth continuation turn becomes an explicit merge-to-main + go-live
+  // mission, so finished PRs do not stay open behind "Ga door met".
+  const releaseTurnKey="zcloud-v2-release-turn:"+id;
+  function continuationTurns(){
+    try{return Number(sessionStorage.getItem(releaseTurnKey)||0)||0}catch(_){return 0}
+  }
+  function releaseTurnDue(){
+    const every=Number(target?.release_turn_every||0);
+    if(!every||!String(target?.release_turn_prompt||"").trim())return false;
+    return (continuationTurns()+1)%every===0;
   }
   function noteFullContextSent(full,actual){
-    if(actual!==full)return;
+    if(actual!==full){
+      try{sessionStorage.setItem(releaseTurnKey,String(continuationTurns()+1))}catch(_){}
+      return;
+    }
     try{sessionStorage.setItem(initialContextKey,JSON.stringify({
       queue:String(target?.queue_item?.queue_id||""),
       policy:fullContextPolicy(full),
