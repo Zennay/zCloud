@@ -31,7 +31,7 @@ backend_ready() {
   [[ "$sockets" = '127.0.0.1:8765' ]] || return 1
   curl --noproxy '*' --fail --silent --max-time 5 \
     http://127.0.0.1:8765/api/status |
-    python3 -c 'import json,sys; x=json.load(sys.stdin); assert isinstance(x,dict) and x.get("time") and isinstance(x.get("projects"),list)'
+    python3 -c 'import datetime,json,sys; x=json.load(sys.stdin); assert isinstance(x,dict) and isinstance(x.get("projects"),list); raw=x.get("time"); assert isinstance(raw,str) and raw; t=datetime.datetime.fromisoformat(raw.replace("Z","+00:00")); assert t.tzinfo is not None and t.utcoffset() is not None; age=(datetime.datetime.now(datetime.timezone.utc)-t.astimezone(datetime.timezone.utc)).total_seconds(); assert -120 <= age <= 300'
 }
 
 dns_ready() {
