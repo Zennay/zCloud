@@ -3647,3 +3647,8 @@ When `--source-pr` is supplied, the scope guard now reads the actual GitHub targ
 - `unavailable`: either independent target-branch read could not be established.
 
 Only `current` permits the selected-source scan to count as complete. The tool still reports observed path collisions when freshness is uncertain, but it cannot present a stale-base or changing-base sample as complete. This is a read-only evidence guard, not a rebase, mergeability, ownership, approval or merge-authority claim.
+
+
+## Machine-readable owner next step
+
+Every observation now includes `source_scope_blockers` and `recommended_next_step_code`. Codes distinguish a stale selected-PR base, a target branch that moved during the scan, an unavailable branch-tip read, a changed source PR, unstable open-PR snapshots, truncated file lists, and bounded-window/alias coverage limits. The recommendation routes to owner-led branch refresh or a new bounded observation; it never grants claim, edit, merge or deploy authority. Text, HTML and Markdown expose the same next-step code and blocker list as JSON.
