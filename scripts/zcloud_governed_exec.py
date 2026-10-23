@@ -1214,6 +1214,19 @@ def run_governed(
             })
             return 75
 
+        if (compute.get("pool") == "heavy" and live_authority
+                and not _owned_heavy_generation_active(
+                    conn, project_id, owner_id, acquired_at
+                )):
+            # A separate writer may have revoked this exact heavy lease
+            # between transaction commit and the Popen boundary. Never
+            # start a research tree on a slot it no longer owns.
+            _admission_denied({
+                "reason": "resource_heavy_lease_generation_lost",
+                "project_id": project_id,
+            })
+            return 75
+
         env = os.environ.copy()
         env["ZCLOUD_RESOURCE_PROJECT"] = str(project_id)
         env["ZCLOUD_RESOURCE_OWNER"] = str(owner_id)
