@@ -64,7 +64,29 @@ bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --status
 sudo env ZCLOUD_DNS_CUTOVER_CONFIRMED=yes \
   ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes \
   bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
+# After approval and actual publication, independently confirm logged-in use:
+sudo env ZCLOUD_DASHBOARD_NETRC=/root/.zcloud-dashboard-verify.netrc \
+  bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --verify
 ~~~
+
+### Authenticated application verification (read-only)
+
+`--verify` does **not** start or restart services or write to Caddy, SQLite,
+GitHub runners, the browser, or the dashboard. A privileged operator must
+securely prepare `/root/.zcloud-dashboard-verify.netrc` with the approved
+dashboard credentials using a private mechanism (not a command-line password,
+GitHub, Notion or CI). The file must be a regular, root-owned, root-group,
+mode-0600 file, non-symlink, with at most 4 KiB content. Never include its
+contents in logs or receipts; remove it after the operator verification
+window if no longer needed.
+
+The read-only verifier requires a healthy loopback backend, matching resolver
+DNS, anonymous HTTP 401 for the homepage and critical API endpoints, a valid
+authenticated zCloud HTML page and an authenticated `/api/status` JSON
+response with timezone-aware freshness (at most five minutes old and at most
+two minutes in the future). HTML and JSON are size- and time-bounded and
+are not printed. Only a constant success indicator is emitted. This does
+not grant deployment rights or certify external network reachability.
 
 The script refuses extra arguments, a wrong host, unhealthy or non-loopback
 API, missing cutover/DNS-owner attestations, IPv4/IPv6 DNS drift, invalid
@@ -92,8 +114,9 @@ The operator must independently confirm from another network that:
 - no old/new scheduler duplicate writes or worker leases exist.
 
 HTTP 401 on the four unauthenticated probes is an auth-boundary check, not
-proof that an authorized user can see the dashboard. No credentials are
-provided or printed by the script.
+proof that an authorized user can see the dashboard. The optional `--verify`
+mode checks authenticated page and API behavior without echoing credentials;
+independent external-network confirmation remains required.
 Do not mark public-live until an authenticated application response is shown.
 
 ## Release truth
