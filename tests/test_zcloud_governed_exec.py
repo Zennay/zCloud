@@ -246,6 +246,54 @@ class GovernedExecTests(unittest.TestCase):
             self.assertFalse(running, "over-budget child survived release")
 
     @unittest.skipUnless(sys.platform == "linux", "Linux process groups required")
+    def test_revoked_heavy_lease_before_popen_never_starts_child(self):
+        # Simulate a separate authorized runtime writer revoking the exact
+        # committed generation in the narrow window before Popen.
+        # Cleanup must not delete an unrelated successor or turn a
+        # deliberate safety denial into an uncaught exception.
+        initial = self._connect()
+        initial.commit()
+        initial.close()
+        marker = self.root / "revoked-before-popen-must-not-start.txt"
+
+        def revoke_generation(conn, project_id, owner_id, acquired_at):
+            external = sqlite3.connect(self.db, timeout=5)
+            try:
+                external.execute(
+                    "DELETE FROM resource_leases WHERE project_id=? "
+                    "AND owner_id=? AND acquired_at=?",
+                    (project_id, owner_id, acquired_at),
+                )
+                external.commit()
+            finally:
+                external.close()
+            return False
+
+        with mock.patch.dict(os.environ, {"ZCLOUD_RESOURCE_DB": str(self.db)}):
+            with mock.patch.object(governed, "_require_heavy_unit_bounds"):
+                with mock.patch.object(governed, "_owned_service_cgroup_drained", return_value=True):
+                    with mock.patch.object(governed, "_service_cgroup_for_pid", return_value="/test.slice/research.service"):
+                        with mock.patch.object(governed, "_local_boot_identity", return_value="11111111-1111-4111-8111-111111111111"):
+                            with mock.patch.object(governed, "_legacy_haxlab_training_active", return_value=False):
+                                with mock.patch.object(governed, "_owned_heavy_generation_active", side_effect=revoke_generation):
+                                    result = governed.run_governed(
+                                        self.db, "ftmo", "revoke-before-popen",
+                                        [sys.executable, "-c",
+                                         f"from pathlib import Path; Path({str(marker)!r}).write_text('unexpected')"],
+                                    )
+        self.assertEqual(75, result)
+        self.assertFalse(marker.exists())
+        conn = self._connect()
+        try:
+            self.assertEqual(
+                0, conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE project_id='ftmo' AND owner_id='revoke-before-popen'"
+                ).fetchone()[0],
+            )
+        finally:
+            conn.close()
+
     def test_lost_lease_generation_stops_child_without_deleting_successor(self):
         # Emulate another writer replacing the lease generation while a
         # bounded child is running. The wrapper must terminate its child
