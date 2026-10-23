@@ -30,6 +30,10 @@ unit_active() {
   systemctl is-active "$1" 2>/dev/null || true
 }
 
+unit_enabled() {
+  systemctl is-enabled "$1" 2>/dev/null || true
+}
+
 docker_api_version() {
   command -v docker >/dev/null 2>&1 || return 1
   command -v timeout >/dev/null 2>&1 || return 1
@@ -45,7 +49,9 @@ archive_mount_is_verified() {
 echo "=== NEW VPS BASE SERVICES: $MODE ==="
 echo "host=$EXPECTED_HOST"
 echo "archive=$(unit_load "$ARCHIVE_UNIT")/$(unit_active "$ARCHIVE_UNIT")"
+echo "archive_enabled=$(unit_enabled "$ARCHIVE_UNIT")"
 echo "docker=$(unit_load "$DOCKER_UNIT")/$(unit_active "$DOCKER_UNIT")"
+echo "docker_enabled=$(unit_enabled "$DOCKER_UNIT")"
 if DOCKER_VERSION="$(docker_api_version)" && [[ -n "$DOCKER_VERSION" ]]; then
   echo "docker_api=reachable/$DOCKER_VERSION"
 else
@@ -128,6 +134,29 @@ command -v awk >/dev/null 2>&1 || {
   echo 'REFUSED: awk utility missing; cannot verify archive mount' >&2
   exit 3
 }
+command -v flock >/dev/null 2>&1 || {
+  echo 'REFUSED: flock utility missing; cannot serialize base activation' >&2
+  exit 3
+}
+
+# Serialize this exact host-bound activation before any service start or
+# persistent enablement. --status exits above and remains entirely read-only.
+exec 9>/run/lock/zcloud-new-vps-base-activation.lock
+flock -n 9 || {
+  echo 'REFUSED: another base activation is already running' >&2
+  exit 4
+}
+
+# Refuse unusual unit states rather than changing masked/static/runtime-only
+# units or guessing what their current enablement means.
+ARCHIVE_ENABLED_BEFORE="$(unit_enabled "$ARCHIVE_UNIT")"
+DOCKER_ENABLED_BEFORE="$(unit_enabled "$DOCKER_UNIT")"
+for state in "$ARCHIVE_ENABLED_BEFORE" "$DOCKER_ENABLED_BEFORE"; do
+  case "$state" in
+    enabled|disabled) ;;
+    *) echo "REFUSED: unexpected base-service enablement state: $state" >&2; exit 3 ;;
+  esac
+done
 
 # Explicit operator action: start existing units first, verify their *actual*
 # readiness, then persist enablement. A broken archive or Docker daemon must
@@ -166,14 +195,26 @@ echo "Docker API reachable: server_version=$DOCKER_VERSION"
 # Persist desired base-service start-on-boot only after both probes pass.
 # If an enable step fails, report partial configuration rather than claiming
 # ready. Do not tear down services that could already serve other owners.
-systemctl enable "$ARCHIVE_UNIT" || {
-  echo 'ERROR: archive unit enable failed; running services have not been stopped' >&2
+if [[ "$ARCHIVE_ENABLED_BEFORE" == disabled ]]; then
+  systemctl enable "$ARCHIVE_UNIT" || {
+    echo 'ERROR: archive unit enable failed; running services have not been stopped' >&2
+    exit 4
+  }
+fi
+[[ "$(unit_enabled "$ARCHIVE_UNIT")" == enabled ]] || {
+  echo 'ERROR: archive unit enablement read-back did not confirm persistent enabled state' >&2
   exit 4
 }
-systemctl enable "$DOCKER_UNIT" || {
-  echo 'ERROR: Docker unit enable failed; archive may already be enabled; manual reconciliation required' >&2
+if [[ "$DOCKER_ENABLED_BEFORE" == disabled ]]; then
+  systemctl enable "$DOCKER_UNIT" || {
+    echo 'ERROR: Docker unit enable failed; archive may already be enabled; manual reconciliation required' >&2
+    exit 4
+  }
+fi
+[[ "$(unit_enabled "$DOCKER_UNIT")" == enabled ]] || {
+  echo 'ERROR: Docker unit enablement read-back did not confirm persistent enabled state' >&2
   exit 4
 }
-echo 'BASE_SERVICES_READY: Docker API responsive, read-only archive verified, both units enabled.'
+echo 'BASE_SERVICES_READY: Docker API responsive, read-only archive verified, both units persistently enabled and read back.'
 echo 'No GitHub runners, zCloud, training, browser or containers altered.'
 echo 'The final SQLite writer fence, independent training disk and worker registration are separate gated cutovers.'
