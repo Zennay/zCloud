@@ -147,6 +147,15 @@ def _legacy_haxlab_training_active() -> bool:
                     raise RuntimeError("resource_process_inventory_unbounded")
                 directory = Path("/proc") / item.name
                 try:
+                    # The observed trainer can spawn Python/Node descendants
+                    # with new argv values; its dedicated user-systemd scope
+                    # remains a more reliable signal that it is still active.
+                    cgroup = (directory / "cgroup").read_text()
+                    if any(line.partition("::")[2].strip().endswith(
+                            "/fuckball-ai-coach.service")
+                           for line in cgroup.splitlines()
+                           if line.startswith("0::")):
+                        return True
                     name = (directory / "comm").read_text().strip()
                 except FileNotFoundError:
                     continue
