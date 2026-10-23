@@ -5,7 +5,6 @@
 #        ZCLOUD_DNS_CUTOVER_CONFIRMED=yes ZCLOUD_SQLITE_CUTOVER_CONFIRMED=yes sudo -E bash ops/publish-zcloud-dashboard-new-vps-20261022.sh --apply
 set -Eeuo pipefail
 
-[[ $# -le 1 ]] || die 'usage: --status | --apply'
 MODE="${1:---status}"
 HOST='VM-7eb5ee16-2c71-440d-b7fd-8095d204e930'
 IP='95.211.40.88'
@@ -18,6 +17,7 @@ AUTH='/etc/caddy/zcloud-dashboard-auth.caddy'
 IMPORT='import /etc/caddy/sites-enabled/*'
 
 die() { printf 'REFUSED: %s\n' "$*" >&2; exit 2; }
+[[ $# -le 1 ]] || die 'usage: --status | --apply'
 say() { printf '%s\n' "$*"; }
 [[ "$MODE" = --status || "$MODE" = --apply ]] || die 'usage: --status | --apply'
 [[ "$(hostname)" = "$HOST" ]] || die 'wrong host'
@@ -71,10 +71,15 @@ PY
 }
 
 public_requires_login() {
-  local code
-  code="$(curl --noproxy '*' --silent --output /dev/null --max-time 12 \
-    --write-out '%{http_code}' "https://$DOMAIN/" || true)"
-  [[ "$code" = 401 ]]
+  # A protected homepage is not enough: privileged JSON API routes must also
+  # be denied to unauthenticated callers. Do not follow redirects or supply
+  # credentials; any 200/3xx/403/5xx is not proof of the intended auth gate.
+  local path code
+  for path in / /api/status /api/portfolio-queue /api/runner-targets; do
+    code="$(curl --proto '=https' --noproxy '*' --silent --output /dev/null --max-time 12 \
+      --write-out '%{http_code}' "https://$DOMAIN$path" || true)"
+    [[ "$code" = 401 ]] || return 1
+  done
 }
 
 SITE_ID=''
@@ -106,7 +111,7 @@ if dns_ready; then say 'dns=resolver_addresses_target_ipv4_no_ipv6'; else say 'd
 if import_ready; then say 'caddy_import=ready'; else say 'caddy_import=missing'; fi
 if auth_ready; then say 'auth=valid'; else say 'auth=missing_or_invalid'; fi
 if systemctl is-active --quiet caddy; then say 'caddy=active'; else say 'caddy=inactive'; fi
-if public_requires_login; then say 'external_https=401_auth_required'; else say 'external_https=not_proven'; fi
+if public_requires_login; then say 'external_https=homepage_and_critical_api_auth_required'; else say 'external_https=auth_not_proven_for_all_paths'; fi
 
 [[ "$MODE" = --apply ]] || exit 0
 [[ "$(printenv ZCLOUD_DNS_CUTOVER_CONFIRMED || true)" = yes ]] ||
