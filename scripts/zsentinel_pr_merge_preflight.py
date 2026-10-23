@@ -412,14 +412,19 @@ def _branch_protection_summary(payload, full_name, branch):
     if not isinstance(branch, str) or not branch or len(branch) > 255:
         raise GitHubReadError("branch protection branch identity is invalid")
 
-    required = payload.get("required_status_checks")
+    for key in ("required_status_checks", "required_pull_request_reviews", "restrictions"):
+        if key not in payload:
+            raise GitHubReadError("branch protection response omitted configuration field: " + key)
+    required = payload["required_status_checks"]
     contexts = []
     strict = None
     if required is not None:
         if type(required) is not dict:
             raise GitHubReadError("required status-check configuration is malformed")
-        raw_contexts = required.get("contexts", [])
-        raw_checks = required.get("checks", [])
+        if "contexts" not in required or "checks" not in required:
+            raise GitHubReadError("required status-check response omitted contexts or app checks")
+        raw_contexts = required["contexts"]
+        raw_checks = required["checks"]
         strict = required.get("strict")
         if type(raw_contexts) is not list or len(raw_contexts) > 64:
             raise GitHubReadError("required status-check contexts are unbounded")
@@ -468,7 +473,9 @@ def _branch_protection_summary(payload, full_name, branch):
         if type(restrictions) is not dict:
             raise GitHubReadError("push restrictions are malformed")
         for key in ("users", "teams", "apps"):
-            values = restrictions.get(key, [])
+            if key not in restrictions:
+                raise GitHubReadError("push restriction list is missing: " + key)
+            values = restrictions[key]
             if type(values) is not list or len(values) > 200:
                 raise GitHubReadError("push restriction list is malformed: " + key)
             if any(type(value) is not dict for value in values):
@@ -501,8 +508,8 @@ def _branch_protection_summary(payload, full_name, branch):
         "required_linear_history": enabled_object("required_linear_history"),
         "push_restrictions_enabled": restrictions is not None,
         "push_restriction_counts": ({
-            key: len(restrictions.get(key, [])) for key in ("users", "teams", "apps")
-        } if isinstance(restrictions, dict) else None),
+            key: len(restrictions[key]) for key in ("users", "teams", "apps")
+        } if isinstance(restrictions, dict) else {"users": 0, "teams": 0, "apps": 0}),
         "merge_authorized": False,
         "branch_protection_verified": False,
     }
