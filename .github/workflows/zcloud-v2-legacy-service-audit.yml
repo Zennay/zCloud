@@ -51,6 +51,7 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
