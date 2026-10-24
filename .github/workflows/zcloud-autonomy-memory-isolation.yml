@@ -10,6 +10,11 @@ on:
       - .github/workflows/zcloud-autonomy-memory-isolation.yml
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact current main SHA for explicitly approved read-only verification"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -55,7 +60,9 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     env:
@@ -75,6 +82,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "${{ inputs.confirm_sha }}" = "$GITHUB_SHA"
           test "$(id -un)" = ubuntu
           # Manual proof uses only a fresh, owner-dispatched canonical main.
           # A stale workflow_dispatch SHA may not be interpreted as current state.
