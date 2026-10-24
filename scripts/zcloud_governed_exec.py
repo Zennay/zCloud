@@ -1455,6 +1455,15 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
         live_authority = _uses_live_governor_authority(target)
         legacy_active = (_legacy_haxlab_training_active()
                          if live_authority else None)
+        # An expired lease can represent a still-running heavy process.
+        # Inspect the same recovery evidence as admission *without*
+        # calling runtime.resource_status (which prunes expired rows).
+        # An advisory snapshot must not advertise capacity which admission
+        # will conservatively deny. Isolated canaries have no shared
+        # production authority to reconcile.
+        expired_recovery = (_expired_heavy_group_active(
+            conn, live_authority=True
+        ) if live_authority and "heavy" in pools else None)
         if "heavy" in pools:
             heavy = pools["heavy"]
             heavy["legacy_unleased_training_detected"] = legacy_active
@@ -1462,8 +1471,9 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
                 "canonical_live_authority" if live_authority
                 else "not_checked_isolated_canary"
             )
+            heavy["expired_heavy_recovery_unresolved"] = expired_recovery
             heavy["effective_remaining"] = (
-                0 if legacy_active else heavy["remaining"]
+                0 if legacy_active or expired_recovery else heavy["remaining"]
             )
         return {
             "source": ("readonly_canonical_pool_snapshot" if live_authority
