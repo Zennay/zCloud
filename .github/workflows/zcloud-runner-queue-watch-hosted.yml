@@ -124,3 +124,33 @@ jobs:
           ]
           Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a").write("\n".join(lines) + "\n")
           PY
+
+      - name: Preserve narrow count-only observation for seven days
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          source = Path(os.environ["RUNNER_TEMP"]) / "zcloud-runner-queue-watch.json"
+          if not source.is_file() or source.is_symlink():
+              raise SystemExit(0)
+          payload = source.read_bytes()
+          if len(payload) > 16384:
+              raise SystemExit("queue_observation_unbounded")
+          # Refuse a preexisting or symlinked workspace path, so an artifact
+          # cannot be redirected to an unrelated checkout or secret file.
+          flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+          descriptor = os.open("zcloud-runner-queue-watch.json", flags, 0o600)
+          with os.fdopen(descriptor, "wb") as output:
+              output.write(payload)
+          PY
+      - name: Upload bounded queue observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-hosted-runner-queue-watch-${{ github.run_id }}
+          path: zcloud-runner-queue-watch.json
+          retention-days: 7
+          if-no-files-found: warn
