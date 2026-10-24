@@ -5,6 +5,51 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
+    def test_governor_executor_promotes_in_bounded_post_backend_transaction(self):
+        workflow = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        before = workflow.index("      - name: Promote backend runtime core")
+        after = workflow.index("      - name: Promote autonomy policies and queue seed")
+        next_step = workflow.index("      - name: Promote Violentmonkey worker")
+        backend = workflow[before:after]
+        followup = workflow[after:next_step]
+        # The promoter requires an explicit high-blast authorization for
+        # SIX OR MORE paths per transaction. Neither guarded step may
+        # require such an override merely to promote the merged governor.
+        for step in (backend, followup):
+            self.assertIn("steps.prewrite.outputs.deploy == 'true'", step)
+            self.assertIn("scripts/zcloud_transactional_promote.py", step)
+            self.assertIn("--candidate \"$GITHUB_WORKSPACE\"", step)
+            self.assertLessEqual(step.count("--path "), 5)
+        self.assertIn("--path server.py", backend)
+        self.assertIn("--path project_runtime.py", backend)
+        self.assertIn("--path project-contracts.json", backend)
+        self.assertNotIn("--path scripts/zcloud_governed_exec.py", backend)
+        self.assertIn("--path scripts/zcloud_governed_exec.py", followup)
+        self.assertIn("--path scripts/zcloud_recovery.py", followup)
+        self.assertLess(
+            workflow.index("--path project_runtime.py"),
+            workflow.index("--path scripts/zcloud_governed_exec.py"),
+        )
+        self.assertEqual(
+            workflow.count("--path scripts/zcloud_governed_exec.py"), 1
+        )
+        self.assertNotIn("--path history.db", workflow)
+        self.assertNotIn("--path history.db-wal", workflow)
+        # The existing LKG transaction must snapshot/restore the entire
+        # scripts tree; changing the workflow alone cannot disable rollback.
+        recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('    "scripts",', recovery)
+        self.assertIn('    "history.db",', recovery)
+        promoter = (ROOT / "scripts/zcloud_transactional_promote.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('    "history.db",', promoter)
+        self.assertNotIn('    "scripts/zcloud_governed_exec.py",', promoter.split("BLOCKED_PREFIXES = (")[1].split(")")[0])
+
     def test_deploy_only_follows_green_main_regression(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn('workflows: ["zCloud regression smoke"]', text)
@@ -18,7 +63,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("jobs:\n  preflight:"):
             text.index("\n  deploy:", text.index("jobs:\n  preflight:"))
         ]
-        self.assertIn("runs-on: ubuntu-latest", preflight)
+        # Repository-owned, actor-trusted metadata jobs now use the
+        # migrated zCloud runner rather than GitHub-hosted runners.
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", preflight)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", preflight)
+        self.assertIn("github.actor == 'Zennay'", preflight)
         self.assertIn("Skip current main when production is already green", preflight)
         self.assertIn("/commits/main/status", preflight)
         self.assertIn('"context") or "") == "zcloud/vps-production"', preflight)
@@ -339,6 +388,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "server.py",
             "project_runtime.py",
             "lane_generator.py",
+            "scripts/zcloud_governed_exec.py",
             "scripts/zcloud_recovery.py",
             "project-contracts.json",
             "autonomy-policy.json",
@@ -538,7 +588,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(text.index("Resume external self-heal"), text.index(step))
         self.assertLess(text.index(step), text.index("Write deploy operator summary"))
 
-    def test_terminal_production_status_is_hosted_and_survives_vps_job_failure(self):
+    def test_terminal_production_status_is_trusted_after_vps_job_failure(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("id: production_pending", text)
         self.assertIn('echo "marked=true" >> "$GITHUB_OUTPUT"', text)
@@ -547,10 +597,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         publish = text[text.index("  finalize-production-status:"):]
         self.assertIn("needs: deploy", publish)
         self.assertIn(
-            "if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''",
+            "always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''",
             publish,
         )
-        self.assertIn("runs-on: ubuntu-latest", publish)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", publish)
+        self.assertIn("github.actor == 'Zennay'", publish)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", publish)
         self.assertIn("DEPLOY_SHA: ${{ needs.deploy.outputs.deploy_sha }}", publish)
         self.assertIn("DEPLOY_RESULT: ${{ needs.deploy.result }}", publish)
         self.assertIn('"context": "zcloud/vps-production"', publish)
