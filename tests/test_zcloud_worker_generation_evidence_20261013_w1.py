@@ -185,6 +185,62 @@ class GenerationEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(subject.EvidenceDenied, "allocation_changed_during_observation"):
                 subject._live_snapshots()
 
+    def test_large_local_targets_are_minimized_before_evidence_verification(self):
+        valid = targets(allocation())
+        # A dashboard can include many unallocated project details. The
+        # evidence reader must neither expose those details nor discard
+        # the current assigned queue claim.
+        valid["projects"]["unallocated::w1"] = {
+            "unrelated_dashboard_notes": "sensitive" * 12000
+        }
+        valid["projects"]["cloud::w1"]["extra_private_ui_data"] = "never-export-me"
+        wire = json.dumps(valid, ensure_ascii=False).encode("utf-8")
+        self.assertGreater(len(wire), subject.MAX_BYTES)
+        self.assertLess(len(wire), subject.MAX_TARGET_WIRE_BYTES)
+
+        class FakeResponse:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+
+            def read(self, limit):
+                self.limit = limit
+                return wire[:limit]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        fake = FakeResponse()
+        with patch.object(subject.urllib.request.OpenerDirector, "open", return_value=fake):
+            compact = subject._fetch("/api/runner-targets")
+        self.assertEqual(subject.MAX_TARGET_WIRE_BYTES + 1, fake.limit)
+        self.assertEqual(["cloud::w1"], sorted(compact["projects"]))
+        self.assertNotIn("extra_private_ui_data", compact["projects"]["cloud::w1"])
+        self.assertEqual(
+            subject._allocation_fingerprint(targets(allocation())),
+            subject._allocation_fingerprint(compact),
+        )
+        self.assertLess(
+            len(json.dumps(compact, ensure_ascii=False).encode("utf-8")),
+            subject.MAX_BYTES,
+        )
+        with patch.object(subject.urllib.request.OpenerDirector, "open", return_value=FakeResponse()):
+            with self.assertRaisesRegex(subject.EvidenceDenied, "oversized_observation"):
+                subject._fetch("/api/worker-debug")
+
+    def test_large_local_targets_still_reject_duplicate_json_keys_and_wire_overflow(self):
+        bad = b'{"projects":{},"projects":{},"padding":"' + b"z" * (subject.MAX_BYTES + 4) + b'"}'
+        self.assertLess(len(bad), subject.MAX_TARGET_WIRE_BYTES)
+        with self.assertRaisesRegex(subject.EvidenceDenied, "duplicate_json_key"):
+            subject._load(bad, max_bytes=subject.MAX_TARGET_WIRE_BYTES)
+        with self.assertRaisesRegex(subject.EvidenceDenied, "oversized_observation"):
+            subject._load(
+                b" " * (subject.MAX_TARGET_WIRE_BYTES + 1),
+                max_bytes=subject.MAX_TARGET_WIRE_BYTES,
+            )
+
     def test_http_fetch_bypasses_proxy_environment(self):
         with patch.object(subject.urllib.request, "build_opener", wraps=subject.urllib.request.build_opener) as make:
             class FakeResponse:
