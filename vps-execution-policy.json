@@ -13,7 +13,10 @@
     "forbidden_name_tokens": [
       "haxlab"
     ],
-    "identity_guard": "scripts/zcloud_vps_runner_guard.py"
+    "identity_guard": "scripts/zcloud_vps_runner_guard.py",
+    "verified_host_runners": {
+      "vm-7eb5ee16-2c71-440d-b7fd-8095d204e930": "vm-7eb5ee16-zcloud"
+    }
   },
   "projects": [
     "haxlab",
