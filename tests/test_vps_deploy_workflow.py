@@ -5,23 +5,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
-    def test_governor_executor_promotes_in_guarded_backend_transaction(self):
+    def test_governor_executor_promotes_in_bounded_post_backend_transaction(self):
         workflow = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(
             encoding="utf-8"
         )
         before = workflow.index("      - name: Promote backend runtime core")
         after = workflow.index("      - name: Promote autonomy policies and queue seed")
+        next_step = workflow.index("      - name: Promote Violentmonkey worker")
         backend = workflow[before:after]
-        self.assertIn("steps.prewrite.outputs.deploy == 'true'", backend)
-        self.assertIn("scripts/zcloud_transactional_promote.py", backend)
-        self.assertIn("--candidate \"$GITHUB_WORKSPACE\"", backend)
+        followup = workflow[after:next_step]
+        # The promoter requires an explicit high-blast authorization for
+        # SIX OR MORE paths per transaction. Neither guarded step may
+        # require such an override merely to promote the merged governor.
+        for step in (backend, followup):
+            self.assertIn("steps.prewrite.outputs.deploy == 'true'", step)
+            self.assertIn("scripts/zcloud_transactional_promote.py", step)
+            self.assertIn("--candidate \"$GITHUB_WORKSPACE\"", step)
+            self.assertLessEqual(step.count("--path "), 5)
         self.assertIn("--path server.py", backend)
         self.assertIn("--path project_runtime.py", backend)
-        self.assertIn("--path scripts/zcloud_governed_exec.py", backend)
         self.assertIn("--path project-contracts.json", backend)
+        self.assertNotIn("--path scripts/zcloud_governed_exec.py", backend)
+        self.assertIn("--path scripts/zcloud_governed_exec.py", followup)
+        self.assertIn("--path scripts/zcloud_recovery.py", followup)
         self.assertLess(
-            backend.index("--path project_runtime.py"),
-            backend.index("--path scripts/zcloud_governed_exec.py"),
+            workflow.index("--path project_runtime.py"),
+            workflow.index("--path scripts/zcloud_governed_exec.py"),
         )
         self.assertEqual(
             workflow.count("--path scripts/zcloud_governed_exec.py"), 1
