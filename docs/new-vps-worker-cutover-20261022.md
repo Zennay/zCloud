@@ -1,0 +1,78 @@
+## 22 October 2026 · bounded display discovery and auth-file admission
+
+The read-only display-discovery helper now bounds `/proc` traversal, each process environment read, total environment bytes and retained DISPLAY/XAUTHORITY candidates. It binds each accepted environment snapshot to the same PID/start-time and process-directory identity before and after the read; inaccessible, oversized, or changing evidence is reported as PARTIAL/UNKNOWN rather than used to claim that no Ubuntu display exists. Raw environment bytes are never printed. Xauthority candidates must be stable, owner-owned, private regular files; symlinks and group/world-readable files are rejected, and the candidate is rechecked before each display probe. The final display/auth search also marks its result PARTIAL/UNKNOWN if socket/auth directories or the eight-by-eight probe window truncate candidate coverage; a capped search can never be reported as proof that no authorized display exists.
+
+Source commits: [a2e1fd6](https://github.com/Zennay/zCloud/commit/a2e1fd6932d64b5f437cc2cc0690909996ae184b) and [8bb24f9](https://github.com/Zennay/zCloud/commit/8bb24f9278466afd7d5c5a4378ef62694ee97e32). No QA suite was written or run, and no VPS command was executed.
+
+# New VPS zCloud workers — staged cutover (22 October 2026)
+
+Target host: `VM-7eb5ee16-2c71-440d-b7fd-8095d204e930`. The historical DB snapshot transferred to `/home/ubuntu/zcloud-history-migration.db` has **23 tables** and is readable, but **is not an authoritative final sync** if the old VPS kept working after its capture.
+
+This route distinguishes three independent things often all called *workers*:
+
+1. **Browser/ChatGPT project workers:** the zCloud runner state in SQLite, an already authenticated Firefox profile, the zCloud extension, `web-ext`, an accessible `ubuntu` X display, and a supervised Firefox session.
+2. **zCloud API, queue and scheduler:** `server.py`, one authoritative `history.db`, and the `zennay-cloud.service` unit. A database with a worker desired state does **not** prove an executing browser.
+3. **GitHub self-hosted Actions runners:** separate GitHub registrations and Linux services. Cloned registration credentials/identities must not be started on both machines. The current permanent-host workflows still contain `vps-bb300bba` identity guards; their migration must be reviewed separately.
+
+## 1. Prepare on the NEW VPS (root)
+
+From the checkout containing the installer:
+
+```sh
+cd /home/ubuntu/zennay-cloud
+sudo bash ops/new-vps-worker-bootstrap-20261022.sh prepare
+```
+
+This installs missing minimal launch dependencies, stages the historical SQLite backup **only if `history.db` is absent**, stages systemd service definitions if absent, and enables `ubuntu` lingering. It does not stop or start a running worker or service, overwrite an existing database, or register a GitHub runner. Existing local or user-level services remain untouched.
+
+```sh
+sudo bash ops/new-vps-worker-bootstrap-20261022.sh status
+```
+
+Inspect missing browser components and the current API status. The reference Firefox service expects the `ubuntu` desktop on `DISPLAY=:10` and a pre-existing authenticated `snap/firefox/common/chatgpt-webext-profile`. A new KDE/XRDP user `desktop` is **not** automatically equivalent. If the profile or display is missing, do not force a browser start or create empty worker sessions. Restore the original profile securely to the correct user and confirm the actual desktop session first.
+
+## 1b. Diagnosing an existing Firefox start-post error
+
+The operator confirmed `chatgpt-firefox.service: activating / start-post / ExecMainStatus=1`, a failed `ubuntu` X11 probe on `DISPLAY=:10`, inactive system/user zCloud services, and no listener on port 8765. This is not evidence that the existing Firefox worker tabs are operating. Do not restart, mass-kill, or change `DISPLAY` by guessing.
+
+Run this read-only command **on the new VPS as root**:
+
+```sh
+python3 ops/new-vps-worker-display-discovery-20261022.py
+```
+
+It enumerates X11 sockets and `ubuntu`-owned candidate Xauthority files, then tries bounded `xdotool getdisplaygeometry` connections **as ubuntu**. It reports only successful display and authority file paths, not Xauthority cookies. If none succeed, inspect the actual XRDP session user and X11 authorization; a KDE session owned by `desktop` does not automatically grant `ubuntu` access. Any scoped authorization change must be intentionally reviewed first. Inspect the most recent Firefox journal lines and systemd `ExecStart` status separately if the display preflight passes.
+
+## 2. Safe handover
+
+1. Verify where the old zCloud server is writing, and pause the **old** scheduler, worker tabs and write jobs after outstanding claims have been reconciled. Do not broadly kill Firefox or cancel unrelated GitHub/FTMO jobs.
+2. Create a **new consistent SQLite backup** from the final old database state after the writer fence. Transfer it and reconcile any newer new-VPS rows. Neither `cp` of a live SQLite/WAL database nor blindly overwriting an existing `history.db` is safe.
+3. Preserve both pre-cutover copies in immutable/dated backup locations and verify worker/project/queue tables, lease timestamps and `PRAGMA quick_check`.
+4. Confirm the new-vs-old runner identity/label migration is designed before enabling any GitHub Actions listener. Old runners remain disabled on the new host unless explicitly re-registered with fresh repository-scoped credentials.
+
+## 3. Activate the worker desired state only after step 2
+
+```sh
+cd /home/ubuntu/zennay-cloud
+sudo ZCLOUD_OLD_VPS_FENCED=yes ZCLOUD_FINAL_DB_SYNCED=yes \
+  bash ops/new-vps-worker-bootstrap-20261022.sh activate
+```
+
+The two flags are explicit cutover attestations, **not** synchronization tools. Never set them merely because a 657 MB file exists. The script refuses active local zCloud services, active cloned Actions runner identities, missing schema, missing targets, and unexpired queue claims. It updates the desired fleet using the existing host-bound `scripts/apply_worker_fleet.py`, then starts zCloud locally. It starts the Firefox worker supervisor only when the original browser prerequisites and X display are verified.
+
+During operator prepare on 22 October 2026 the Firefox user unit reported `activating`, the system zCloud API was `inactive`, `/api/status` and `/api/runner-live` returned HTTP `000`, and several **new VM runner units were enabled** alongside disabled old identities. Those facts do not establish that workers/runner listeners are actually running. Recheck `ActiveState`, `SubState`, `Result` and `ExecMainStatus` before any activation.\n\nThe checked-in `worker-fleet.json` currently requests **10 workers** across zSentinel (5), Tuddy (1), FTMO (1), FuckBall (1), TradeEngine (1), LightUp (1). This is *planned capacity*; `/api/runner-live`, actual recent heartbeats and project queue transitions must confirm which workers are executing. It is not an instruction to claim 10 logged-in sessions exist.
+
+## 4. Independent acceptance
+
+- `systemctl status zennay-cloud.service` and `systemctl --user -M ubuntu@ status chatgpt-firefox.service` are healthy.
+- From the VPS, `curl -i http://127.0.0.1:8765/api/status` and `curl -i http://127.0.0.1:8765/api/runner-live` show expected status and live worker heartbeats. A 401, 404, a nonzero HTTP code, or empty/stale heartbeats is **not** evidence of running workers.
+- Firefox must remain authenticated and persist tabs across disconnect/reboot without generating duplicate sessions; verify this in the appropriate XRDP login.
+- Existing VM-specific GitHub Actions runner services (such as `vm-7eb5ee16-haxlab`, `vm-7eb5ee16-fuckball`, `vm-7eb5ee16-lightup`) may already be installed and enabled. Preserve these identities; an enabled unit is not necessarily active or connected to GitHub. Register only missing repository-scoped runners under **fresh unique new-VPS identities**; then update trusted workflow host admission under its existing release-owner gates, and confirm a job has `runner_id > 0`. Do not reuse the old `zcloud-vps-1` registration.
+- Only once the new system actually executes jobs, retire old server and runner services; keep backups.
+
+Never publish registration tokens, browser sessions, private profile bytes or SQLite files in CI logs or GitHub.
+
+## Additional fail-closed safeguards · 23 October
+
+- The bootstrap refuses extra positional arguments so a typo cannot silently select a privileged phase.
+- When staging the historical SQLite snapshot, it now requires `PRAGMA integrity_check` to return `ok` before the temporary database is atomically installed. This proves structural integrity of the staged copy only; it does **not** prove that the snapshot contains the final post-fence source state or that live workers are recovered.
