@@ -32,7 +32,7 @@ jobs:
 
           QUEUED_JSON="$RUNNER_TEMP/zssh-queued-runs.json" \
           CANCEL_IDS="$RUNNER_TEMP/zssh-cancel-queued-ids.txt" \
-          EVIDENCE="$RUNNER_TEMP/zssh-governance-runner-priority.json" \
+          EVIDENCE="$GITHUB_WORKSPACE/zssh-governance-runner-priority.json" \
           python3 - <<'PY'
           import json
           import os
@@ -108,6 +108,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zssh-governance-runner-priority-${{ github.run_id }}
-          path: ${{ runner.temp }}/zssh-governance-runner-priority.json
+          path: zssh-governance-runner-priority.json
           if-no-files-found: error
           retention-days: 7
