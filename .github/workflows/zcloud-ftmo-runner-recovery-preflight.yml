@@ -134,6 +134,14 @@ jobs:
               "no_recovery_needed",
               "deny_degraded",
           }
+          receipt = Path("artifacts/ci/zcloud-ftmo-runner-preflight-decision.json")
+          receipt.parent.mkdir(parents=True, exist_ok=True)
+          receipt.write_text(json.dumps({
+              "policy": "zcloud-ftmo-runner-recovery-preflight-v1",
+              "mutation_authorized": False,
+              "decision": payload["decision"],
+          }, sort_keys=True, separators=(",", ":")) + "\\n", encoding="utf-8")
+          receipt.chmod(0o600)
           print(
               "ZCLOUD_FTMO_RUNNER_RECOVERY_PREFLIGHT_GREEN="
               f"decision:{payload['decision']}:"
@@ -141,12 +149,16 @@ jobs:
           )
           PY
 
-      - name: Upload bounded preflight evidence
+      - name: Upload redacted preflight decision only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zcloud-ftmo-runner-recovery-preflight-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/zcloud-ftmo-runner-live-snapshot.json
-            ${{ runner.temp }}/zcloud-ftmo-runner-recovery-preflight.json
+          path: artifacts/ci/zcloud-ftmo-runner-preflight-decision.json
           if-no-files-found: error
+          include-hidden-files: false
           retention-days: 14
+
+      - name: Remove temporary redacted artifact file from persistent checkout
+        if: always()
+        shell: bash
+        run: rm -f -- artifacts/ci/zcloud-ftmo-runner-preflight-decision.json
