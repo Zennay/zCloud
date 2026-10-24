@@ -140,7 +140,7 @@ jobs:
               "policy": "zcloud-ftmo-runner-recovery-preflight-v1",
               "mutation_authorized": False,
               "decision": payload["decision"],
-          }, sort_keys=True, separators=(",", ":")) + "\\n", encoding="utf-8")
+          }, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
           receipt.chmod(0o600)
           print(
               "ZCLOUD_FTMO_RUNNER_RECOVERY_PREFLIGHT_GREEN="
