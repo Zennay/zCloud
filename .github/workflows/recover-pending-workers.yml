@@ -2,20 +2,74 @@
 name: Recover pending zCloud workers
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/recover-pending-workers.yml
+      - tests/test_recover_pending_workers_workflow.py
   push:
     branches: [main]
     paths:
       - .github/workflows/recover-pending-workers.yml
+      - tests/test_recover_pending_workers_workflow.py
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: recover-pending-zcloud-workers-${{ github.event_name == 'pull_request' && github.ref || 'live' }}
+  cancel-in-progress: false
+
 jobs:
-  recover:
-    runs-on: self-hosted
-    timeout-minutes: 6
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      - name: Checkout exact zCloud candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact zCloud candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+
+      - name: Validate recover-pending workflow trust contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_recover_pending_workers_workflow
+
+  recover:
+    if: github.event_name != 'pull_request' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact zCloud revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify permanent VPS runner and exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Inspect allocation and recover inactive workers
         shell: bash
         run: |
@@ -97,3 +151,4 @@ jobs:
           print("TARGETS_FINAL",json.dumps(final,sort_keys=True))
           raise SystemExit("not all allocated workers became active")
           PY
+          echo "ZCLOUD_RECOVER_PENDING_WORKERS_GREEN=1"
