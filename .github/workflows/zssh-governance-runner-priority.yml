@@ -16,7 +16,7 @@ jobs:
   prioritize:
     name: Cancel older queued zSSH read-only VPS audits behind release blockers
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     env:
       GH_TOKEN: ${{ github.token }}
@@ -32,7 +32,7 @@ jobs:
 
           QUEUED_JSON="$RUNNER_TEMP/zssh-queued-runs.json" \
           CANCEL_IDS="$RUNNER_TEMP/zssh-cancel-queued-ids.txt" \
-          EVIDENCE="$GITHUB_WORKSPACE/zssh-governance-runner-priority.json" \
+          EVIDENCE="$RUNNER_TEMP/zssh-governance-runner-priority.json" \
           python3 - <<'PY'
           import json
           import os
@@ -108,6 +108,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zssh-governance-runner-priority-${{ github.run_id }}
-          path: zssh-governance-runner-priority.json
+          path: ${{ runner.temp }}/zssh-governance-runner-priority.json
           if-no-files-found: error
           retention-days: 7

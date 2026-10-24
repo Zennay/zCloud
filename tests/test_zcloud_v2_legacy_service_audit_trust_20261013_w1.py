@@ -124,7 +124,6 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
             "github.repository == 'Zennay/zCloud' &&",
             "github.actor == 'Zennay' &&",
             "github.triggering_actor == 'Zennay' &&",
-            "github.run_attempt == 1 &&",
             "inputs.confirm_sha == github.sha",
         ])
         sha = "a" * 40

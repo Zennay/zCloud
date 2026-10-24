@@ -20,8 +20,7 @@ permissions:
 jobs:
   foreign-checkout-origin:
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    # Offline workflow/source audit uses no VPS credentials, services or disk.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 6
     steps:
       - name: Fail closed unless first-party PR into main

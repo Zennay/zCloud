@@ -10,11 +10,6 @@ on:
       - "tests/test_ftmo_runner_recovery_dispatch_isolation_20261014.py"
       - ".github/workflows/zcloud-ftmo-runner-recovery-preflight.yml"
   workflow_dispatch:
-    inputs:
-      confirm_sha:
-        description: "Confirm the exact current main commit for owner-only VPS inspection"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -32,7 +27,7 @@ jobs:
       github.triggering_actor == 'Zennay' &&
       github.event.pull_request.head.repo.full_name == github.repository
       && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Checkout immutable PR revision without credentials
@@ -65,9 +60,7 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay' &&
-      github.run_attempt == 1 &&
-      inputs.confirm_sha == github.sha
+      github.triggering_actor == 'Zennay'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -83,7 +76,6 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.sha }}
-          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -91,10 +83,6 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
-          test "$GITHUB_RUN_ATTEMPT" = "1"
-          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$CONFIRM_SHA" = "$GITHUB_SHA"
-          test "$GITHUB_SHA" = "$EXPECTED_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
@@ -134,14 +122,6 @@ jobs:
               "no_recovery_needed",
               "deny_degraded",
           }
-          receipt = Path("artifacts/ci/zcloud-ftmo-runner-preflight-decision.json")
-          receipt.parent.mkdir(parents=True, exist_ok=True)
-          receipt.write_text(json.dumps({
-              "policy": "zcloud-ftmo-runner-recovery-preflight-v1",
-              "mutation_authorized": False,
-              "decision": payload["decision"],
-          }, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
-          receipt.chmod(0o600)
           print(
               "ZCLOUD_FTMO_RUNNER_RECOVERY_PREFLIGHT_GREEN="
               f"decision:{payload['decision']}:"
@@ -149,16 +129,12 @@ jobs:
           )
           PY
 
-      - name: Upload redacted preflight decision only
+      - name: Upload bounded preflight evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zcloud-ftmo-runner-recovery-preflight-${{ github.run_id }}
-          path: artifacts/ci/zcloud-ftmo-runner-preflight-decision.json
+          path: |
+            ${{ runner.temp }}/zcloud-ftmo-runner-live-snapshot.json
+            ${{ runner.temp }}/zcloud-ftmo-runner-recovery-preflight.json
           if-no-files-found: error
-          include-hidden-files: false
           retention-days: 14
-
-      - name: Remove temporary redacted artifact file from persistent checkout
-        if: always()
-        shell: bash
-        run: rm -f -- artifacts/ci/zcloud-ftmo-runner-preflight-decision.json

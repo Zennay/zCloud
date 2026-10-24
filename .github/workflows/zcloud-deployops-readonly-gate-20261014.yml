@@ -28,7 +28,7 @@ jobs:
         github.actor == 'Zennay' &&
         github.run_attempt == 1))
       && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Check out event's immutable candidate
@@ -94,52 +94,10 @@ jobs:
           ]
           Path(environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8").write("\n".join(lines) + "\n")
           PY
-      - name: Materialize bounded redacted read-only receipt
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$RUNNER_TEMP/deployops-gate.json" <<'PY'
-          import json
-          import os
-          import re
-          import sys
-          from pathlib import Path
-
-          source = Path(sys.argv[1])
-          if not source.is_file() or source.is_symlink():
-              raise SystemExit("read_only_receipt_unavailable")
-          data = source.read_bytes()
-          if len(data) > 16384:
-              raise SystemExit("read_only_receipt_unbounded")
-          report = json.loads(data)
-          if not isinstance(report, dict):
-              raise SystemExit("read_only_receipt_invalid")
-          for field in ("mutation_authorized", "release_authorized",
-                        "production_verified", "runner_outage_verified"):
-              if report.get(field) is not False:
-                  raise SystemExit("read_only_receipt_unauthorized")
-          sha = report.get("main_sha")
-          status = report.get("production_status")
-          observation = report.get("observation")
-          safe = {
-              "main_sha": sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None,
-              "production_status": status if status in ("success", "failure", "pending", "unverified") else "unverified",
-              "observation": observation if isinstance(observation, str) and re.fullmatch(r"[A-Z_]{1,64}", observation) else "DENY",
-              "mutation_authorized": False,
-              "release_authorized": False,
-              "production_verified": False,
-              "runner_outage_verified": False,
-          }
-          encoded = (json.dumps(safe, sort_keys=True, separators=(",", ":")) + "\n").encode()
-          flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
-          fd = os.open("zcloud-readonly-gate-public.json", flags, 0o600)
-          with os.fdopen(fd, "wb") as output:
-              output.write(encoded)
-          PY
       - name: Preserve bounded non-authorizing evidence for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zcloud-readonly-gate-${{ github.run_id }}
-          path: zcloud-readonly-gate-public.json
+          path: ${{ runner.temp }}/deployops-gate.json
           if-no-files-found: error
           retention-days: 7

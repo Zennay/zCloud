@@ -30,7 +30,7 @@ def evaluate(expr: str, *, event: str, repo: str = "Zennay/zCloud",
              actor: str = "Zennay", triggering: str = "Zennay",
              head_repo: str = "Zennay/zCloud", base_ref: str = "main",
              ref: str = "refs/heads/main") -> bool:
-    """Evaluate only boolean ==/!=/and/or/constant nodes from the source policy."""
+    """Evaluate only boolean ==/and/or/constant nodes from the source policy."""
     if not SAFE_EXPR.fullmatch(expr):
         raise ValueError("unsafe_test_expression")
     values = {
@@ -52,12 +52,8 @@ def evaluate(expr: str, *, event: str, repo: str = "Zennay/zCloud",
         if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
             parts = [bool(eval_safe(x)) for x in node.values]
             return all(parts) if isinstance(node.op, ast.And) else any(parts)
-        if isinstance(node, ast.Compare) and len(node.ops) == 1:
-            op = node.ops[0]
-            if isinstance(op, ast.Eq):
-                return eval_safe(node.left) == eval_safe(node.comparators[0])
-            if isinstance(op, ast.NotEq):
-                return eval_safe(node.left) != eval_safe(node.comparators[0])
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            return eval_safe(node.left) == eval_safe(node.comparators[0])
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bool)):
             return node.value
         raise ValueError("unsupported_test_expression")

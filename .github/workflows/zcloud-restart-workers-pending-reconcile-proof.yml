@@ -38,7 +38,7 @@ jobs:
        (github.actor == 'Zennay' &&
         github.event.pull_request.head.repo.full_name == github.repository))
       && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     env:
       EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

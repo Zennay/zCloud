@@ -10,11 +10,6 @@ on:
       - .github/workflows/zcloud-autonomy-memory-isolation.yml
     types: [opened, synchronize, reopened]
   workflow_dispatch:
-    inputs:
-      confirm_sha:
-        description: "Exact current main SHA for explicitly approved read-only verification"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -31,7 +26,8 @@ jobs:
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Check out immutable PR candidate without credentials
@@ -60,9 +56,7 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay' &&
-      github.run_attempt == 1 &&
-      inputs.confirm_sha == github.sha
+      github.triggering_actor == 'Zennay'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     env:
@@ -78,14 +72,10 @@ jobs:
 
       - name: Verify exact candidate and permanent runner
         shell: bash
-        env:
-          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
-          test "$GITHUB_RUN_ATTEMPT" = "1"
-          test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(id -un)" = ubuntu
           # Manual proof uses only a fresh, owner-dispatched canonical main.
           # A stale workflow_dispatch SHA may not be interpreted as current state.

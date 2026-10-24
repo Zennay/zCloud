@@ -32,12 +32,6 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
         self.file = self.root / ".github/workflows/existing.yml"
         self.file.parent.mkdir(parents=True)
         git(self.root, "init", "-qb", "main")
-        # Per-test repos are deleted immediately after dozens of commits.
-        # Git background maintenance can still be creating files under
-        # .git when TemporaryDirectory.cleanup runs, racing rmtree().
-        # Disable auto maintenance for these disposable fixtures only.
-        git(self.root, "config", "maintenance.auto", "false")
-        git(self.root, "config", "gc.auto", "0")
         git(self.root, "config", "user.name", "Test")
         git(self.root, "config", "user.email", "test@example.invalid")
         self.file.write_text(SAFE, encoding="utf-8")

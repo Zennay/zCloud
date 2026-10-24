@@ -283,7 +283,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("runs-on: self-hosted", text)
         self.assertIn("GH_TOKEN: ${{ github.token }}", text)
         self.assertIn("name: zssh-governance-runner-priority-${{ github.run_id }}", text)
-        self.assertIn("path: zssh-governance-runner-priority.json", text)
+        self.assertIn("path: ${{ runner.temp }}/zssh-governance-runner-priority.json", text)
         self.assertNotIn("\\${{", text)
         self.assertNotIn("zSSH main protection VPS apply\",\\n              \"", text)
 
