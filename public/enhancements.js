@@ -128,7 +128,7 @@
       var unattributed=summary.unattributed_cpu_percent==null?'being measured':num(summary.unattributed_cpu_percent)+'%';
       summaryRow='<div class="resource-tech-row resource-tech-summary"><strong>VPS total</strong><span>CPU '+num(summary.host_cpu_percent)+'% · attributed '+attributed+' · system/unattributed '+unattributed+' · '+esc(summary.cores||'?')+' cores</span></div>';
     }
-    var details='<section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Technical details</h3><span>Live allocation</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section>';
+    var details='<details class="section-details resource-details"><summary>Technical details</summary><section class="resource-tech-panel" aria-labelledby="resource-tech-title"><div class="resource-tech-heading"><h3 id="resource-tech-title">Live allocation</h3><span>CPU, memory and scheduler weights</span></div><div class="resource-tech-list">'+summaryRow+tech.join('')+'</div><p>Project CPU is normalized to the same 0–100% host scale as VPS CPU. System/unattributed is CPU that is real on the VPS but cannot yet be assigned to a project. Weights: Background 100 · Normal 400 · High 800 · Turbo 3000.</p></section></details>';
     return '<div class="panel resource-panel"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Live CPU, memory and worker allocation by project</div></div>'+icon('cpu')+'</div><div class="resource-grid">'+rows+'</div>'+details+'</div>';
   }
   function incidentPanel(){
@@ -188,32 +188,60 @@
     if(!el)return;
     e.stopImmediatePropagation();
     var previous=el.dataset.previousValue||'normal';
+    var projectId=el.dataset.resourcePriority;
+    var project=(DATA.projects||[]).find(function(p){return p.id===projectId});
+    var projectName=project&&project.name||'this project';
+    var notice=$('notice');
     el.disabled=true;
+    el.setAttribute('aria-busy','true');
+    if(notice){
+      notice.hidden=false;
+      notice.textContent='Saving priority for '+projectName+'…';
+    }
     try{
-      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
+      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:projectId,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
-      if(!response.ok){throw new Error(data.error||'Save failed')}
-      var saved=(data.resource&&data.resource.priority)||el.value;
+      if(!response.ok){throw new Error('save_rejected')}
+      // HTTP 2xx alone is not a saved-priority receipt. Preserve the prior
+      // selection if the response is incomplete or contradicts the API contract.
+      if(data.ok!==true||!data.resource
+          ||typeof data.resource.priority!=='string'
+          ||!['background','normal','high','turbo'].includes(data.resource.priority)
+          ||(data.resource.applied!==undefined&&typeof data.resource.applied!=='boolean')){
+        throw new Error('unconfirmed_priority_receipt');
+      }
+      var saved=data.resource.priority;
       el.value=saved;
       el.dataset.previousValue=saved;
-      var project=(DATA.projects||[]).find(function(p){return p.id===el.dataset.resourcePriority});
       if(project){
         project.resource=project.resource||{};
         project.resource.priority=saved;
         if(data.resource&&data.resource.weight!=null)project.resource.weight=data.resource.weight;
         if(data.resource&&data.resource.applied!=null)project.resource.applied=!!data.resource.applied;
       }
-      if(data.resource&&data.resource.applied===false){
-        $('notice').hidden=false;
-        $('notice').textContent='Priority saved. The live VPS weight could not be applied yet; zCloud is keeping the current priority.';
+      // The backend already confirmed persistence. Refresh is display-only:
+      // a failed/still-busy refresh must never be presented as failed saving.
+      var refreshed=await refresh(true);
+      // refresh() can repaint or clear the global notice. Show the result
+      // *after* that repaint, based only on the backend-confirmed response.
+      if(notice){
+        notice.hidden=false;
+        notice.textContent=!refreshed
+          ?'Priority saved for '+projectName+', but the dashboard could not refresh. Reload to view the current setting.'
+          :data.resource.applied===false
+          ?'Priority saved for '+projectName+', but the live VPS weight was not applied. The saved priority remains in place.'
+          :'Priority saved for '+projectName+'.';
       }
-      await refresh(true);
     }catch(err){
       el.value=previous;
-      $('notice').hidden=false;
-      $('notice').textContent='Project priority could not be saved: '+(err.message||err);
+      if(notice){
+        notice.hidden=false;
+        // Never display raw server/transport error text in operator UI.
+        notice.textContent='Priority change for '+projectName+' could not be confirmed. The previous selection is restored; check the current setting before retrying.';
+      }
     }finally{
       el.disabled=false;
+      el.removeAttribute('aria-busy');
     }
   },true);
 })();

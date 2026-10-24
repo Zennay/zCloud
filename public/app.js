@@ -12,6 +12,47 @@ const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VI
 let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
 let ACTIVITY_PROJECT_FETCH=null;
 let ACTIVITY_PROJECT_FETCH_TIME=0;
+// One bounded, ephemeral local-event cache per canonical project. The selected
+// Activity project is only a VIEW: refreshing it must never evict another
+// project's previously observed events or promote /api/status to feed proof.
+const ACTIVITY_LOCAL_PROJECT_CACHE=new Map(),ACTIVITY_LOCAL_PROJECT_ERRORS=new Set(),ACTIVITY_LOCAL_CACHE_LIMIT=24;
+function mergeLocalProjectActivity(fallback=ACTIVITY){
+  const projects=(DATA?.projects||[]).filter(p=>p&&typeof p.id==='string'
+    &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id)).slice(0,ACTIVITY_LOCAL_CACHE_LIMIT);
+  const ids=projects.map(p=>p.id),known=new Set(ids);
+  // If no per-project read has happened, preserve the existing local feed.
+  if(!ACTIVITY_LOCAL_PROJECT_CACHE.size)
+    return (Array.isArray(fallback)?fallback:[]).filter(row=>row&&known.has(row.project))
+      .slice(0,ACTIVITY_MAX_VISIBLE);
+  const streams=new Map();
+  for(const id of ids){
+    const cache=ACTIVITY_LOCAL_PROJECT_CACHE.get(id);
+    // A successfully read empty project is *empty* rather than a reason
+    // to reuse the stale global 80-row list for that specific project.
+    const rows=cache?cache.rows:(Array.isArray(fallback)?fallback:[])
+      .filter(row=>row&&row.project===id).slice(0,80);
+    streams.set(id,rows);
+  }
+  const merged=[],seen=new Set(),offsets=new Map(ids.map(id=>[id,0]));
+  while(merged.length<ACTIVITY_MAX_VISIBLE){
+    let advanced=false;
+    for(const id of ids){
+      const rows=streams.get(id),index=offsets.get(id);
+      if(index>=rows.length)continue;
+      offsets.set(id,index+1);advanced=true;
+      const row=rows[index],key=id+'\u0000'+row.id;
+      if(!seen.has(key)){seen.add(key);merged.push(row);}
+      if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+    }
+    if(!advanced)break;
+  }
+  // Fairly choose which projects have a place first; then show selected events
+  // in honest source-time order. A noisy project still cannot monopolize the
+  // bounded list, but "recent activity" is no longer visually out of sequence.
+  merged.sort((a,b)=>(Date.parse(b.ts)||0)-(Date.parse(a.ts)||0)
+    ||a.project.localeCompare(b.project)||String(a.id).localeCompare(String(b.id)));
+  return merged;
+}
 function activityCoverageText(){
   const c=ACTIVITY_COVERAGE;
   const prefix='Local VPS events only · GitHub PRs, branches and CI are not synchronized.';
@@ -20,7 +61,10 @@ function activityCoverageText(){
   const partial=c.failed||c.projectsRead<c.projectsTotal;
   const status=partial?'Partial coverage — some project histories are unavailable or not included.':'Project history read completed.';
   const limit=c.limited?' Some projects have reached the last-80-events API limit.':'';
-  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+'.'+limit;
+  const retained=ACTIVITY_LOCAL_PROJECT_CACHE.size?
+    ' · '+ACTIVITY_LOCAL_PROJECT_CACHE.size+' per-project local sources retained in tab memory'+
+    (c.staleCachedProjects?' ('+c.staleCachedProjects+' failed refreshes retained as STALE)':''):'';
+  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+retained+'.'+limit;
 }
 /**
  * The existing read-only API accepts ?project=<allowlisted id>, but its global
@@ -72,34 +116,35 @@ async function refreshProjectActivity(version,force=false){
       });
     }
     if(version!==routeVersion||route!=='activity'||filter!==((ids.length===1&&scope===filter)?filter:''))return;
-    const merged=[],seen=new Set(),indices=new Map(ids.map(id=>[id,0]));
-    while(merged.length<ACTIVITY_MAX_VISIBLE){
-      let advanced=false;
-      for(const id of ids){
-        const items=streams.get(id)||[];
-        let i=indices.get(id);
-        if(i>=items.length)continue;
-        const item=items[i];indices.set(id,i+1);
-        if(!seen.has(item.id)){merged.push(item);seen.add(item.id);}
-        advanced=true;
-        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
-      }
-      if(!advanced)break;
+    const observedAt=Date.now();
+    // Only successful, project-bound source rows replace that project's cache.
+    // Failed reads retain their previous observation and stay explicitly stale.
+    const canonical=new Set(visible.map(p=>p.id));
+    for(const existing of ACTIVITY_LOCAL_PROJECT_CACHE.keys()){
+      if(!canonical.has(existing))ACTIVITY_LOCAL_PROJECT_CACHE.delete(existing);
     }
-    // A partial API outage must not silently delete the last-known local feed.
-    // Successful reads are merged with the previous global result when needed.
-    if(errors.length){
-      for(const item of ACTIVITY){
-        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
-        if(item&&typeof item.id==='string'&&!seen.has(item.id)){
-          merged.push(item);seen.add(item.id);
-        }
-      }
+    for(const existing of ACTIVITY_LOCAL_PROJECT_ERRORS){
+      if(!canonical.has(existing))ACTIVITY_LOCAL_PROJECT_ERRORS.delete(existing);
     }
-    if(streams.size)ACTIVITY=merged;
-    ACTIVITY_PROJECT_FETCH_TIME=Date.now();
-    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:streams.size?ACTIVITY_PROJECT_FETCH_TIME:ACTIVITY_COVERAGE.lastSuccess,
+    for(const id of errors)ACTIVITY_LOCAL_PROJECT_ERRORS.add(id);
+    for(const [id,rows] of streams){
+      ACTIVITY_LOCAL_PROJECT_ERRORS.delete(id);
+      if(!ACTIVITY_LOCAL_PROJECT_CACHE.has(id)
+        &&ACTIVITY_LOCAL_PROJECT_CACHE.size>=ACTIVITY_LOCAL_CACHE_LIMIT)
+        ACTIVITY_LOCAL_PROJECT_CACHE.delete(ACTIVITY_LOCAL_PROJECT_CACHE.keys().next().value);
+      ACTIVITY_LOCAL_PROJECT_CACHE.delete(id);
+      ACTIVITY_LOCAL_PROJECT_CACHE.set(id,{rows:rows.slice(0,80),observedAt,
+        limited:rows.length===80});
+    }
+    // Reassemble ALL canonical projects fairly, even after a filtered refresh.
+    // The existing global feed is a bounded fallback only for never-read projects.
+    if(streams.size)ACTIVITY=mergeLocalProjectActivity(ACTIVITY);
+    ACTIVITY_PROJECT_FETCH_TIME=observedAt;
+    ACTIVITY_COVERAGE={kind:'local-only',
+      lastSuccess:streams.size?observedAt:ACTIVITY_COVERAGE.lastSuccess,
       projectsTotal:scoped.length,projectsRead:streams.size,failed:errors.length+omitted,
+      cachedProjects:ACTIVITY_LOCAL_PROJECT_CACHE.size,
+      staleCachedProjects:errors.filter(id=>ACTIVITY_LOCAL_PROJECT_CACHE.has(id)).length,
       limited:[...streams.values()].some(rows=>rows.length===80),
       pending:false,scope,lastError:errors.length?'partial-local-reads':''};
     render();
@@ -114,6 +159,33 @@ async function refreshProjectActivity(version,force=false){
   }
 }
 
+function activityLocalCoverageDisclosure(){
+  if(!DATA||!Array.isArray(DATA.projects))return '';
+  const projects=DATA.projects.slice(0,ACTIVITY_LOCAL_CACHE_LIMIT);
+  const known=projects.filter(p=>p&&typeof p.id==='string');
+  const observed=known.filter(p=>ACTIVITY_LOCAL_PROJECT_CACHE.has(p.id)).length;
+  const parts=known.map(p=>{
+    const item=ACTIVITY_LOCAL_PROJECT_CACHE.get(p.id),failed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(p.id);
+    const age=item?Date.now()-item.observedAt:null;
+    const stale=item&&(age>6*3600000||failed);
+    const status=!item?(failed?'Unavailable · no scoped read':'Not observed for this project'):
+      failed?'Read failed · retained older local events':
+      stale?'Stale local observation (>6h)':'Local source read';
+    const seen=item?date(new Date(item.observedAt).toISOString(),true):'Unknown';
+    const latest=item?.rows?.reduce((a,r)=>!a||Date.parse(r.ts)>Date.parse(a.ts)?r:a,null);
+    return '<div class="service-row"><div><strong>'+esc(p.name)+'</strong><br><small>'+
+      esc(status)+' · '+(item?item.rows.length+' bounded local events':'No scoped source')+
+      (item?.limited?' · source hit 80-row cap':'')+'</small></div><div><small>'+
+      esc(seen)+(latest?' · latest event '+esc(date(latest.ts,true)):'')+'</small>'+
+      '<button type="button" class="runner-action runner-action-secondary" data-local-source-read="'+
+      esc(p.id)+'" '+(ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':'')+
+      ' aria-label="Read local activity for '+esc(p.name)+'">Read project</button></div></div>';
+  }).join('');
+  return '<details class="section-details activity-local-coverage" data-disclosure="local-activity-sources"><summary>Per-project local coverage ('+
+    observed+'/'+known.length+' scoped observations)</summary><p class="detail-note">'+
+    'Only manual local VPS project reads are counted. A project not yet fetched, an empty local source, an old observation or a failed refresh never proves no GitHub PR/CI activity. No auto-poll or hidden claim sync.</p>'+
+    '<div class="service-list">'+parts+'</div></details>';
+}
 function loadCachedStatus(){try{const cached=JSON.parse(localStorage.getItem(STATUS_CACHE_KEY)||'null');if(!cached||!cached.data||!cached.saved_at)return null;if(Date.now()-Number(cached.saved_at)>STATUS_CACHE_MAX_AGE_MS)return null;return cached.data}catch{return null}}
 function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.stringify({saved_at:Date.now(),data}))}catch{}}
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
@@ -299,7 +371,23 @@ function attentionPanel(projectId=''){
 }
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Archived</strong><span>Hidden from the dashboard and Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Restore</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Project step'}</span></div></div></div>`}
-function activityPanel(pid='',limit=4){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>pid?a.project===pid:visible.has(a.project)).slice(0,limit);return `<div class="panel"><div class="panel-header"><div><h2>Recent activity</h2><div class="panel-subtitle">Code and project updates</div></div>${icon('pulse')}</div><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No activity recorded yet.</div>'}</div><div class="panel-footer"><a href="#activity${pid?'?project='+pid:''}" class="text-link">Full history ${icon('arrow')}</a></div></div>`}
+function activityPanel(pid='',limit=4){
+  const projects=(DATA?.projects||[]).filter(p=>!pid||p.id===pid);
+  const visible=new Set(projects.map(p=>p.id));
+  const list=(ACTIVITY||[]).filter(a=>visible.has(a.project)).slice(0,limit);
+  const coverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).filter(row=>visible.has(row.project));
+  const observed=new Set(coverage.map(row=>row.project));
+  const stale=coverage.filter(row=>row.staleEvidence===true
+    ||!Number.isFinite(Date.parse(row.observedAt))
+    ||Date.now()-Date.parse(row.observedAt)>6*3600000).length;
+  const ghText='GitHub sampled '+observed.size+'/'+visible.size+' projects'+
+    (stale?' · '+stale+' stale':'')+
+    ' · opt-in only; main merge and live deploy NOT established by this view.';
+  return `<div class="panel"><div class="panel-header"><div><h2>Recent local activity</h2><div class="panel-subtitle">VPS-only sample · GitHub PRs and CI not synchronized automatically</div></div>${icon('pulse')}</div>
+  <p class="detail-note" role="status">${esc(ghText)}</p>
+  <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local activity in this bounded sample. GitHub progress may still exist.</div>'}</div>
+  <div class="panel-footer"><a href="#activity${pid?'?project='+encodeURIComponent(pid):''}" class="text-link">Inspect source coverage ${icon('arrow')}</a></div></div>`;
+}
 function ranges(){return `<div class="range-control" role="group" aria-label="Chart period">${[['24h','24h'],['7d','7d'],['30d','30d'],['all','Alles']].map(([id,title])=>`<button data-range="${id}" class="${range===id?'active':''}" aria-pressed="${range===id}">${title}</button>`).join('')}</div>`}
 function graphPanel(projects){return `<div class="panel"><div class="panel-header"><div><h2>Progress over time</h2><div class="panel-subtitle">Project steps · Amsterdam time</div></div>${ranges()}</div><div class="legend">${projects.map(p=>`<span style="--accent:${p.accent}"><i class="legend-dot"></i>${p.name}</span>`).join('')}</div><div id="progressChart" class="chart-wrap"></div><div class="chart-detail" id="chartDetail">Select a data point for date and progress.</div></div>`}
 function infraStrip(){const h=DATA.host,mem=h.memory.used/h.memory.total*100,disk=h.disk.used/h.disk.total*100;return `<div class="infra-strip"><div class="server-icon">${icon('server')}</div><div class="infra-title"><strong>VPS · OVHcloud</strong><small>${h.cores} vCPU · ${gb(h.memory.total)} RAM</small></div><div class="infra-item">CPU<strong>${h.cpu==null?'First measurement…':num(h.cpu)+'%'}</strong><div class="microbar"><span style="width:${h.cpu||0}%"></span></div></div><div class="infra-item">Memory<strong>${num(mem)}%</strong><div class="microbar"><span style="width:${mem}%"></span></div></div><div class="infra-item">Free storage<strong>${gb(h.disk.free)}</strong><div class="microbar"><span style="width:${disk}%"></span></div></div><a href="#infrastructure" class="text-link" aria-label="View infrastructure">View VPS ${icon('arrow')}</a></div>`}
@@ -665,12 +753,3047 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
   }catch(error){if(!iconOnly)button.textContent='Failed';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.innerHTML=previous;button.removeAttribute('aria-busy')},1800)}
 }
+// Explicit local operator evidence: never mix uploaded GitHub observations into
+// the local VPS feed, and never grant merge/deploy/worker authority from a file.
+let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
+const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit','branch_head']);
+// Bind operator-supplied receipts to the ACTUAL canonical project registry.
+// A plausible Zennay/repository string is not evidence that it belongs to
+// the claimed project; otherwise cross-project events become misleading.
+function canonicalGitHubRepositoryForProject(projectId){
+  const matches=(DATA?.projects||[]).filter(item=>item&&item.id===projectId);
+  if(matches.length!==1)return null;
+  const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(matches[0].repo_url||'');
+  return match?'Zennay/'+match[1]:null;
+}
+function validGitHubBranchRef(value){
+  if(typeof value!=='string'||value.length<1||value.length>80
+      ||!/^[A-Za-z0-9._\/-]+$/.test(value)
+      ||value.startsWith('/')||value.endsWith('/')||value.includes('//')
+      ||value.includes('..')||value.endsWith('.'))return false;
+  return value.split('/').every(part=>part.length>0&&!part.endsWith('.lock'));
+}
+function githubBranchURL(repository,ref){
+  if(!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(repository)
+      ||!validGitHubBranchRef(ref))return '';
+  return 'https://github.com/'+repository+'/tree/'+ref.split('/').map(encodeURIComponent).join('/');
+}
+function isCanonicalGitHubActivityURL(value){
+  if(typeof value!=='string')return false;
+  const branch=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/tree\/([A-Za-z0-9_.\/-]{1,80})$/.exec(value);
+  if(branch)return validGitHubBranchRef(branch[2]);
+  return /^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull\/[1-9][0-9]*|commit\/[a-f0-9]{40}|actions\/runs\/[1-9][0-9]*)$/.test(value);
+}
+// Bounded, fixed operator text only: never surface a provider response body,
+// token, request URL, or unvalidated imported reason in the dashboard.
+const GITHUB_PROVIDER_ADMISSIONS=Object.freeze({
+  none:'',
+  authentication_required:'GitHub authentication refused; authorized credentials need owner review.',
+  rate_limit_confirmed:'GitHub requested a global rate-limit pause; no extra reads were authorized.',
+  repository_or_secondary_limit_unknown:'GitHub 403 for this repository: access or secondary limit is unknown. Other repositories may still have usable data.',
+  global_admission_denied_prior_project:'Provider reads stopped earlier after authentication or confirmed rate limiting. This project was not fetched.'
+});
+const ZSENTINEL_PORTFOLIO_SOURCE_LIMIT=16; // 13 canonical projects + bounded growth.
+function fairProductIssueHistory(rows,coverage,limit=150){
+  // Global P0/P1 priority is preserved while each observed project gets an
+  // opportunity. Do not let one noisy repository erase all other P1 evidence.
+  const projects=[...new Set((coverage||[]).map(row=>row.project))]
+    .filter(id=>typeof id==='string').slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT).sort();
+  const retained=new Set(projects),known=new Map();
+  for(const item of rows||[]){
+    if(!item||!retained.has(item.project)||!Number.isSafeInteger(item.number)
+       ||item.number<1||!['P0','P1','P2','Unspecified'].includes(item.priority))continue;
+    // Fresh data is appended after older evidence by all existing callers.
+    known.set(item.project+':'+item.number,item);
+  }
+  const buckets=new Map(projects.map(id=>[id,[]]));
+  for(const item of known.values())buckets.get(item.project).push(item);
+  const rank={P0:0,P1:1,P2:2,Unspecified:3};
+  for(const bucket of buckets.values())bucket.sort((a,b)=>
+    rank[a.priority]-rank[b.priority]||
+    Number(a.staleUnverified===true)-Number(b.staleUnverified===true)||
+    a.number-b.number);
+  const output=[],used=new Map(projects.map(id=>[id,0]));
+  // Complete each global priority tier before lower priority, with fair
+  // round-robin turns inside that tier. The cap remains 150 across all repos.
+  for(const priority of ['P0','P1','P2','Unspecified']){
+    while(output.length<limit){
+      let moved=false;
+      for(const project of projects){
+        const items=buckets.get(project),cursor=used.get(project);
+        if(cursor>=items.length||items[cursor].priority!==priority)continue;
+        output.push(items[cursor]);used.set(project,cursor+1);moved=true;
+        if(output.length>=limit)break;
+      }
+      if(!moved)break;
+    }
+    if(output.length>=limit)break;
+  }
+  return output;
+}
+
+// A new validated operator receipt updates only its declared canonical
+// projects. Earlier observations for other projects remain available and
+// unchanged; an older file cannot silently roll back newer observations.
+function mergeValidatedZSentinelReceipts(previous,next,kind){
+  if(!previous)return next;
+  const ids=new Set(next.coverage.map(row=>row.project));
+  if(ids.size!==next.coverage.length)throw Error('Duplicate project coverage in imported receipt');
+  for(const row of next.coverage){
+    const prior=previous.coverage.find(item=>item.project===row.project);
+    if(prior&&Date.parse(row.observedAt)<Date.parse(prior.observedAt)){
+      throw Error('Receipt is older than the current '+row.project+' observation; clear first if an older snapshot is intended');
+    }
+  }
+  const priorProjects=new Set((previous.events||[]).map(row=>row.project));
+  const nextCoverage=next.coverage.map(row=>kind==='github'&&
+    row.status!=='partial_sources'&&priorProjects.has(row.project)
+      ?{...row,staleEvidence:true,lastAttemptAt:row.observedAt}
+      :row);
+  const coverage=[...previous.coverage.filter(row=>!ids.has(row.project)),...nextCoverage]
+    .slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const retained=new Set(coverage.map(row=>row.project));
+  if(kind==='github'){
+    const fresh=next.events.filter(row=>retained.has(row.project));
+    const freshIds=new Set(fresh.map(row=>row.id));
+    const partialProjects=new Set(nextCoverage.filter(row=>
+      row.status!=='partial_sources').map(row=>row.project));
+    // A new incomplete receipt is not an assertion that absent old PR/CI
+    // events disappeared. Admit the actual new facts before historical rows
+    // so a changed status for the same immutable event never loses to old data.
+    const historical=previous.events.filter(row=>retained.has(row.project)&&
+      partialProjects.has(row.project)&&!freshIds.has(row.id))
+      .map(row=>({...row,staleUnverified:true}));
+    const events=fairPublicGitHubHistory([
+      ...previous.events.filter(row=>!ids.has(row.project)&&retained.has(row.project)),
+      ...fresh,...historical],coverage);
+    return {observedAt:new Date().toISOString(),events,coverage};
+  }
+  const issues=fairProductIssueHistory([
+    ...previous.issues.filter(row=>!ids.has(row.project)&&retained.has(row.project)),
+    ...next.issues.filter(row=>retained.has(row.project))],coverage);
+  return {observedAt:new Date().toISOString(),issues,coverage,partial:true};
+}
+function validateGitHubActivityReceipt(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)
+      ||value.schema!=='zcloud-github-activity-readonly-v1'
+      ||value.feed_complete!==false||value.authorizes_merge!==false
+      ||value.authorizes_repair!==false||value.authorizes_deploy!==false
+      ||!Array.isArray(value.events)||value.events.length>200
+      ||!Array.isArray(value.coverage)||value.coverage.length>8
+      ||!Array.isArray(value.requested_projects)||value.requested_projects.length>8
+      ||!Number.isFinite(Date.parse(value.observed_at)))throw Error('Unrecognized or unsafe read-only receipt');
+  const observed=Date.parse(value.observed_at);
+  if(observed>Date.now()+120000)throw Error('Snapshot time is in the future');
+  const sourceByProject=new Map(),coverage=[];
+  const requested=value.requested_projects;
+  const requestedSet=new Set(requested);
+  if(!requested.length||requested.length!==requestedSet.size||
+      requested.length!==value.coverage.length||
+      requested.some(id=>typeof id!=='string'||!canonicalGitHubRepositoryForProject(id)))
+    throw Error('Receipt project scope does not match the canonical registry');
+  for(const row of value.coverage){
+    if(!row||typeof row!=='object'||typeof row.project!=='string'
+       ||!requestedSet.has(row.project)||sourceByProject.has(row.project)
+       ||typeof row.repository!=='string'
+       ||row.repository!==canonicalGitHubRepositoryForProject(row.project))
+      throw Error('Receipt repository does not belong to its canonical project');
+    // Older receipts omit this field. Unknown values fail closed rather than
+    // becoming arbitrary HTML or a false "GitHub healthy" claim.
+    const admission=row.provider_admission===undefined?'none':row.provider_admission;
+    if(typeof admission!=='string'||!Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,admission))
+      throw Error('Unrecognized provider admission source');
+    sourceByProject.set(row.project,row.repository);
+    coverage.push({project:row.project,
+      status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable',
+      observedAt:value.observed_at,providerAdmission:admission});
+  }
+  // Imported receipts are NOT an authorization to merge or deploy.
+  // Correlate source-claimed positive PR main evidence with an exact
+  // main-commit entry in this same bounded, untrusted receipt.
+  const mainEvidence=new Set(value.events.filter(item=>item&&item.kind==='main_commit'
+    &&typeof item.sha==='string'&&/^[a-f0-9]{40}$/.test(item.sha)
+    &&typeof item.project==='string').map(item=>item.project+':'+item.sha));
+  const seen=new Set(),events=[];
+  for(const entry of value.events){
+    if(!entry||typeof entry!=='object'||!GITHUB_RECEIPT_KINDS.has(entry.kind)
+       ||typeof entry.id!=='string'||entry.id.length>256
+       ||!sourceByProject.has(entry.project)
+       ||!entry.id.startsWith('github:'+sourceByProject.get(entry.project)+':'+entry.kind+':')
+       ||!Number.isFinite(Date.parse(entry.source_at))
+       ||Date.parse(entry.source_at)>observed+120000
+       ||seen.has(entry.id))throw Error('Malformed or duplicate activity event');
+    seen.add(entry.id);
+    const repository=sourceByProject.get(entry.project);
+    let url='',description='';
+    if(entry.kind==='branch_head'){
+      if(!validGitHubBranchRef(entry.branch_ref)||typeof entry.sha!=='string'
+          ||!/^[a-f0-9]{40}$/.test(entry.sha)
+          ||entry.id!=='github:'+repository+':branch_head:'+entry.branch_ref+':'+entry.sha
+          ||entry.main_merged!==false||entry.branch_owner_verified!==false)
+        throw Error('Invalid branch-head observation');
+      url=githubBranchURL(repository,entry.branch_ref);
+      if(!url)throw Error('Invalid branch URL');
+      description='Branch '+entry.branch_ref+' · HEAD '+entry.sha.slice(0,12)+
+        ' · owner/merge/deploy unverified';
+    }else if(entry.kind==='main_commit'){
+      if(typeof entry.sha!=='string'||!/^[a-f0-9]{40}$/.test(entry.sha)
+          ||entry.id!=='github:'+repository+':main_commit:'+entry.sha
+          ||entry.main_merged!==true)throw Error('Invalid main commit');
+      url='https://github.com/'+repository+'/commit/'+entry.sha;
+      description='Main commit '+entry.sha.slice(0,12);
+    }else if(entry.kind==='ci_run'){
+      if(!Number.isSafeInteger(entry.run_id)||entry.run_id<=0
+          ||entry.id!=='github:'+repository+':ci_run:'+entry.run_id)throw Error('Invalid CI run');
+      url='https://github.com/'+repository+'/actions/runs/'+entry.run_id;
+      description='Actions #'+entry.run_id+' · '+(['success','failure','cancelled','skipped','timed_out'].includes(entry.conclusion)?entry.conclusion:'not completed');
+    }else{
+      if(!Number.isSafeInteger(entry.pr)||entry.pr<=0
+          ||entry.id!=='github:'+repository+':'+entry.kind+':'+entry.pr
+          ||(entry.main_merged!==false&&entry.main_merged!==true))throw Error('Invalid PR event');
+      if(entry.main_merged===true&&(
+           entry.merged!==true||entry.reported_target!=='main'
+           ||typeof entry.merge_commit_sha!=='string'
+           ||!/^[a-f0-9]{40}$/.test(entry.merge_commit_sha)
+           ||entry.main_merge_evidence!=='canonical_main_history_exact_sha'
+           ||!mainEvidence.has(entry.project+':'+entry.merge_commit_sha)
+      ))throw Error('Uncorroborated main merge evidence');
+      url='https://github.com/'+repository+'/pull/'+entry.pr;
+      description='PR #'+entry.pr+' · '+entry.kind.replaceAll('_',' ');
+      if(typeof entry.pr_head_sha==='string'&&/^[a-f0-9]{40}$/.test(entry.pr_head_sha))
+        description+=' · '+entry.pr_head_sha.slice(0,12);
+      if(entry.kind==='pr_closed'){
+        // Closure is a separately timestamped GitHub source event, never
+        // proof of a merge, deployed change or released worker claim.
+        if(entry.merged!==false||entry.main_merged!==false
+            ||entry.reported_main_merge!==false
+            ||entry.pr_lifecycle!=='closed_without_merge'
+            ||typeof entry.pr_closed_at!=='string'
+            ||!Number.isFinite(Date.parse(entry.pr_closed_at))
+            ||Math.abs(Date.parse(entry.source_at)-Date.parse(entry.pr_closed_at))>1000)
+          throw Error('Invalid closed-unmerged PR evidence');
+        description+=' · closed without merge · NOT delivered';
+      }
+      if(entry.kind==='pr_merged'){
+        description+=entry.main_merged===true
+          ? ' · exact merge SHA also in this imported main history (not live deploy proof)'
+          : ' · merge reported; main not proven by this receipt';
+      }
+    }
+    events.push({project:entry.project,id:entry.id,kind:entry.kind,url,description,
+      ts:entry.source_at,firstSeen:entry.new_since_previous===true,
+      ...(entry.kind==='branch_head'?{branch_ref:entry.branch_ref,sha:entry.sha,
+        main_merged:false,branch_owner_verified:false}:{})});
+  }
+  if(coverage.length===0)throw Error('Snapshot contains no canonical project coverage');
+  return {observedAt:value.observed_at,coverage,events};
+}
+// Optional browser-only public GitHub refresh. Never uses the zCloud API token,
+// scheduled workers, a write endpoint, or a background polling loop.
+let PUBLIC_GITHUB_BUSY=false;
+const PUBLIC_GITHUB_LAST_FETCH=new Map();
+// Each page is fetched only by a deliberate operator click. No background crawl.
+const PUBLIC_GITHUB_PAGE=new Map(),PUBLIC_GITHUB_VIEW_PAGE=new Map();
+const PUBLIC_GITHUB_MORE=new Map(); // More history may exist only when an observed page is full.
+let PUBLIC_GITHUB_PAUSE_UNTIL=0; // In-memory global provider cooldown, never stored.
+const PUBLIC_GITHUB_READ_TIMES=[];
+const PUBLIC_GITHUB_HOURLY_READ_LIMIT=8; // Four GETs per batch; leave headroom for the independent issue source.
+function publicGitHubReadBudget(now=Date.now()){
+  while(PUBLIC_GITHUB_READ_TIMES.length&&now-PUBLIC_GITHUB_READ_TIMES[0]>=3600000)
+    PUBLIC_GITHUB_READ_TIMES.shift();
+  return {used:PUBLIC_GITHUB_READ_TIMES.length,
+    remaining:Math.max(0,PUBLIC_GITHUB_HOURLY_READ_LIMIT-PUBLIC_GITHUB_READ_TIMES.length),
+    resetsAt:PUBLIC_GITHUB_READ_TIMES.length?PUBLIC_GITHUB_READ_TIMES[0]+3600000:now};
+}
+function pauseForConfirmedGitHubLimit(response){
+  // GitHub 429 and explicit 403 exhaustion/cooldown apply across ALL projects.
+  // Use trusted numeric headers only; never expose raw provider header text.
+  let waitMs=120000;
+  const after=response.headers?.get('Retry-After');
+  if(typeof after==='string'&&/^[0-9]{1,4}$/.test(after))
+    waitMs=Math.max(waitMs,Math.min(3600000,Number(after)*1000));
+  const reset=response.headers?.get('X-RateLimit-Reset');
+  if(typeof reset==='string'&&/^[0-9]{10}$/.test(reset))
+    waitMs=Math.max(waitMs,Math.min(3600000,Number(reset)*1000-Date.now()));
+  PUBLIC_GITHUB_PAUSE_UNTIL=Math.max(PUBLIC_GITHUB_PAUSE_UNTIL,
+    Date.now()+Math.min(3600000,waitMs));
+}
+async function publicGitHubGET(repository,suffix){
+  if(!/^[A-Za-z0-9_.-]{1,100}$/.test(repository))throw Error('Invalid canonical repository');
+  if(Date.now()<PUBLIC_GITHUB_PAUSE_UNTIL)throw Error('confirmed_rate_limit');
+  const url='https://api.github.com/repos/Zennay/'+repository+'/'+suffix;
+  const response=await fetch(url,{method:'GET',credentials:'omit',redirect:'error',cache:'no-store',
+    headers:{'Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(8000)});
+  if(!response.ok){
+    // These fixed local categories intentionally omit response bodies, headers,
+    // repository internals and network exception details.
+    const confirmedLimit=response.status===429||
+      (response.status===403&&(response.headers?.get('X-RateLimit-Remaining')==='0'
+        ||response.headers?.get('Retry-After')!=null));
+    if(confirmedLimit)pauseForConfirmedGitHubLimit(response);
+    // Ambiguous repository-level 403 must not stop other canonical projects.
+    // A confirmed global limit must stop every subsequent operator fetch.
+    const reason=confirmedLimit?'confirmed_rate_limit':
+      response.status===403?'forbidden_or_secondary_limit_unknown':
+      response.status===401?'authentication_required':
+      response.status===404?'repository_inaccessible':'provider_unavailable';
+    throw Error(reason);
+  }
+  if(new URL(response.url).origin!=='https://api.github.com')throw Error('Unexpected GitHub origin');
+  const raw=await response.text();
+  if(raw.length>600000)throw Error('GitHub source too large');
+  return JSON.parse(raw);
+}
+function fairPublicGitHubHistory(rows,coverage,limit=200){
+  // This is a bounded *view*, not an archive. Page 5 should not disappear
+  // merely because pages 1–4 contain 200 noisy PR updates or CI events.
+  // Share the budget across both canonical projects and explicitly loaded
+  // browser pages, then across PR, Actions and main-source categories.
+  const ids=[...new Set((coverage||[]).map(row=>row.project))]
+    .filter(id=>typeof id==='string').slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const admitted=new Set(ids),groups=new Map(),seen=new Set();
+  for(const row of rows||[]){
+    if(!row||!admitted.has(row.project)||typeof row.url!=='string'||
+        typeof row.kind!=='string')continue;
+    const key=row.kind==='branch_head'&&typeof row.id==='string'
+      ?row.id:row.project+'|'+row.kind+'|'+row.url;
+    if(seen.has(key))continue;
+    const ts=Date.parse(row.ts||'');
+    if(!Number.isFinite(ts)||ts>Date.now()+120000||ts<0)continue;
+    seen.add(key);
+    // Page 0 holds operator/VPS/legacy evidence, never assigned a fictitious
+    // public page. A new bounded browser page is 1..5; nothing is fetched here.
+    const page=Number.isInteger(row.sourcePage)&&row.sourcePage>=1&&row.sourcePage<=5
+      ?row.sourcePage:0;
+    const groupKey=row.project+':'+page;
+    if(!groups.has(groupKey))groups.set(groupKey,{project:row.project,page,
+      pr:[],ci:[],main:[],branch:[],cursor:{pr:0,ci:0,main:0,branch:0}});
+    const category=row.kind==='ci_run'?'ci':row.kind==='main_commit'?'main':
+      row.kind==='branch_head'?'branch':'pr';
+    groups.get(groupKey)[category].push(row);
+  }
+  const ordered=[...groups.values()].sort((a,b)=>
+    ids.indexOf(a.project)-ids.indexOf(b.project)||a.page-b.page);
+  for(const group of ordered)
+    for(const category of ['pr','ci','main','branch'])
+      group[category].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.id.localeCompare(b.id));
+  const result=[];
+  while(result.length<limit){
+    let progressed=false;
+    for(const group of ordered){
+      for(const category of ['pr','ci','main','branch']){
+        const index=group.cursor[category];
+        if(index>=group[category].length)continue;
+        result.push(group[category][index]);
+        group.cursor[category]=index+1;
+        progressed=true;
+        if(result.length>=limit)break;
+      }
+      if(result.length>=limit)break;
+    }
+    if(!progressed)break;
+  }
+  return result.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
+}
+async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false,older=false){
+  if(PUBLIC_GITHUB_BUSY)return;
+  const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';if(!quiet)render();return}
+  const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
+  if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';if(!quiet)render();return}
+  const repo=m[1],projectId=selected.id;
+  if(Date.now()<PUBLIC_GITHUB_PAUSE_UNTIL){
+    IMPORTED_GITHUB_ERROR='GitHub confirmed a global rate-limit pause. Public source reads are paused for up to '+
+      Math.ceil((PUBLIC_GITHUB_PAUSE_UNTIL-Date.now())/60000)+
+      ' minute(s); existing observations remain available. No retry dispatched.';
+    if(!quiet)render();return;
+  }
+  const lastPage=PUBLIC_GITHUB_PAGE.get(projectId)||0;
+  if(older&&(lastPage<1||lastPage>=5||PUBLIC_GITHUB_MORE.get(projectId)===false)){
+    IMPORTED_GITHUB_ERROR='No further GitHub page was observed, or five explicit pages are already loaded. Read the newest page to start a new bounded window.';
+    if(!quiet)render();return;
+  }
+  const readPage=older?lastPage+1:1;
+  if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(projectId)||0)<120000){
+    IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
+    if(!quiet)render();return;
+  }
+  const budget=publicGitHubReadBudget();
+  if(!budget.remaining){
+    IMPORTED_GITHUB_ERROR='Browser GitHub hourly source budget reached ('+
+      PUBLIC_GITHUB_HOURLY_READ_LIMIT+' batches; four bounded GETs each). Existing observations remain available; next read after '+
+      new Date(budget.resetsAt).toISOString()+'. No request dispatched.';
+    if(!quiet)render();return;
+  }
+  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_READ_TIMES.push(Date.now());
+  PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
+  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI, main and branch-head page '+readPage+'…';render();}
+  const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20&page='+readPage,
+    'actions/runs?per_page=20&page='+readPage,'commits?sha=main&per_page=15&page='+readPage,
+    'branches?per_page=100&page='+readPage];
+  const outcomes=await Promise.allSettled(suffixes.map(suffix=>publicGitHubGET(repo,suffix)));
+  const sampledAt=new Date().toISOString();
+  const events=[],seen=new Set();
+  const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
+  const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
+  const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
+  // Compare only page-1 to page-1: comparing a prior older-page sample
+  // against today's newest page would falsely label every current row new.
+  const comparablePrior=previousCoverage?.status==='partial_sources'
+    &&previousCoverage.staleEvidence!==true&&previousCoverage.page===1;
+  const push=(kind,ts,url,description,branchRef=null,branchSha=null)=>{
+    const parsed=Date.parse(ts||'');
+    if(!Number.isFinite(parsed)||parsed>Date.now()+120000||parsed<0)return;
+    // Public GitHub events must carry the SAME immutable namespaced identity
+    // required by combinedActivityRows and the strict offline receipt reader.
+    const ref=kind==='branch_head'&&validGitHubBranchRef(branchRef)
+        &&typeof branchSha==='string'&&/^[a-f0-9]{40}$/.test(branchSha)
+      ?branchRef+':'+branchSha:
+      kind==='main_commit'?(/\/commit\/([a-f0-9]{40})$/.exec(url)?.[1]||''):
+      kind==='ci_run'?(/\/actions\/runs\/([1-9][0-9]*)$/.exec(url)?.[1]||''):
+      ['pr_created','pr_updated','pr_merged','pr_closed'].includes(kind)?
+        (/\/pull\/([1-9][0-9]*)$/.exec(url)?.[1]||''):'';
+    if(!ref||!GITHUB_RECEIPT_KINDS.has(kind))return;
+    const id='github:Zennay/'+repo+':'+kind+':'+ref;
+    if(seen.has(id))return;
+    seen.add(id);
+    events.push({project:projectId,id,kind,ts:new Date(parsed).toISOString(),url,
+      description,firstSeen:false,sourcePage:readPage,
+      ...(kind==='branch_head'?{branch_ref:branchRef,sha:branchSha,
+        main_merged:false,branch_owner_verified:false}:{})});
+  };
+  try{
+    const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    const branches=outcomes[3].status==='fulfilled'&&Array.isArray(outcomes[3].value)?outcomes[3].value:[];
+    const sampledMainShas=new Set(commits.slice(0,15).filter(commit=>typeof commit.sha==='string'
+      &&/^[a-f0-9]{40}$/.test(commit.sha)).map(commit=>commit.sha));
+    const prs=outcomes[0].status==='fulfilled'&&Array.isArray(outcomes[0].value)?outcomes[0].value:[];
+    for(const pr of prs.slice(0,20)){
+      if(!Number.isSafeInteger(pr.number)||pr.number<=0||!pr.head||typeof pr.head.sha!=='string'||
+        !/^[a-f0-9]{40}$/i.test(pr.head.sha))continue;
+      const link='https://github.com/Zennay/'+repo+'/pull/'+pr.number;
+      const head=pr.head.sha.slice(0,10),draft=pr.draft===true;
+      const created=Date.parse(pr.created_at||''),updated=Date.parse(pr.updated_at||'');
+      const merged=Date.parse(pr.merged_at||''),closed=Date.parse(pr.closed_at||'');
+      const valid=t=>Number.isFinite(t)&&t>0&&t<Date.now()+120000;
+      // One current PR record can contain three distinct source lifecycle
+      // facts. Do not confuse PR creation with later updates/merges or a green
+      // CI result with an accepted deployment.
+      if(valid(created))push('pr_created',pr.created_at,link,
+        'PR #'+pr.number+' · Created'+(draft?' · draft':'')+' · head '+head);
+      const stop=valid(merged)?merged:valid(closed)?closed:Infinity;
+      if(valid(updated)&&(!valid(created)||updated-created>1000)&&updated<stop){
+        push('pr_updated',pr.updated_at,link,
+          'PR #'+pr.number+' · Updated'+(draft?' · draft':'')+' · head '+head);
+      }
+      if(valid(merged)){
+        // Positive proof only: a PR's reported target is not the same as
+        // an exact merge SHA found in the canonical main history.
+        const mergeSha=typeof pr.merge_commit_sha==='string'?pr.merge_commit_sha:'';
+        const mainMatched=pr.base?.ref==='main'&&/^[a-f0-9]{40}$/.test(mergeSha)
+          &&sampledMainShas.has(mergeSha);
+        push('pr_merged',pr.merged_at,link,'PR #'+pr.number+
+          (mainMatched?' · exact merge SHA in sampled GitHub main':
+           ' · GitHub reports merged; main reachability unverified')+
+          ' · head '+head+' · deployment not verified');
+      }else if(pr.state==='closed'&&valid(closed)){
+        push('pr_closed',pr.closed_at,link,'PR #'+pr.number+
+          ' · Closed without merge · head '+head);
+      }
+    }
+    const runs=outcomes[1].status==='fulfilled'&&Array.isArray(outcomes[1].value?.workflow_runs)?outcomes[1].value.workflow_runs:[];
+    for(const run of runs.slice(0,20)){
+      if(!Number.isSafeInteger(run.id)||run.id<=0)continue;
+      const status=['queued','in_progress','completed','waiting','pending','requested'].includes(run.status)?run.status:'unknown';
+      const conclusion=['success','failure','cancelled','skipped','timed_out','neutral','action_required'].includes(run.conclusion)?run.conclusion:'not_final';
+      push('ci_run',run.updated_at||run.created_at,'https://github.com/Zennay/'+repo+'/actions/runs/'+run.id,
+        'GitHub Actions #'+run.id+' · '+status+' / '+conclusion+' · no deploy claim');
+    }
+    for(const commit of commits.slice(0,15)){
+      if(typeof commit.sha!=='string'||!/^[a-f0-9]{40}$/i.test(commit.sha))continue;
+      push('main_commit',commit.commit?.committer?.date||commit.commit?.author?.date,
+        'https://github.com/Zennay/'+repo+'/commit/'+commit.sha,
+        'Commit on GitHub main history · '+commit.sha.slice(0,10)+' · deploy not verified');
+    }
+    let branchesSkipped=0;
+    const previousBranchHeads=new Map(previousRows.filter(row=>row.kind==='branch_head'
+      &&typeof row.branch_ref==='string'&&typeof row.sha==='string')
+      .map(row=>[row.branch_ref,row]));
+    for(const branchRow of branches.slice(0,100)){
+      const branchRef=branchRow?.name;
+      const branchSha=typeof branchRow?.commit?.sha==='string'
+        ?branchRow.commit.sha.toLowerCase():'';
+      if(!validGitHubBranchRef(branchRef)||!/^[a-f0-9]{40}$/.test(branchSha)){
+        branchesSkipped++;continue;
+      }
+      const prior=comparablePrior?previousBranchHeads.get(branchRef):null;
+      const changed=Boolean(prior&&prior.sha!==branchSha);
+      const detail='Branch head observed · '+branchRef+' · '+branchSha.slice(0,12)+
+        (changed?' · HEAD changed from '+prior.sha.slice(0,12):
+          ' · owner/merge/deploy unverified');
+      push('branch_head',sampledAt,githubBranchURL('Zennay/'+repo,branchRef),
+        detail,branchRef,branchSha);
+    }
+    const sourceLists=[prs,runs,commits,branches];
+    const sourceReadable=outcomes.map((outcome,i)=>outcome.status==='fulfilled'&&
+      (i===1?Array.isArray(outcome.value?.workflow_runs):Array.isArray(outcome.value)));
+    const good=sourceReadable.filter(Boolean).length;
+    const sourceLimits=[20,20,15,100];
+    const allowedDenials=new Set(['confirmed_rate_limit','forbidden_or_secondary_limit_unknown',
+      'authentication_required','repository_inaccessible','provider_unavailable']);
+    const sourceCoverage=sourceReadable.map((ok,i)=>({
+      name:['PR','Actions','main','branches'][i],
+      status:ok?(sourceLists[i].length>=sourceLimits[i]?'bounded_full':'bounded_end'):'unavailable',
+      rows:ok?Math.min(sourceLists[i].length,sourceLimits[i]):null,
+      skipped:i===3?branchesSkipped:0,
+      denial:ok?'none':allowedDenials.has(outcomes[i].reason?.message)
+        ?outcomes[i].reason.message:'provider_unavailable'
+    }));
+    // A branch inventory is bounded too; only an operator read can observe it.
+    const completeSample=good===4&&branchesSkipped===0;
+    const morePossible=sourceReadable.slice(0,3).every(Boolean)
+      &&sourceCoverage.some(row=>row.status==='bounded_full');
+    // Provider failure MUST NOT turn previously observed PR/CI activity into
+    // an empty current result. Incomplete source windows can retain older
+    // evidence, clearly labelled stale/partial, until a full new sample arrives.
+    // "First seen" is an observation delta, not proof a PR was created now.
+    // Compare only complete bounded PR/CI/main/branch snapshots.
+    if(!older&&completeSample&&comparablePrior){
+      const previousIds=new Set(previousRows.map(row=>row.id)
+        .filter(id=>typeof id==='string'));
+      for(const event of events)event.firstSeen=!previousIds.has(event.id);
+    }
+    const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
+      {project:projectId,status:completeSample?'partial_sources':good?'partial_error':'unavailable',
+        observedAt:completeSample||!previousCoverage?sampledAt:previousCoverage.observedAt,
+        lastAttemptAt:sampledAt,staleEvidence:!completeSample&&previousRows.length>0,
+        sourceCoverage,page:readPage,morePossible}].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+    const coveredIds=new Set(githubCoverage.map(row=>row.project));
+    // Partial provider reads must not shadow genuinely refreshed events
+    // with older copies carrying the same canonical project/kind/GitHub ID.
+    // Keep earlier events only when not reobserved, explicitly historical.
+    const freshIds=new Set(events.map(row=>row.id));
+    // An older page extends the same manually observed window; it must not
+    // erase newer pages or count older data as newly created GitHub work.
+    const retainedProjectRows=completeSample?(older?
+      [...events,...previousRows.filter(row=>!freshIds.has(row.id))]:events):[
+      ...events,
+      ...previousRows.filter(row=>!freshIds.has(row.id))
+        .map(row=>({...row,staleUnverified:true}))
+    ];
+    const githubEvents=fairPublicGitHubHistory(
+      [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
+       ...retainedProjectRows],githubCoverage);
+    IMPORTED_GITHUB_ACTIVITY={observedAt:sampledAt,events:githubEvents,coverage:githubCoverage};
+    if(sourceReadable.slice(0,3).every(Boolean)){
+      PUBLIC_GITHUB_PAGE.set(projectId,readPage);PUBLIC_GITHUB_VIEW_PAGE.set(projectId,readPage);
+      PUBLIC_GITHUB_MORE.set(projectId,morePossible);
+    }
+    const requiredReadable=sourceReadable.slice(0,3).filter(Boolean).length;
+    IMPORTED_GITHUB_ERROR=requiredReadable<3
+      ?'Incomplete public PR/CI/main sources ('+requiredReadable+'/3 readable); prior observations retained and may be stale. '
+      :completeSample?'Public GitHub page '+readPage+' observed for PR, CI, main and bounded branch heads. '
+      :'PR/CI/main read; branch-head source partial ('+
+        (sourceReadable[3]?(branchesSkipped+' branch rows omitted'):'unavailable')+'). '+
+        'Private branches/repositories and branch creation/last-commit times remain unknown; no deployment proof.';
+    return {project:projectId,readable:good,attempted:true};
+  }catch(_error){
+    IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
+  }finally{PUBLIC_GITHUB_BUSY=false;if(!quiet&&route==='activity')render()}
+}
+
+// Explicit operator request. Source side uses 5-minute in-memory server cache,
+// bounded singleflight and fixed canonical repo registry. Never an auto-sync.
+let VPS_GITHUB_BUSY=false,VPS_GITHUB_ERROR='';
+async function readVpsGitHubActivity(){
+  if(VPS_GITHUB_BUSY)return;
+  const selected=(DATA?.projects||[]).find(project=>project.id===filter);
+  if(!selected){VPS_GITHUB_ERROR='Select one project to request the authorized VPS source.';render();return}
+  const project=selected.id,version=routeVersion;
+  VPS_GITHUB_BUSY=true;VPS_GITHUB_ERROR='Requesting bounded GitHub observation from VPS…';
+  if(route==='activity')render();
+  try{
+    let data=null,staleSample=false,staleAge=0,staleReason='';
+    // First request schedules GitHub collection if not cached; subsequent
+    // short reads query the same singleflight result without new provider GETs.
+    for(let attempt=0;attempt<6;attempt++){
+      const response=await fetch('/api/github-activity-live?project='+encodeURIComponent(project),
+        {method:'GET',cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(7000)});
+      if(!response.ok)throw Error(response.status===403?'Trusted administrator network required':
+        'HTTP '+response.status);
+      const envelope=await response.json();
+      if(!envelope||envelope.schema!=='zcloud-github-activity-live-v1'||
+         envelope.project!==project||envelope.feed_complete!==false||
+         envelope.authorizes_repair!==false||envelope.authorizes_merge!==false||
+         envelope.authorizes_deploy!==false||
+         !['refreshing','partial','stale','unavailable','capacity_wait','rate_budget_wait'].includes(envelope.state)){
+        throw Error('Unrecognized GitHub server source');
+      }
+      if(envelope.state==='partial'){data=envelope.receipt;break}
+      if(envelope.state==='stale'){
+        // The original source timestamp is retained inside the receipt.
+        // Never upgrade an old cache hit to a fresh GitHub observation.
+        if(!Number.isSafeInteger(envelope.cached_age_s)||envelope.cached_age_s<300||
+           envelope.cached_age_s>3600||
+           !['refreshing','provider_unavailable','invalid_provider_receipt',
+             'capacity_wait','rate_budget_wait'].includes(envelope.refresh_status)){
+          throw Error('Invalid stale GitHub source metadata');
+        }
+        staleSample=true;staleAge=envelope.cached_age_s;
+        staleReason=envelope.refresh_status;
+        data=envelope.receipt;break;
+      }
+      if(envelope.state!=='refreshing'){
+        throw Error(envelope.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
+          envelope.state==='capacity_wait'?'Source capacity busy':'GitHub unavailable');
+      }
+      if(attempt===5)throw Error('Observation still collecting; choose Read VPS GitHub again.');
+      await new Promise(resolve=>setTimeout(resolve,2500));
+      if(routeVersion!==version||filter!==project)return;
+    }
+    const parsed=validateGitHubActivityReceipt(data);
+    if(parsed.coverage.length!==1||parsed.coverage[0].project!==project)
+      throw Error('Server source project mismatch');
+    if(routeVersion!==version||filter!==project)return;
+    // Share the same non-destructive source contract with local operator
+    // imports. An incomplete trusted-server response must not erase the
+    // project's previous PR/CI history or newer source observations.
+    const prior=IMPORTED_GITHUB_ACTIVITY||null;
+    const previousTime=prior?.coverage?.find(row=>row.project===project)?.observedAt||'';
+    const olderThanLoaded=staleSample&&previousTime&&
+      Date.parse(parsed.coverage[0].observedAt)<Date.parse(previousTime);
+    // A stale server response carries original timestamps, but the merged
+    // Activity feed must ALSO retain its uncertainty in every downstream
+    // project/PR/CI summary and private export. Never relabel an old merge
+    // event as newly observed accepted work.
+    const admitted=staleSample?{
+      ...parsed,
+      coverage:parsed.coverage.map(row=>({...row,staleEvidence:true,
+        lastAttemptAt:new Date().toISOString()})),
+      events:parsed.events.map(row=>({...row,staleUnverified:true}))
+    }:parsed;
+    if(!olderThanLoaded){
+      IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,admitted,'github');
+      // The server source is a separate evidence window, not a browser
+      // public-page cursor. Only reset display slices if newly admitted.
+      PUBLIC_GITHUB_PAGE.delete(project);PUBLIC_GITHUB_VIEW_PAGE.delete(project);PUBLIC_GITHUB_MORE.delete(project);
+    }
+    VPS_GITHUB_ERROR=staleSample?
+      'STALE GitHub cache for '+project+' ('+staleAge+'s old; '+staleReason+'). '+
+      (olderThanLoaded?'Kept your newer existing evidence. ':
+        'Showing historical observations only. ')+
+      'No current PR, CI or deployment coverage verified.':
+      'Server GitHub sample loaded for '+project+
+      '. Partial PR/CI/main source; no deployment or branch completeness implied.';
+  }catch(error){
+    if(routeVersion===version&&filter===project)
+      VPS_GITHUB_ERROR='VPS GitHub evidence unavailable: '+
+        String(error?.message||'read failed')+
+        '. Use the independent browser GET or operator receipt; missing evidence is unknown.';
+  }finally{
+    VPS_GITHUB_BUSY=false;
+    if(route==='activity')render();
+  }
+}
+function githubActivityImportPanel(){
+  const snapshot=IMPORTED_GITHUB_ACTIVITY;
+  const sourceBudget=publicGitHubReadBudget();
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const loadedPage=filter?(PUBLIC_GITHUB_PAGE.get(filter)||0):0;
+  const viewedPage=filter?(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1):1;
+  const publicPause=Math.max(0,PUBLIC_GITHUB_PAUSE_UNTIL-Date.now());
+  const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter)
+    &&(!filter||loadedPage===0||(a.sourcePage||1)===viewedPage));
+  const selectedCoverage=(snapshot?.coverage||[]).filter(c=>visible.has(c.project)&&(!filter||c.project===filter));
+  const sourceDetails=selectedCoverage.filter(c=>Array.isArray(c.sourceCoverage))
+    .map(c=>'<p class="detail-note" role="status">'+esc(c.project)+' · page '+esc(c.page||1)+' source coverage: '+
+      c.sourceCoverage.map(src=>esc(src.name)+' '+(src.status==='unavailable'
+        ?'UNAVAILABLE ('+({
+          confirmed_rate_limit:'GitHub 429 confirmed',
+          forbidden_or_secondary_limit_unknown:'GitHub 403: access or secondary rate unknown',
+          authentication_required:'GitHub 401: authentication required',
+          repository_inaccessible:'GitHub 404: source inaccessible',
+          provider_unavailable:'provider/network unavailable'
+        }[src.denial]||'source unavailable')+')':
+        esc(src.rows)+' rows · '+(src.status==='bounded_full'?'older data may exist':'window ended')+
+        (src.skipped?' · '+src.skipped+' branch rows omitted':''))).join(' · ')+
+      ' · private repositories/branches and branch commit times remain UNKNOWN</p>').join('');
+  const counts=selectedCoverage.map(c=>c.project+': '+c.status+
+      (c.staleEvidence?' · STALE observation from '+c.observedAt:'')).join(' · ')||'No GitHub receipt loaded';
+  const denials=selectedCoverage.filter(c=>c.providerAdmission&&c.providerAdmission!=='none')
+    .map(c=>'<div class="detail-note" role="status"><strong>'+esc(c.project)+
+      ' · GITHUB SOURCE BLOCKED:</strong> '+
+      esc(GITHUB_PROVIDER_ADMISSIONS[c.providerAdmission])+
+      ' · observed '+esc(date(c.observedAt,true))+
+      ' · missing events remain UNKNOWN</div>').join('');
+  const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
+    (a.staleUnverified?' · HISTORICAL: NOT REOBSERVED':'')+
+    (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
+    esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
+  return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
+    '<p class="panel-subtitle">PRs, CI and main commits from an operator-generated bounded read-only snapshot. Not automatically synchronized.</p></div></div>'+
+    '<button type="button" class="runner-action" data-github-public-refresh '+
+      (PUBLIC_GITHUB_BUSY||publicPause>0?'disabled aria-busy="true"':'')+
+      '>Read public GitHub for selected project</button> '+
+    (publicPause>0?'<p class="detail-note" role="status">Confirmed global GitHub rate limit: further public reads are paused for up to '+
+      Math.ceil(publicPause/60000)+' minute(s). Existing records remain visible; do not retry manually.</p>':'')+
+    (loadedPage>0?'<button type="button" class="runner-action" data-github-public-older '+
+      (PUBLIC_GITHUB_BUSY||publicPause>0||loadedPage>=5||PUBLIC_GITHUB_MORE.get(filter)===false?'disabled':'')+'>Read older GitHub page ('+(loadedPage+1)+'/5)</button> '+
+      '<span class="detail-note">Viewing loaded GitHub page '+viewedPage+' of '+loadedPage+
+      ' · '+rows.length+' retained events across PR, Actions and main. Shared 200-event memory cap; unavailable records are UNKNOWN, not zero.</span> '+
+      (viewedPage>1?'<button type="button" class="runner-action" data-github-view-newer>Newer loaded page</button> ':'')+
+      (viewedPage<loadedPage?'<button type="button" class="runner-action" data-github-view-older>Older loaded page</button> ':''):'')+
+    '<button type="button" class="runner-action" data-vps-github-refresh '+
+    (VPS_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read VPS GitHub</button> '+
+    (VPS_GITHUB_ERROR?'<p class="detail-note" role="status">'+esc(VPS_GITHUB_ERROR)+'</p>':'')+
+    '<span class="detail-note">Opt-in browser GET only · four bounded requests per selected project. Browser budget: '+sourceBudget.remaining+'/'+PUBLIC_GITHUB_HOURLY_READ_LIMIT+' source batches left in the rolling hour. Branch heads are source-time observations, not branch creation/last-commit times; private refs remain unknown. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
+    '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
+    '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
+    (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
+    '<p role="status" aria-live="polite">'+esc(IMPORTED_GITHUB_ERROR||(snapshot?'Imported observation '+date(snapshot.observedAt,true)+' · '+snapshot.events.length+' bounded events.':'No GitHub receipt imported. Local VPS events continue below.'))+'</p>'+
+    (snapshot?'<p class="detail-note">Partial provider coverage: '+esc(counts)+
+      '. A PR reported merged or a green CI run never proves deployment, active ownership or worker recovery.</p>'+
+      denials+sourceDetails+
+      (content?'<div class="service-list">'+content+'</div>':'<div class="empty">No GitHub events in this project-filtered snapshot.</div>')+
+      (rows.length>80?'<p class="detail-note">Only 80 of the imported events are displayed.</p>':''):'')+
+    '</div>';
+}
+
+// Existing zSentinel product issue-inbox receipts are independent of Activity
+// events. Never infer a live worker lease, permission to merge or authorization
+// to repair from a GitHub issue or a PR mention.
+let IMPORTED_PRODUCT_ISSUES=null,IMPORTED_PRODUCT_ERROR='',IMPORTED_ISSUE_SHOW_ALL=false;
+function validateProductIssueInbox(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)
+      ||value.schema!=='zsentinel-product-issue-inbox-v1'
+      ||value.actions_authorized!==false||value.active_claims_verified!==false
+      ||value.queue_ownership_known!==false||value.fully_synchronized!==false
+      ||!Array.isArray(value.items)||value.items.length>150
+      ||!Array.isArray(value.coverage)||value.coverage.length>18
+      ||!Number.isFinite(Date.parse(value.observed_at))
+      ||Date.parse(value.observed_at)>Date.now()+120000)throw Error('Unrecognized or unsafe issue-inbox receipt');
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id)),covered=new Map();
+  for(const item of value.coverage){
+    if(!item||typeof item.project!=='string'||!visible.has(item.project)||covered.has(item.project)
+       ||typeof item.repository!=='string'
+       ||item.repository!==canonicalGitHubRepositoryForProject(item.project))
+      throw Error('Issue-inbox repository does not belong to its canonical project');
+    covered.set(item.project,item.repository);
+  }
+  if(!covered.size)throw Error('No canonical issue coverage');
+  const coverage=[...value.coverage].map(item=>({
+    project:item.project,
+    status:['partial','degraded','unavailable'].includes(item.status)?item.status:'unavailable',
+    observedAt:value.observed_at,
+    oldest:typeof item.oldest_window==='string'?item.oldest_window.slice(0,70):'unknown',
+    recent:typeof item.recent_window==='string'?item.recent_window.slice(0,70):'unknown',
+    prs:typeof item.open_pr_window==='string'?item.open_pr_window.slice(0,70):'unknown'
+  }));
+  const seen=new Set(),issues=[];
+  for(const item of value.items){
+    if(!item||!covered.has(item.project)||item.repository!==covered.get(item.project)
+       ||!Number.isSafeInteger(item.number)||item.number<=0
+       ||item.id!==item.repository+'#'+item.number||seen.has(item.id)
+       ||typeof item.title!=='string'||item.title.length>180
+       ||!['P0','P1','P2','Unspecified'].includes(item.priority)
+       ||item.qa_only!==false||item.active_claim!=='not_verified'
+       ||!Array.isArray(item.related_open_prs)||item.related_open_prs.length>3)throw Error('Invalid issue-inbox entry');
+    seen.add(item.id);
+    const prs=[];
+    for(const pr of item.related_open_prs){
+      if(!pr||!Number.isSafeInteger(pr.number)||pr.number<=0
+          ||typeof pr.draft!=='boolean'||pr.active_claim!=='not_verified'
+          ||!['text_reference_only','closing_keyword_only'].includes(pr.relationship))
+        throw Error('Invalid issue-to-PR reference');
+      prs.push({number:pr.number,draft:pr.draft,relationship:pr.relationship,
+        url:'https://github.com/'+item.repository+'/pull/'+pr.number});
+    }
+    issues.push({project:item.project,number:item.number,priority:item.priority,
+      title:item.title,url:'https://github.com/'+item.repository+'/issues/'+item.number,
+      prs});
+  }
+  return {observedAt:value.observed_at,issues,coverage,partial:true};
+}
+// Optional read-only public issue lookup for one explicitly chosen project.
+// The result is a bounded advisory sample, never queue authorization.
+let PUBLIC_ISSUES_BUSY=false;
+const PUBLIC_ISSUES_LAST_FETCH=new Map();
+async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
+  if(PUBLIC_ISSUES_BUSY)return;
+  const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_PRODUCT_ERROR='Select one project before fetching public product issues.';if(!quiet)render();return}
+  const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
+  if(!match){IMPORTED_PRODUCT_ERROR='The selected project has no canonical public GitHub repository.';if(!quiet)render();return}
+  const projectId=selected.id,repository=match[1];
+  if(Date.now()-(PUBLIC_ISSUES_LAST_FETCH.get(projectId)||0)<120000){
+    IMPORTED_PRODUCT_ERROR='Recent public issue lookup is cached; retry after two minutes.';if(!quiet)render();return;
+  }
+  PUBLIC_ISSUES_BUSY=true;PUBLIC_ISSUES_LAST_FETCH.set(projectId,Date.now());
+  if(!quiet){IMPORTED_PRODUCT_ERROR='Reading bounded public issues and existing PR references…';render();}
+  const tasks=['issues?state=open&sort=created&direction=asc&per_page=30',
+    'issues?state=open&sort=updated&direction=desc&per_page=30',
+    'pulls?state=open&sort=updated&direction=desc&per_page=12'];
+  const outcomes=await Promise.allSettled(tasks.map(path=>publicGitHubGET(repository,path)));
+  try{
+    const issues=new Map();
+    for(let source=0;source<2;source++){
+      const rows=outcomes[source].status==='fulfilled'&&Array.isArray(outcomes[source].value)?outcomes[source].value:[];
+      for(const issue of rows.slice(0,30)){
+        if(!issue||issue.pull_request||!Number.isSafeInteger(issue.number)||issue.number<=0||
+          typeof issue.title!=='string'||issue.title.length>1000)continue;
+        const labels=Array.isArray(issue.labels)?issue.labels.map(label=>String(label?.name||'').toLowerCase()):[];
+        const title=issue.title;
+        const prefix=/^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|-)|(?:[A-Za-z][A-Za-z -]{0,38}\s+)(P[01])\s*:)/i.exec(title);
+        const marked=prefix?prefix.slice(1).find(Boolean)?.toUpperCase():null;
+        const priority=labels.includes('p0')||labels.includes('priority:p0')||marked==='P0'?'P0':
+          labels.includes('p1')||labels.includes('priority:p1')||marked==='P1'?'P1':
+          labels.includes('p2')||labels.includes('priority:p2')?'P2':'Unspecified';
+        const qa=/^\s*(?:P[0-3]\s*[:\-]?\s*)?(?:QA|tests?|regression|quality[ -]validation)\b/i.test(title)||
+          labels.some(label=>['qa','quality-validation','qa-validation','regression','tests-only'].includes(label));
+        if(qa||issue.state!=='open')continue;
+        issues.set(issue.number,{project:projectId,number:issue.number,priority,title:title.slice(0,180),
+          url:'https://github.com/Zennay/'+repository+'/issues/'+issue.number,prs:[],
+          observed:Date.parse(issue.updated_at||issue.created_at)||0});
+      }
+    }
+    const candidates=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    for(const pr of candidates.slice(0,12)){
+      if(!pr||!Number.isSafeInteger(pr.number)||pr.number<=0||typeof pr.body!=='string'||pr.body.length>32000)continue;
+      const refs=[...pr.body.matchAll(/(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b/g)];
+      const closing=new Set([...pr.body.matchAll(/\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b/ig)]
+        .map(match=>Number(match[1])));
+      for(const ref of refs.slice(0,40)){
+        const item=issues.get(Number(ref[1]));
+        if(!item||item.prs.length>=3||item.prs.some(p=>p.number===pr.number))continue;
+        item.prs.push({number:pr.number,draft:pr.draft===true,
+          relationship:closing.has(Number(ref[1]))?'closing_keyword_only':'text_reference_only',
+          url:'https://github.com/Zennay/'+repository+'/pull/'+pr.number});
+      }
+    }
+    const ranked={P0:0,P1:1,P2:2,Unspecified:3};
+    const readable=outcomes.filter(o=>o.status==='fulfilled'&&Array.isArray(o.value)).length;
+    // A failed or incomplete GitHub read must not erase known open P0/P1
+    // work. Only the full bounded sample can supersede prior source evidence.
+    const previousIssues=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
+    const priorCoverage=previousIssues.coverage.find(row=>row.project===projectId);
+    const priorRows=previousIssues.issues.filter(row=>row.project===projectId);
+    const sampledAt=new Date().toISOString();
+    const currentCoverage={project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
+      observedAt:readable===3||!priorCoverage?sampledAt:priorCoverage.observedAt,
+      lastAttemptAt:sampledAt,staleEvidence:readable<3&&priorRows.length>0,
+      oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
+      recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
+      prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'};
+    const issueCoverage=[...previousIssues.coverage.filter(row=>row.project!==projectId),
+      currentCoverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+    const coveredProjects=new Set(issueCoverage.map(row=>row.project));
+    const currentRows=[...issues.values()].map(row=>{
+      const old=priorRows.find(item=>item.number===row.number);
+      // Missing provider PR pages are not proof a previously referenced PR
+      // vanished. Retain the last known reference but never verify its owner.
+      const updated=outcomes[2].status!=='fulfilled'&&old?.prs?.length
+        ?{...row,prs:old.prs.slice(0,3)}:row;
+      return {...updated,staleUnverified:false,confirmedOpenAt:sampledAt};
+    });
+    // Two 30-issue pages (oldest and most recently updated) NEVER constitute
+    // an exhaustive repository issue inventory. A previously seen issue in the
+    // middle cannot disappear solely because it fell out of both windows.
+    // Retain it with an explicit unknown-current-state label; do not assert it
+    // remains open, unclaimed or free. Canonical per-repo cap stays 150 globally.
+    const safeRows=[
+      ...priorRows.filter(row=>!issues.has(row.number)).map(row=>({
+        ...row,staleUnverified:true
+      })),
+      ...currentRows
+    ];
+    const issueRows=fairProductIssueHistory([
+      ...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
+      ...safeRows],issueCoverage);
+    IMPORTED_PRODUCT_ISSUES={observedAt:sampledAt,partial:true,issues:issueRows,coverage:issueCoverage};
+    IMPORTED_ISSUE_SHOW_ALL=false;
+    IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable); older P0/P1 observations retained and may be stale. ')+
+      'These references do not verify fixes, worker ownership or queue claims.';
+    return {project:projectId,readable,attempted:true};
+  }catch(_error){
+    IMPORTED_PRODUCT_ERROR='Public issue source unavailable or malformed. No queue claim taken.';
+  }finally{PUBLIC_ISSUES_BUSY=false;if(!quiet&&route==='activity')render()}
+}
+
+// Bounded operator-requested source from the trusted VPS endpoint. The server
+// collector shares an anti-burst cache with PR/CI activity; it takes no claims.
+let VPS_PRODUCT_ISSUES_BUSY=false,VPS_PRODUCT_ISSUES_ERROR='';
+async function readVpsProductIssues(){
+  if(VPS_PRODUCT_ISSUES_BUSY)return;
+  const project=(DATA?.projects||[]).find(item=>item.id===filter)?.id;
+  if(!project){VPS_PRODUCT_ISSUES_ERROR='Choose a single project for VPS issue evidence.';render();return}
+  const version=routeVersion;
+  VPS_PRODUCT_ISSUES_BUSY=true;
+  VPS_PRODUCT_ISSUES_ERROR='Reading bounded P0/P1 GitHub issue evidence through VPS…';
+  if(route==='activity')render();
+  try{
+    let receipt=null,staleSample=false,staleAge=0,staleReason='';
+    for(let attempt=0;attempt<6;attempt++){
+      const response=await fetch('/api/product-issues-live?project='+encodeURIComponent(project),
+        {method:'GET',credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(7000)});
+      if(!response.ok)throw Error(response.status===403?'Trusted administrator network required':
+        'HTTP '+response.status);
+      const data=await response.json();
+      if(!data||data.schema!=='zsentinel-product-issues-live-v1'||
+          data.project!==project||data.feed_complete!==false||
+          data.authorizes_repair!==false||data.authorizes_merge!==false||
+          data.authorizes_deploy!==false||
+          !['refreshing','partial','stale','unavailable','capacity_wait','rate_budget_wait'].includes(data.state))
+        throw Error('Unexpected issue source envelope');
+      if(data.state==='partial'){receipt=data.receipt;break}
+      if(data.state==='stale'){
+        if(!Number.isSafeInteger(data.cached_age_s)||data.cached_age_s<300||
+           data.cached_age_s>3600||
+           !['refreshing','provider_unavailable','invalid_provider_receipt',
+             'capacity_wait','rate_budget_wait'].includes(data.refresh_status)){
+          throw Error('Invalid stale issue source metadata');
+        }
+        staleSample=true;staleAge=data.cached_age_s;staleReason=data.refresh_status;
+        receipt=data.receipt;break;
+      }
+      if(data.state!=='refreshing')
+        throw Error(data.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
+          data.state==='capacity_wait'?'Source capacity busy':'Issue source unavailable');
+      if(attempt===5)throw Error('Issue observation still collecting; use Read VPS issues again.');
+      await new Promise(resolve=>setTimeout(resolve,2500));
+      if(routeVersion!==version||filter!==project)return;
+    }
+    const parsed=validateProductIssueInbox(receipt);
+    if(parsed.coverage.length!==1||parsed.coverage[0].project!==project)
+      throw Error('Issue source project mismatch');
+    if(routeVersion!==version||filter!==project)return;
+    const old=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
+    const previousTime=old.coverage.find(row=>row.project===project)?.observedAt||'';
+    const olderThanLoaded=staleSample&&previousTime&&
+      Date.parse(parsed.coverage[0].observedAt)<Date.parse(previousTime);
+    if(!olderThanLoaded){
+      const originalCoverage=staleSample?parsed.coverage.map(row=>({...row,
+        staleEvidence:true,lastAttemptAt:new Date().toISOString()})):parsed.coverage;
+      const observedIssues=staleSample?parsed.issues.map(row=>({...row,
+        staleUnverified:true})):parsed.issues;
+      const coverage=[...old.coverage.filter(row=>row.project!==project),...originalCoverage]
+        .slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+      const allowed=new Set(coverage.map(row=>row.project));
+      const rows=fairProductIssueHistory([
+        ...old.issues.filter(row=>row.project!==project&&allowed.has(row.project)),
+        ...observedIssues],coverage);
+      IMPORTED_PRODUCT_ISSUES={
+        observedAt:new Date().toISOString(),partial:true,coverage,issues:rows};
+    }
+    VPS_PRODUCT_ISSUES_ERROR=staleSample?
+      'STALE issue cache for '+project+' ('+staleAge+'s old; '+staleReason+'). '+
+      (olderThanLoaded?'Kept newer issue evidence. ':
+       'Previously observed issue status is NOT reverified. ')+
+      'Current ownership and open/closed issue status UNKNOWN.':
+      'VPS issue source loaded for '+project+
+      '. Partial open P0/P1 source only; ownership and deployment unverified.';
+  }catch(error){
+    if(routeVersion===version&&filter===project)
+      VPS_PRODUCT_ISSUES_ERROR='VPS issue source unavailable: '+String(error?.message||'failed')+
+        '. Browser GitHub GET and operator receipts remain independent.';
+  }finally{VPS_PRODUCT_ISSUES_BUSY=false;if(route==='activity')render()}
+}
+function productIssueInboxPanel(){
+  const snapshot=IMPORTED_PRODUCT_ISSUES;
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const rows=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)&&
+    (IMPORTED_ISSUE_SHOW_ALL||item.priority==='P0'||item.priority==='P1'));
+  const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
+    &&item.priority!=='P0'&&item.priority!=='P1').length;
+  const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter))
+    .map(item=>item.project+' · '+item.status+
+      (item.staleEvidence?' · STALE observation from '+item.observedAt:'')+
+      ' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
+  const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
+    ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
+    esc(item.title)+'</a><small> · issue #'+item.number+
+    (item.staleUnverified?' · previously open, NOT REOBSERVED in latest issue pages':
+      ' · observed open in bounded source')+'</small>'+
+    (item.prs.length?'<div class="detail-note">Referenced open PRs (not proven fixes or active claims): '+
+      item.prs.map(pr=>'<a href="'+esc(pr.url)+'" target="_blank" rel="noopener noreferrer">#'+pr.number+
+      (pr.draft?' draft':'')+(pr.relationship==='closing_keyword_only'?' closing keyword':' mention')+'</a>').join(' · ')+'</div>':'')+
+    '</div></div>').join('');
+  return '<div class="panel"><div class="panel-header"><div><h2>Product issue inbox · optional local import</h2>'+
+    '<p class="panel-subtitle">Existing GitHub P0/P1 issues from the zSentinel bounded inbox, never an automated claim or task assignment.</p></div></div>'+
+    '<button type="button" class="runner-action" data-vps-issues-read '+
+    (VPS_PRODUCT_ISSUES_BUSY?'disabled aria-busy="true"':'')+'>Read VPS issues</button> '+
+    (VPS_PRODUCT_ISSUES_ERROR?'<p class="detail-note" role="status">'+esc(VPS_PRODUCT_ISSUES_ERROR)+'</p>':'')+
+    '<button type="button" class="runner-action" data-public-issues-refresh '+(PUBLIC_ISSUES_BUSY?'disabled aria-busy="true"':'')+'>Read public P0/P1 issues for selected project</button> '+
+    '<span class="detail-note">Opt-in public GitHub GET only · bounded sample · no credentials or queue actions.</span><br>'+ 
+    '<label for="productIssueReceiptFile">Or import a JSON product issue-inbox receipt</label> '+
+    '<input type="file" id="productIssueReceiptFile" accept=".json,application/json" aria-label="Import bounded product issue inbox">'+
+    (snapshot?'<button type="button" class="runner-action" data-product-issues-clear>Clear issues</button> '+
+      (hiddenLowerPriority?'<button type="button" class="runner-action" data-product-issues-toggle>'+(
+        IMPORTED_ISSUE_SHOW_ALL?'Focus P0/P1 only':'Include '+hiddenLowerPriority+' lower-priority sampled issues')+'</button>':''):'')+
+    '<p role="status" aria-live="polite">'+esc(IMPORTED_PRODUCT_ERROR||
+      (snapshot?'Imported bounded issue sample · '+date(snapshot.observedAt,true)+'.':'No product issue receipt imported.'))+'</p>'+
+    (snapshot?'<p class="detail-note">Source coverage: '+esc(coverageText)+' · Bounded sources may be missing, truncated or rate-limited. Existing PR references do not prove active ownership, fixes or deploy approval.</p>'+
+      (html?'<div class="service-list">'+html+'</div>':'<div class="empty">No visible issues in this bounded project filter.</div>')+
+      (rows.length>50?'<p class="detail-note">Only 50 of the sampled issues are displayed.</p>':''):'')+'</div>';
+}
+
+// Local control-plane progress is a separate, opt-in evidence source.
+// It never proves live text generation, lease identity or a deployed worker.
+let WORKER_PROGRESS_SLOT=1,WORKER_PROGRESS_DATA=null,WORKER_PROGRESS_ERROR='',WORKER_PROGRESS_BUSY=false;
+async function refreshWorkerProgress(){
+  if(WORKER_PROGRESS_BUSY)return;
+  const projectId=filter;
+  const slot=WORKER_PROGRESS_SLOT;
+  if(!projectId||(DATA?.projects||[]).every(p=>p.id!==projectId)){
+    WORKER_PROGRESS_ERROR='Select one project to inspect a worker slot.';render();return;
+  }
+  if(!Number.isInteger(slot)||slot<1||slot>8){
+    WORKER_PROGRESS_ERROR='Select a worker slot from 1 to 8.';render();return;
+  }
+  WORKER_PROGRESS_BUSY=true;WORKER_PROGRESS_ERROR='Reading local worker observations…';render();
+  try{
+    const report=await api('/api/worker-progress-history?project='+encodeURIComponent(projectId)+'&slot='+slot+'&limit=24',10000);
+    if(!report||report.schema!=='zcloud-worker-progress-readonly-v1'||report.project!==projectId||
+      report.worker_slot!==slot||report.claim_bound!==false||report.claim_epoch_verified!==false||
+      report.worker_resumed_verified!==false||report.browser_progress_is_independent_proof!==false||
+      !Array.isArray(report.recent_events)||report.recent_events.length>40){
+      throw Error('Unexpected worker progress source');
+    }
+    WORKER_PROGRESS_DATA=report;
+    WORKER_PROGRESS_ERROR=report.available===true?'Bounded local browser observations loaded; claim and deployment unverified.':
+      'The local worker telemetry database is not available.';
+  }catch(_error){
+    WORKER_PROGRESS_DATA=null;
+    WORKER_PROGRESS_ERROR='Worker progress API unavailable, unauthorized or not yet deployed. No live worker activity can be inferred.';
+  }finally{WORKER_PROGRESS_BUSY=false;if(route==='activity')render()}
+}
+const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
+  'composer-missing-manual-recovery-required':'Composer missing in an existing conversation; inspect assigned worker tab manually.',
+  'composer-missing-operator-action-required':'Composer remains missing after bounded repair; inspect tab before resend.',
+  'composer-missing-before-first-send':'One same-tab repair was requested before first send; resumed generation unverified.',
+  'new-chat-button-missing':'New chat button unavailable; operator action required.',
+  'composer-draft-preserved':'Unsent composer draft was preserved. Inspect the assigned tab and clear or save the draft manually before another worker send.',
+  'composer-text-not-confirmed':'The entire assigned prompt was not confirmed in the editor. No Send click was authorized; inspect the current composer.',
+  'composer-changed-before-send':'Composer content changed during fresh assignment verification. No Send click was authorized; inspect the assigned tab.',
+  'assignment-changed-before-send':'The queue, worker slot or assigned prompt changed while preparing Send. Nothing was sent; check the current owner and assignment.',
+  'conversation-load-failed-manual-review':'An existing conversation failed to load and may already contain an accepted prompt. No automatic New chat or resend; reconcile the original queue.',
+  'previous-queue-send-after-reload-manual-review':'This browser tab previously dispatched the same queue before reload. Preserve the original claim and conversation; no duplicate Send or New chat.',
+  'generation-unconfirmed-manual-review-no-retry':'After five minutes the browser still cannot confirm generation. A remote execution is possible; review the original task before any new dispatch.',
+  'dispatch-ledger-unavailable':'The tab could not save its conservative sent-queue marker. No Send click was allowed; inspect browser storage or use a newly authorized assignment.',
+  'new-chat-transition-operator-action-required':'One in-tab New chat attempt did not produce a usable composer. No further retry or prompt dispatch was authorized.',
+  'command-ack-backlog-manual-review':'A worker cannot safely acknowledge a prior browser command. No further command dispatch is allowed until the original command is reconciled.',
+  'command-ack-ledger-unavailable':'Private pending command acknowledgements could not be read or durably saved. Worker dispatch is paused; review existing command results and private storage before recovery.',
+  'command-ack-pending-no-new-send':'The browser has already performed a command but zCloud has not confirmed its result. Only the original acknowledgement is being retried; new automatic sends remain paused.'
+});
+function composerHint(row){
+  if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
+  if(row?.kind!=='send-blocked'&&row?.kind!=='conversation-reset-requested')return '';
+  const reason=String(row.reason_code||'');
+  return Object.prototype.hasOwnProperty.call(SAFE_WORKER_COMPOSER_HINTS,reason)?
+    SAFE_WORKER_COMPOSER_HINTS[reason]:'';
+}
+// Deliberate client-side owner handoff from previously selected local evidence.
+function saveWorkerProgressHandoff(format='json'){
+  const data=WORKER_PROGRESS_DATA;
+  if(!data||data.schema!=='zcloud-worker-progress-readonly-v1'||
+     data.project!==filter||data.worker_slot!==WORKER_PROGRESS_SLOT||
+     data.claim_bound!==false||data.claim_epoch_verified!==false||
+     !Array.isArray(data.recent_events)||data.recent_events.length>40)return;
+  const safeEvent=item=>{
+    if(!item||!Number.isSafeInteger(item.id)||item.id<=0)return null;
+    const clock=item.clock||{};
+    const kind=typeof item.kind==='string'&&/^[a-z0-9_-]{1,80}$/.test(item.kind)?
+      item.kind:'other_browser_event';
+    const reason=Object.prototype.hasOwnProperty.call(SAFE_WORKER_COMPOSER_HINTS,item.reason_code)?
+      item.reason_code:null;
+    return {id:item.id,kind,observed_event_utc:typeof clock.utc==='string'&&
+      clock.utc.length<=48&&/^\d{4}-\d\d-\d\dT[0-9:.+-]+Z?$/.test(clock.utc)?
+      clock.utc:null,clock_status:['observed','invalid','future','unavailable','missing'].includes(clock.status)?
+      clock.status:'unknown',reason_code:reason,
+      operator_guidance:reason?SAFE_WORKER_COMPOSER_HINTS[reason]:null,
+      reported_assistant_chars:Number.isSafeInteger(item.reported_assistant_chars)&&
+      item.reported_assistant_chars>=0?item.reported_assistant_chars:null};
+  };
+  const events=data.recent_events.slice(0,24).map(safeEvent).filter(Boolean);
+  const report={schema:'zsentinel-private-worker-handoff-v1',
+    source:'zcloud-worker-progress-readonly-v1',
+    source_observed_at:typeof data.observed_at==='string'&&data.observed_at.length<=48?
+      data.observed_at:null,exported_at_utc:new Date().toISOString(),
+    project:data.project,worker_slot:data.worker_slot,source_available:data.available===true,
+    coverage:data.coverage==='bounded_observation'?'bounded_observation':'unavailable',
+    history_truncated:data.truncated===true,recent_events:events,
+    authority:{claim:false,claim_epoch:false,worker_resumed:false,
+      independent_generation:false,merge:false,deployment:false},
+    next_action:'Verify original queue/claim, browser conversation and exact GitHub evidence with the authorized owner. No automatic resend, merge or deploy.'};
+  const markdown=format==='markdown';
+  const lines=['# zSentinel · Private worker owner handoff','',
+    'Source: local read-only browser event observations (not verified runtime execution).',
+    'Project: '+String(report.project).replace(/[^a-z0-9_-]/gi,''),
+    'Worker slot: '+report.worker_slot,
+    'Source observed at: '+(report.source_observed_at||'UNKNOWN'),
+    'Exported at UTC: '+report.exported_at_utc,
+    'Coverage: '+report.coverage+(report.history_truncated?' (TRUNCATED)':''),
+    '','## Observed browser events'];
+  for(const event of events){
+    lines.push('- #'+event.id+' · '+event.kind+' · '+(event.observed_event_utc||'unknown time')+
+      ' · '+event.clock_status);
+    if(event.operator_guidance)lines.push('  Owner action: '+event.operator_guidance);
+  }
+  if(!events.length)lines.push('- No bounded source events were observed.');
+  lines.push('','## Owner handoff','',report.next_action,'',
+    'Claim / claim epoch / real generation / merge / deployment: NOT VERIFIED.',
+    'This private download never grants recovery, claim, retry or release rights.','');
+  const content=markdown?lines.join('\n'):JSON.stringify(report,null,2)+'\n';
+  const blob=new Blob([content],{type:markdown?'text/markdown;charset=utf-8':'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;
+  link.download='zsentinel-worker-'+String(data.project).replace(/[^a-z0-9_-]/gi,'').slice(0,60)+
+    '-slot-'+data.worker_slot+(markdown?'.md':'.json');
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function workerProgressPanel(){
+  const report=WORKER_PROGRESS_DATA;
+  const scoped=report&&report.project===filter&&report.worker_slot===WORKER_PROGRESS_SLOT?report:null;
+  const facts=scoped?[
+    ['Last browser event',scoped.latest_event],['Latest prompt',scoped.latest_prompt],
+    ['Latest progress',scoped.latest_progress],['Latest completion',scoped.latest_completion]
+  ]:[];
+  const composerAlerts=(scoped?.recent_events||[]).filter(row=>
+    composerHint(row)&&row.clock?.status==='observed').slice(0,4).map(row=>
+    '<div class="service-row"><div><strong>Worker · operator attention</strong><br><small>'+
+    esc(row.clock?.utc||'Unknown time')+' · '+esc(composerHint(row))+'</small></div></div>').join('');
+  const cards=facts.map(([label,item])=>'<div class="service-row"><div><strong>'+esc(label)+'</strong><br><small>'+
+    esc(item?.kind||'No observation')+' · '+esc(item?.clock?.utc||'No UTC timestamp')+' · '+
+    esc(item?.clock?.status||'unavailable')+'</small></div></div>').join('');
+  const history=(scoped?.recent_events||[]).slice(0,20).filter(row=>Number.isSafeInteger(row?.id)&&row.id>0).map(row=>
+    '<div class="service-row"><div><small>Event #'+row.id+' · '+esc(row.kind||'other_browser_event')+
+    ' · '+esc(row.clock?.utc||'Timestamp unavailable')+' · '+esc(row.clock?.status||'invalid')+
+    '</small></div><small>chars reported: '+(Number.isSafeInteger(row.reported_assistant_chars)&&row.reported_assistant_chars>=0?
+      row.reported_assistant_chars:'unknown')+'</small></div>').join('');
+  return '<section class="panel"><div class="panel-header"><div><h2>Worker progress · on-demand local view</h2>'+
+    '<p class="panel-subtitle">Inspect a single worker without changing its queue, leases, or runtime state.</p></div></div>'+
+    '<label for="workerProgressSlot">Worker slot (1–8)</label> <input id="workerProgressSlot" type="number" min="1" max="8" step="1" inputmode="numeric" value="'+WORKER_PROGRESS_SLOT+'"> '+
+    '<button type="button" class="runner-action" data-worker-progress-refresh '+(WORKER_PROGRESS_BUSY?'disabled aria-busy="true"':'')+'>Read progress</button> '+
+    '<button type="button" class="runner-action" data-worker-progress-handoff '+(!scoped?'disabled':'')+'>Save private worker handoff JSON</button> '+
+    '<button type="button" class="runner-action" data-worker-progress-brief '+(!scoped?'disabled':'')+'>Save readable owner brief</button>'+
+    '<p role="status" aria-live="polite">'+esc(WORKER_PROGRESS_ERROR||(scoped?'Browser observations read.':'Choose a project and press Read progress.'))+'</p>'+
+    '<p class="detail-note">Browser-reported events are not independent proof of generated text. Queue claim, claim epoch, worker resumption and deployment remain unverified.</p>'+
+    (scoped?'<div class="service-list">'+composerAlerts+cards+(history?'<details data-disclosure="worker-progress-events"><summary>Recent browser event history</summary>'+history+'</details>':'')+'</div>':'')+'</section>';
+}
+
+/* Product-only admission is a read-only, explicitly requested preview.
+   It never dispatches, changes a claim, or treats a candidate as authorized. */
+let DELIVERY_QUEUE_DATA=null,DELIVERY_QUEUE_ERROR='',DELIVERY_QUEUE_BUSY=false,DELIVERY_QUEUE_OBSERVED='';
+async function refreshDeliveryQueue(){
+  if(DELIVERY_QUEUE_BUSY)return;
+  DELIVERY_QUEUE_BUSY=true;DELIVERY_QUEUE_ERROR='';DELIVERY_QUEUE_DATA=null;
+  if(route==='activity')render();
+  try{
+    const response=await fetch('/api/portfolio-queue',{cache:'no-store',signal:AbortSignal.timeout(10000)});
+    if(!response.ok)throw new Error(response.status===403?'Admin access required':'HTTP '+response.status);
+    const body=await response.json(),p=body?.delivery_policy;
+    if(!p||p.policy!=='product-delivery-2026-10-17'||p.not_claimed_or_authorized!==true||
+       p.admission_scope_lease_and_capacity_not_verified!==true||
+       !Number.isSafeInteger(p.queued_qa_only_held)||p.queued_qa_only_held<0||
+       !Number.isSafeInteger(p.queued_product_candidates)||p.queued_product_candidates<0||
+       !Number.isSafeInteger(p.queued_requires_owner_review)||p.queued_requires_owner_review<0||
+       !Array.isArray(p.review_items)||p.review_items.length>8||
+       !p.review_items.every(row=>row&&typeof row.project_id==='string'&&
+         typeof row.queue_id==='string'&&typeof row.priority==='string'&&
+         ['invalid_metadata','invalid_title','oversized_criteria'].includes(row.reason))||
+       !Array.isArray(p.candidates)||p.candidates.length>8||
+       !p.candidates.every(row=>row&&typeof row.project_id==='string'&&
+         typeof row.queue_id==='string'&&typeof row.priority==='string')){
+      throw new Error('Incomplete admission receipt');
+    }
+    DELIVERY_QUEUE_DATA=p;DELIVERY_QUEUE_OBSERVED=String(body.time||'');
+  }catch(error){
+    DELIVERY_QUEUE_DATA=null;DELIVERY_QUEUE_OBSERVED='';
+    DELIVERY_QUEUE_ERROR='Admission preview unavailable: '+String(error?.message||'request failed');
+  }finally{DELIVERY_QUEUE_BUSY=false;if(route==='activity')render()}
+}
+function productQueueAdmissionPanel(){
+  const p=DELIVERY_QUEUE_DATA;
+  const rows=p?.candidates||[];
+  const candidates=filter?rows.filter(row=>row.project_id===filter):rows;
+  const reviewItems=(p?.review_items||[]).filter(row=>!filter||row.project_id===filter);
+  const needsReview=reviewItems.map(row=>'<div class="service-row"><div><strong>'+
+    esc(row.priority)+' · '+esc(row.project_id)+'</strong><br><small>Queue '+esc(row.queue_id)+
+    '</small></div><small>Owner review needed · '+esc(row.reason)+'</small></div>').join('');
+  const rendered=candidates.map(row=>'<div class="service-row"><div><strong>'+esc(row.priority)+
+    ' · '+esc(row.project_id)+'</strong><small> Queue '+esc(row.queue_id)+
+    '</small></div><small>Not claimed</small></div>').join('');
+  const info=p?('<p class="detail-note" role="status">Snapshot '+esc(DELIVERY_QUEUE_OBSERVED||'unknown time')+
+    ' · '+p.queued_product_candidates+' queued product candidates · '+p.queued_qa_only_held+
+    ' QA-only items held · '+p.queued_requires_owner_review+
+    ' unclassified items need owner review (global counts; up to eight IDs per type shown).</p>'+
+    (needsReview?'<h3>Requires owner review (not QA)</h3><div class="service-list">'+needsReview+'</div>':'')+
+    (rendered?'<div class="service-list">'+rendered+'</div>':
+      '<p class="detail-note">No candidates from this project in the bounded preview. This does not mean the queue is empty.</p>')):
+    '<p class="detail-note">Not loaded. Read the authorized queue only when needed.</p>';
+  return '<section class="panel"><div class="panel-header"><div><h2>Product delivery queue</h2>'+
+    '<p class="panel-subtitle">New product work only. Active worker claims remain protected.</p></div>'+
+    '<button type="button" class="runner-action" data-delivery-queue-refresh '+
+    (DELIVERY_QUEUE_BUSY?'disabled aria-busy="true"':'')+'>'+
+    (DELIVERY_QUEUE_BUSY?'Reading…':'Read admission')+'</button></div>'+
+    (DELIVERY_QUEUE_ERROR?'<p class="detail-note" role="alert">'+esc(DELIVERY_QUEUE_ERROR)+'</p>':'')+
+    info+'<p class="detail-note">Preview only: eligible is not an authorized, conflict-free or memory-admitted claim. Existing CI/review and runner gates remain required.</p></section>';
+}
+
+/* Optional read-only keyset pagination of LOCAL SQLite activity only.
+   Cursor scope follows the selected project, not an active worker/claim. */
+let PAGED_LOCAL_ACTIVITY={scope:null,events:[],cursor:null,hasRead:false,busy:false,error:'',pages:0};
+function pagedLocalActivityScope(){return filter||''}
+async function readPagedLocalActivity(){
+  if(PAGED_LOCAL_ACTIVITY.busy)return;
+  const scope=pagedLocalActivityScope();
+  if(PAGED_LOCAL_ACTIVITY.scope!==scope){
+    PAGED_LOCAL_ACTIVITY={scope,events:[],cursor:null,hasRead:false,busy:false,error:'',pages:0};
+  }
+  if(PAGED_LOCAL_ACTIVITY.hasRead&&!PAGED_LOCAL_ACTIVITY.cursor)return;
+  const state=PAGED_LOCAL_ACTIVITY,baseCursor=state.cursor,callVersion=routeVersion;
+  state.busy=true;state.error='';if(route==='activity')render();
+  try{
+    const params=new URLSearchParams({limit:'40'});
+    if(scope)params.set('project',scope);
+    if(baseCursor)params.set('cursor',JSON.stringify(baseCursor));
+    const response=await fetch('/api/activity-page?'+params.toString(),{
+      cache:'no-store',signal:AbortSignal.timeout(10000)
+    });
+    if(!response.ok)throw new Error(response.status===403?'Access denied':'HTTP '+response.status);
+    const page=await response.json();
+    const registry=new Set((DATA?.projects||[]).map(p=>p.id));
+    if(!page||!Array.isArray(page.events)||page.events.length>40||
+       !page.coverage||page.coverage.local_sqlite!=='read_only'||
+       page.coverage.github_pr_branch_ci!=='not_synchronized'||
+       page.coverage.feed_complete!==false||
+       !page.events.every(ev=>ev&&typeof ev.id==='string'&&ev.id.length<=256&&
+         typeof ev.ts==='string'&&ev.ts.length<=64&&typeof ev.kind==='string'&&
+         typeof ev.project==='string'&&registry.has(ev.project)&&(!scope||ev.project===scope))||
+       (page.next_cursor!==null&&
+         (!page.next_cursor||typeof page.next_cursor!=='object'||Array.isArray(page.next_cursor)||
+          Object.keys(page.next_cursor).some(key=>!registry.has(key)||Boolean(scope&&key!==scope))))){
+      throw new Error('Incomplete or cross-project local history page');
+    }
+    if(routeVersion!==callVersion||pagedLocalActivityScope()!==scope)return;
+    const seen=new Set(state.events.map(ev=>ev.project+'|'+ev.id));
+    for(const ev of page.events){
+      const key=ev.project+'|'+ev.id;
+      if(!seen.has(key)){state.events.push(ev);seen.add(key)}
+    }
+    state.events=state.events.slice(0,400);
+    state.pages+=1;state.hasRead=true;
+    state.cursor=state.events.length>=400?null:page.next_cursor;
+    if(state.cursor&&JSON.stringify(state.cursor)===JSON.stringify(baseCursor))
+      throw new Error('Local history cursor did not advance');
+  }catch(error){
+    if(routeVersion===callVersion&&pagedLocalActivityScope()===scope)
+      state.error='Local history unavailable: '+String(error?.message||'request failed');
+  }finally{state.busy=false;if(route==='activity'&&pagedLocalActivityScope()===scope)render()}
+}
+function pagedLocalActivityPanel(){
+  const state=PAGED_LOCAL_ACTIVITY.scope===pagedLocalActivityScope()?PAGED_LOCAL_ACTIVITY:null;
+  const rows=(state?.events||[]).map(ev=>'<div class="service-row"><div><strong>'+
+    esc(ev.project)+'</strong> · '+esc(ev.kind)+
+    '<br><small>'+esc(ev.ts)+'</small></div></div>').join('');
+  const canLoad=!state?.hasRead||!!state?.cursor;
+  const current=state?.events.length||0;
+  return '<section class="panel"><div class="panel-header"><div><h2>Older local history</h2>'+
+    '<p class="panel-subtitle">Read older VPS events, fairly across projects; GitHub PR/CI is not synchronized.</p></div>'+
+    '<button type="button" class="runner-action" data-local-activity-next '+
+    ((state?.busy||!canLoad)?'disabled aria-busy="'+(state?.busy?'true':'false')+'"':'')+'>'+
+    (state?.busy?'Reading…':!state?.hasRead?'Read history':state?.cursor?'Load older':'End of local pages')+
+    '</button></div>'+
+    (state?.error?'<p class="detail-note" role="alert">'+esc(state.error)+'</p>':'')+
+    (state?.hasRead?'<p class="detail-note" role="status">'+current+' distinct local events on '+state.pages+
+      ' pages. This does not verify merged code or live worker recovery.</p>':
+      '<p class="detail-note">History loads only when requested. The initial activity list stays unchanged.</p>')+
+    (rows?'<div class="service-list">'+rows+'</div>':'')+
+    '<p class="detail-note">Read-only cursor limited to 400 displayed events. Newer arrivals may change later pages. No background sync.</p></section>';
+}
+
+
+/* A manually imported PR-less branch snapshot from #1554 is advisory evidence,
+   NEVER an active owner, claim, gate or proof of current production delivery. */
+let IMPORTED_PRLESS_BRANCHES=null,IMPORTED_PRLESS_ERROR='';
+function validateZSentinelBranchSnapshot(value){
+  const fail=()=>{throw Error('Invalid or incomplete zSentinel branch receipt')};
+  const isInt=(n,max)=>Number.isSafeInteger(n)&&n>=0&&n<=max;
+  const sha=x=>typeof x==='string'&&/^[0-9a-f]{40}$/.test(x);
+  const ref=x=>typeof x==='string'&&x.length<=200
+    &&new RegExp('^[A-Za-z0-9_./-]+$').test(x)&&!x.includes('..');
+  const path=x=>typeof x==='string'&&x.length>=1&&x.length<=300
+    &&!x.includes('\\')&&!x.startsWith('/')
+    &&![...x].some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127)
+    &&!x.split('/').some(p=>!p||p==='.'||p==='..');
+  const stamp=x=>typeof x==='string'&&x.length<=40
+    &&Number.isFinite(Date.parse(x))&&Date.parse(x)<=Date.now()+300000;
+  if(!value||typeof value!=='object'||Array.isArray(value)
+      ||value.schema!=='zsentinel-recent-prless-ownership-v1'
+      ||value.source!=='github_readonly'||value.repository!=='Zennay/zCloud'
+      ||value.snapshot_complete!==true||value.ownership_granted!==false
+      ||value.may_admit_work!==false||value.release_authorized!==false
+      ||!sha(value.main_sha)||!stamp(value.observed_at)
+      ||typeof value.coverage_complete!=='boolean'
+      ||!isInt(value.branch_inventory_count,2400)
+      ||!isInt(value.prless_count,2400)
+      ||!isInt(value.matching_prefix_count,2400)
+      ||value.matching_prefix_count>value.prless_count
+      ||value.branch_inventory_count<value.prless_count
+      ||!isInt(value.slice_offset,2400)||!isInt(value.slice_count,12)
+      ||!Array.isArray(value.branches)||value.branches.length!==value.slice_count
+      ||typeof value.overlap_in_slice!=='boolean')fail();
+  const prefix=value.branch_prefix;
+  if(prefix!==null&&!ref(prefix))fail();
+  if(value.slice_count>value.matching_prefix_count
+      ||value.slice_offset+value.slice_count>value.matching_prefix_count)fail();
+  if(value.coverage_complete&&(prefix!==null||value.slice_offset!==0
+      ||value.slice_count!==value.prless_count))fail();
+  const seen=new Set(),branches=[];
+  for(const row of value.branches){
+    if(!row||!ref(row.ref)||!sha(row.sha)||seen.has(row.ref)
+        ||(prefix!==null&&!row.ref.startsWith(prefix))
+        ||!stamp(row.last_commit_at)||row.owner_proven!==false
+        ||!['historical','recent_unmerged','not_ahead'].includes(row.classification))fail();
+    seen.add(row.ref);
+    if(row.classification!=='historical'
+        &&(!isInt(row.ahead_commits,250)
+           ||!Array.isArray(row.changed_paths)||row.changed_paths.length>600
+           ||!Array.isArray(row.overlapping_paths)||row.overlapping_paths.length>600))fail();
+    const all=row.classification==='historical'?[]:row.changed_paths;
+    const overlaps=row.classification==='historical'?[]:row.overlapping_paths;
+    if((all||[]).some(p=>!path(p))||(overlaps||[]).some(p=>!path(p))
+        ||(overlaps||[]).some(p=>!all.includes(p))
+        ||new Set(overlaps).size!==overlaps.length)fail();
+    branches.push({ref:row.ref,sha:row.sha,lastCommit:row.last_commit_at,
+      classification:row.classification,ahead:row.ahead_commits??null,
+      changedCount:all.length,overlapCount:overlaps.length,
+      overlaps:overlaps.slice(0,12)});
+  }
+  if(value.overlap_in_slice!==branches.some(row=>row.overlapCount>0))fail();
+  return {observedAt:value.observed_at,repository:value.repository,main:value.main_sha,
+    coverageComplete:value.coverage_complete,prefix,offset:value.slice_offset,
+    scanned:branches.length,prlessTotal:value.prless_count,
+    matchingCount:value.matching_prefix_count,slices:1,
+    ranges:[[value.slice_offset,value.slice_offset+value.slice_count]],branches};
+}
+function mergeZSentinelBranchSnapshots(current,next){
+  if(!current)return next;
+  if(current.repository!==next.repository||current.main!==next.main
+      ||current.prlessTotal!==next.prlessTotal||current.matchingCount!==next.matchingCount
+      ||current.prefix!==next.prefix)throw Error('Branch slices use different source identities; clear and import a new snapshot');
+  if(Math.abs(Date.parse(current.observedAt)-Date.parse(next.observedAt))>10*60000)
+    throw Error('Branch slices are more than 10 minutes apart; do not combine old and new evidence');
+  if(current.slices>=8||current.branches.length+next.branches.length>96)
+    throw Error('Branch import is limited to eight independent slices');
+  const start=next.ranges[0][0],end=next.ranges[0][1];
+  if(current.ranges.some(([a,b])=>start<b&&a<end))
+    throw Error('Overlapping branch slice indices; existing evidence preserved');
+  const seen=new Set(current.branches.map(row=>row.ref));
+  if(next.branches.some(row=>seen.has(row.ref)))
+    throw Error('Duplicate branch identity across slices; source changed or indices overlap');
+  return {...current,observedAt:current.observedAt,
+    // Separate observation times are never a single atomically complete source.
+    coverageComplete:false,slices:current.slices+1,
+    ranges:[...current.ranges,...next.ranges],scanned:current.scanned+next.scanned,
+    branches:[...current.branches,...next.branches]};
+}
+function zSentinelBranchEvidencePanel(){
+  const project=(DATA?.projects||[]).find(p=>['https://github.com/Zennay/zCloud','https://github.com/Zennay/zCloud/'].includes(p.repo_url||''));
+  const eligible=!filter||(project&&project.id===filter);
+  const snapshot=eligible?IMPORTED_PRLESS_BRANCHES:null;
+  const old=snapshot&&Date.now()-Date.parse(snapshot.observedAt)>6*3600000;
+  const rows=(snapshot?.branches||[]).slice().sort((a,b)=>
+    (b.overlapCount>0)-(a.overlapCount>0)||b.lastCommit.localeCompare(a.lastCommit)).slice(0,40);
+  return '<div class="panel" id="zSentinelBranchEvidence">'+
+    '<div class="panel-header"><div><h3>PR-less branches · optional local evidence</h3>'+
+    '<p class="panel-subtitle">Import a zSentinel PR-less JSON report for zCloud. Browser-local only; no claims or release authority.</p></div>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-zsentinel-branch-open>Import branch .json</button>'+
+    '<input id="zSentinelBranchFile" type="file" accept=".json,application/json" multiple hidden>'+
+    (IMPORTED_PRLESS_BRANCHES?'<button type="button" class="runner-action runner-action-secondary" data-zsentinel-branch-clear>Clear</button>':'')+
+    '</div>'+
+    (IMPORTED_PRLESS_ERROR?'<p class="detail-note" role="alert">'+esc(IMPORTED_PRLESS_ERROR)+'</p>':'')+
+    (snapshot?'<p class="detail-note" role="status">Repository '+esc(snapshot.repository)+
+       ' · source '+esc(snapshot.observedAt)+(old?' · STALE (>6h)':' · manually imported')+
+       ' · '+snapshot.scanned+'/'+snapshot.prlessTotal+' PR-less branches sampled across '+snapshot.slices+' slice(s)'+
+       ' · '+(snapshot.coverageComplete?'whole snapshot':'PARTIAL coverage')+
+       '. SHA '+esc(snapshot.main.slice(0,12))+'; current main not rechecked. No ownership verified.</p>'+
+       '<div class="service-list">'+rows.map(row=>
+         '<div class="service-row"><div><strong>'+esc(row.ref)+'</strong><br><small>'+
+         esc(row.classification)+' · '+esc(row.lastCommit)+
+         ' · '+(row.ahead===null?'unverified':'ahead '+row.ahead)+
+         ' · '+row.changedCount+' paths</small>'+
+         (row.overlapCount?'<div class="detail-note">Potential conflicts ('+row.overlapCount+'): '+
+             row.overlaps.map(p=>'<code>'+esc(p)+'</code>').join(' · ')+
+             (row.overlapCount>row.overlaps.length?' · remaining paths omitted':'')+'</div>':'')+
+         '</div><small>'+(row.overlapCount?'Overlap observed':'Ownership unknown')+'</small></div>').join('')+
+       '</div>'+(snapshot.branches.length>40?'<p class="detail-note">Showing 40 prioritised rows; remaining '+(snapshot.branches.length-40)+' in local evidence summary.</p>':''):
+      '<p class="detail-note">No local branch report for the selected project. Missing evidence is UNKNOWN, not a clear ownership check.</p>')+
+    '<p class="detail-note">This panel does not synchronize hidden/private branches, contact GitHub or grant worker claims. Recheck Notion active owners and exact-head CI before changing files.</p>'+
+    '</div>';
+}
+// Opt-in portfolio-wide product discovery: four repositories per click, with
+// existing public-source rate budgets and failure-as-unknown semantics intact.
+// No background loops, authenticated requests, claims or queue mutations.
+const ZSENTINEL_ALL_BATCH_SIZE=4;
+let ZSENTINEL_ALL_RUNNING=false,ZSENTINEL_ALL_INDEX=0,ZSENTINEL_ALL_MESSAGE='';
+async function readZSentinelAllProjects(){
+  if(ZSENTINEL_ALL_RUNNING||ZSENTINEL_SOURCES_BUSY||PUBLIC_GITHUB_BUSY||PUBLIC_ISSUES_BUSY)return;
+  if(route!=='activity'||filter||!DATA){ZSENTINEL_ALL_MESSAGE='Choose All projects on Activity.';render();return;}
+  const eligible=(DATA.projects||[]).filter(p=>p&&typeof p.id==='string'
+      &&/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/?$/.test(p.repo_url||'')).slice(0,24);
+  if(!eligible.length){ZSENTINEL_ALL_MESSAGE='No canonical public GitHub repositories configured.';render();return;}
+  if(ZSENTINEL_ALL_INDEX>=eligible.length)ZSENTINEL_ALL_INDEX=0;
+  const start=ZSENTINEL_ALL_INDEX;
+  const batch=eligible.slice(start,start+ZSENTINEL_ALL_BATCH_SIZE);
+  const version=routeVersion;
+  ZSENTINEL_ALL_RUNNING=true;
+  let completed=0,readableGitHub=0,readableIssues=0,unavailable=0;
+  ZSENTINEL_ALL_MESSAGE='Reading '+batch.length+' repositories (bounded and read-only)…';
+  render();
+  try{
+    for(const project of batch){
+      if(routeVersion!==version||route!=='activity'||filter){
+        ZSENTINEL_ALL_MESSAGE='Portfolio scan paused after '+completed+' project(s); return to All projects to continue.';
+        break;
+      }
+      // A sequential, explicit operator batch avoids anonymous GitHub bursts.
+      const issues=await refreshPublicProductIssues(project,true);
+      const activity=await refreshPublicGitHubEvidence(project,true);
+      completed++;
+      if(issues?.readable>0)readableIssues++;
+      if(activity?.readable>0)readableGitHub++;
+      if(!(issues?.readable>0)||!(activity?.readable>0))unavailable++;
+      ZSENTINEL_ALL_MESSAGE='Attempted '+completed+'/'+batch.length+
+        ' project(s) · GitHub activity readable '+readableGitHub+
+        ' · issue source readable '+readableIssues+
+        ' · incomplete projects '+unavailable+
+        '. Provider denial, timeout, cache limits and private repositories stay unknown.';
+      if(route==='activity')render();
+    }
+    ZSENTINEL_ALL_INDEX=start+completed;
+    if(completed===batch.length){
+      const activityCoverage=new Set((IMPORTED_GITHUB_ACTIVITY?.coverage||[]).map(row=>row.project));
+      const issueCoverage=new Set((IMPORTED_PRODUCT_ISSUES?.coverage||[]).map(row=>row.project));
+      const observedBoth=eligible.filter(p=>activityCoverage.has(p.id)&&issueCoverage.has(p.id)).length;
+      ZSENTINEL_ALL_MESSAGE='Attempted '+Math.min(ZSENTINEL_ALL_INDEX,eligible.length)+'/'+eligible.length+
+        ' eligible repositories in this scan · '+observedBoth+'/'+eligible.length+
+        ' have both bounded source records · this batch: '+readableGitHub+
+        ' GitHub activity readable, '+readableIssues+' issue source readable, '+unavailable+
+        ' incomplete. Up to 16 source records retained; NOT a complete synchronized feed.';
+    }
+  }finally{ZSENTINEL_ALL_RUNNING=false;if(route==='activity')render();}
+}
+
+function zSentinelCapacityNotice(){
+  const metrics=DATA?.host||{},stamp=Date.parse(DATA?.time||'');
+  const fresh=Number.isFinite(stamp)&&stamp<=Date.now()+120000&&Date.now()-stamp<=120000;
+  const finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0;
+  const cores=metrics.cores,load=metrics.load,swap=metrics.swap||{};
+  const disk=metrics.disk||{},warnings=[];
+  if(finite(cores)&&cores>0&&finite(load)&&load>cores*2){
+    warnings.push('Host load '+num(load)+' exceeds twice '+num(cores)+' vCPU; queued jobs may take longer.');
+  }
+  const swapObserved=finite(swap.total)&&finite(swap.free)&&finite(swap.used)
+    &&swap.free<=swap.total&&swap.used<=swap.total
+    &&swap.free+swap.used===swap.total;
+  if(swapObserved&&swap.total>0){
+    const pct=swap.used/swap.total*100;
+    if(pct>=85||swap.free<512*1048576){
+      warnings.push('Swap '+num(pct)+'% used · '+gb(swap.free)+' free. Capacity for new workers may be constrained.');
+    }
+  }
+  if(finite(disk.total)&&disk.total>0&&finite(disk.used)
+      &&disk.used/disk.total>=0.9){
+    warnings.push('Disk '+num(disk.used/disk.total*100)+'% used; investigate free space before additional builds.');
+  }
+  const status=!fresh?'Host observation stale or unavailable; capacity UNKNOWN.':
+    !swapObserved?'Swap telemetry not yet available from the deployed backend; complete capacity assessment UNKNOWN.':
+    warnings.length?'Capacity warnings based on current host telemetry:':'No configured threshold exceeded in available host telemetry. Runner health still unverified.';
+  return '<section class="panel" id="zSentinelCapacityNotice">'+
+    '<div class="panel-header"><div><h3>zSentinel · VPS capacity signals</h3>'+
+    '<p class="panel-subtitle">Read-only CPU/load, disk and swap from /api/status; never a proof of runner availability.</p></div></div>'+
+    '<p role="status" class="detail-note">'+esc(status)+'</p>'+
+    (fresh&&warnings.length?'<div class="service-list">'+
+      warnings.map(message=>'<div class="service-row"><div>'+esc(message)+'</div></div>').join('')+
+      '</div>':'')+
+    '<p class="detail-note">No automatic service restarts, worker cancellations or swap clearing. Use the authorised zSSH path and owner coordination for recovery.</p>'+
+    '</section>';
+}
+
+/* zSentinel issue-first delivery board: a joined READ VIEW, never an
+   automatic owner/approval/CI or runner authorization decision. */
+let ZSENTINEL_SOURCES_BUSY=false;
+async function readZSentinelSources(){
+  if(ZSENTINEL_SOURCES_BUSY)return;
+  if(!(DATA?.projects||[]).some(project=>project.id===filter)){
+    IMPORTED_PRODUCT_ERROR='Select one canonical project for bounded GitHub discovery.';
+    render();return;
+  }
+  ZSENTINEL_SOURCES_BUSY=true;
+  if(route==='activity')render();
+  try{
+    // GitHub public issue/PR and queue evidence come from different independent
+    // sources. Failures stay local to their component; never imply empty work.
+    await Promise.allSettled([
+      refreshPublicProductIssues(),
+      refreshPublicGitHubEvidence(),
+      refreshDeliveryQueue(),
+    ]);
+  }finally{ZSENTINEL_SOURCES_BUSY=false;if(route==='activity')render()}
+}
+/* Deliberately exports public issue and PR references, never raw queue ids,
+   claims, worker prompt text, tokens or privately scoped API response bodies. */
+// Operator-only triage of already observed issue/PR references. This label is
+// never a claim, ownership proof, accepted merge or authorization for a worker.
+let ZSENTINEL_TRIAGE_VIEW='all',ZSENTINEL_TRIAGE_EXPANDED=false;
+const ZSENTINEL_TRIAGE_OPTIONS=[
+  ['all','All sampled P0/P1'],['unlinked','No sampled PR'],
+  ['draft','Draft PR reference only'],['referenced','Non-draft PR mentioned'],
+  ['uncertain','Source stale / partial']
+];
+function zSentinelIssueTriage(issue,coverage){
+  const links=Array.isArray(issue.prs)?issue.prs:[];
+  const label=!links.length?'unlinked':
+    links.every(pr=>pr.draft===true)?'draft':'referenced';
+  const source=coverage?.get(issue.project);
+  const observation=Date.parse(source?.observedAt||'');
+  // Every bounded issue receipt is partial by definition. A fresh complete
+  // *request set* is not a complete GitHub issue-history inventory.
+  const uncertain=issue.staleUnverified===true||!source||source.staleEvidence===true
+    ||['degraded','unavailable'].includes(source.status)
+    ||!Number.isFinite(observation)||observation>Date.now()+120000
+    ||Date.now()-observation>6*3600000;
+  return {label,uncertain,source:source||null};
+}
+function zSentinelTriageMatches(issue,coverage){
+  if(ZSENTINEL_TRIAGE_VIEW==='all')return true;
+  const triage=zSentinelIssueTriage(issue,coverage);
+  return ZSENTINEL_TRIAGE_VIEW==='uncertain'?triage.uncertain:triage.label===ZSENTINEL_TRIAGE_VIEW;
+}
+/* One operator-initiated, privacy-limited cross-source recovery case.
+ * Source relationships are advisory. No claim, issue, PR or runtime mutations. */
+function buildZSentinelRecoveryCase(){
+  const allowed=new Set((DATA?.projects||[]).map(project=>project.id));
+  const scope=filter||'all';
+  const sanitize=(value,n=180)=>String(value??'')
+    .replace(/[\x00-\x1f\x7f]/g,' ').slice(0,n);
+  const activeIssueCoverage=(IMPORTED_PRODUCT_ISSUES?.coverage||[])
+    .filter(row=>allowed.has(row.project)&&(!filter||row.project===filter))
+    .slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const evidenceMap=new Map(activeIssueCoverage.map(row=>[row.project,row]));
+  const eligible=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(issue=>
+    allowed.has(issue.project)&&(!filter||issue.project===filter)
+    &&['P0','P1'].includes(issue.priority)
+    &&zSentinelTriageMatches(issue,evidenceMap));
+  const issues=fairProductIssueHistory(eligible,activeIssueCoverage,100)
+    .filter(row=>/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/issues\/[1-9][0-9]*$/.test(row.url))
+    .map(row=>{
+      const triage=zSentinelIssueTriage(row,evidenceMap);
+      return {
+        project:row.project,priority:row.priority,number:row.number,
+        title:sanitize(row.title,200),url:row.url,
+        observed_status:row.staleUnverified===true?
+          'historically_open_not_reobserved':'sampled_open',
+        link_status:triage.label,source_uncertain:triage.uncertain,
+        referenced_prs:(row.prs||[]).slice(0,3)
+          .filter(pr=>/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/pull\/[1-9][0-9]*$/.test(pr.url))
+          .map(pr=>({number:pr.number,url:pr.url,draft:pr.draft===true,
+            relationship:sanitize(pr.relationship,40),claim_verified:false,
+            fix_verified:false})),
+        claim_verified:false,ready_for_claim:false,
+      };
+    });
+  const recovery=ZSENTINEL_RETRY_SNAPSHOT;
+  const covered=!!recovery&&(!filter||recovery.scope.project==='all'||
+    recovery.scope.project===filter);
+  const orders=retryOwnerWorkorders(recovery,filter).slice(0,64).map(row=>({
+    project:row.project,priority:row.priority,
+    observed_high_attempt_items:row.high,
+    observed_queued_high_attempt_items:row.queued,
+    observed_owned_high_attempt_items:row.owned,
+    expired_active_lease_rows_in_group:row.expired,
+    problem:row.problem,action:row.action,status:row.status,
+    coverage:row.coverage,claim_verified:false,action_authorized:false,
+  }));
+  const trend=ZSENTINEL_RETRY_TREND;
+  const comparable=!!(recovery&&trend&&retryTrendMatchesSnapshot(trend,recovery)
+    &&(!filter||trend.scope.project==='all'||trend.scope.project===filter));
+  const queue=DELIVERY_QUEUE_DATA;
+  const queueCandidates=(queue?.candidates||[]).filter(row=>
+    allowed.has(row.project_id)&&(!filter||row.project_id===filter)).slice(0,8)
+    .map(row=>({project:row.project_id,priority:row.priority,
+      candidate_only:true,claim_verified:false}));
+  const queueOwnerReview=(queue?.review_items||[]).filter(row=>
+    allowed.has(row.project_id)&&(!filter||row.project_id===filter)).slice(0,8)
+    .map(row=>({project:row.project_id,priority:row.priority,
+      reason:sanitize(row.reason,40),requires_owner_review:true}));
+  const zcloudBranchProject=(DATA?.projects||[]).find(item=>
+    ['https://github.com/Zennay/zCloud','https://github.com/Zennay/zCloud/']
+      .includes(item.repo_url||''));
+  const branchEvidence=IMPORTED_PRLESS_BRANCHES&&
+    (!filter||(zcloudBranchProject&&filter===zcloudBranchProject.id))?
+    IMPORTED_PRLESS_BRANCHES:null;
+  const branches=(branchEvidence?.branches||[]).slice(0,40).map(row=>({
+    branch:sanitize(row.ref,180),
+    classification:sanitize(row.classification,40),
+    observed_commit_sha:sanitize(row.lastCommit,40),
+    overlapping_paths_in_sample:row.overlapCount,
+    current_claim_verified:false,merge_authorized:false,
+  }));
+  const ghCoverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).filter(row=>
+    allowed.has(row.project)&&(!filter||row.project===filter))
+    .slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const recentMerges=zSentinelDeliveryPulseSummary(IMPORTED_GITHUB_ACTIVITY,allowed,filter)
+    .reportedMerges.filter(row=>isCanonicalGitHubActivityURL(row.url)).slice(0,5)
+    .map(row=>({project:row.project,observed_at:row.ts,url:row.url,
+      merged_reported_by_source:true,main_commit_verified:false,
+      deployed:false}));
+  return {
+    schema:'zsentinel-portfolio-recovery-case-v1',
+    generated_at_utc:new Date().toISOString(),selected_project:scope,
+    source_coverage:{
+      issues:{observed_at:IMPORTED_PRODUCT_ISSUES?.observedAt||null,
+        selected_issue_count:issues.length,
+        sample_truncated:eligible.length>issues.length,
+        projects:activeIssueCoverage.map(row=>({
+          project:row.project,status:sanitize(row.status,35),
+          observed_at:row.observedAt||null,
+          stale:row.staleEvidence===true,
+        }))},
+      github:{observed_at:IMPORTED_GITHUB_ACTIVITY?.observedAt||null,
+        projects:ghCoverage.map(row=>({
+          project:row.project,status:sanitize(row.status,35),
+          observed_at:row.observedAt||null,
+          stale:row.staleEvidence===true,
+        }))},
+      queue_admission:{observed_at:DELIVERY_QUEUE_OBSERVED||null,
+        source_available:!!queue},
+      unmerged_branches:{observed_at:branchEvidence?.observedAt||null,
+        source_main_sha:branchEvidence?.main||null,
+        source_available:!!branchEvidence,
+        globally_complete_at_observation:branchEvidence?.coverageComplete===true,
+        sampled_branches:branchEvidence?.scanned??null,
+        reported_prless_branches:branchEvidence?.prlessTotal??null,
+        slices:branchEvidence?.slices??null},
+      queue_retry:{observed_at:recovery?.observedAt||null,
+        source_project:recovery?.scope.project||null,
+        selected_project_covered:covered,
+        sample_complete:recovery?.complete===true,
+        source_stale:!recovery||Date.now()-Date.parse(recovery.observedAt)>6*3600000,
+        trend_comparable:comparable},
+    },
+    issues,
+    queue_recovery:{
+      workorder_count:covered?retryOwnerWorkorders(recovery,filter).length:0,
+      workorders_truncated:covered&&retryOwnerWorkorders(recovery,filter).length>64,
+      workorders:orders,
+      worsening_projects:comparable?trend.projects.filter(row=>
+        allowed.has(row.project)&&(!filter||row.project===filter)&&row.delta>0)
+        .slice(0,8).map(row=>({
+          project:row.project,before:row.before,after:row.after,delta:row.delta,
+        })):[],
+    },
+    queue_admission:{global_product_candidates:queue?.queued_product_candidates??null,
+      global_owner_review_count:queue?.queued_requires_owner_review??null,
+      selected_candidates:queueCandidates,selected_review_items:queueOwnerReview},
+    recent_reported_merges:recentMerges,
+    unmerged_branch_sample:{branches,shown:branches.length,
+      truncated:!!branchEvidence&&branchEvidence.branches.length>branches.length,
+      owner_claims_unverified:true},
+    authorization:{claims_verified:false,review_verified:false,
+      exact_head_required_ci_verified:false,branch_protection_verified:false,
+      action_executed:false,claim:false,retry:false,merge:false,deploy:false},
+    operator_next_step:'Verify exact live GitHub checks, Notion and worker ownership and release gates before any action. Source observations do not authorize a claim.',
+  };
+}
+
+function exportZSentinelRecoveryCase(){
+  // Operator-selected, local-only UTF-8 output. Never persist or upload to API.
+  const report=buildZSentinelRecoveryCase();
+  const payload=JSON.stringify(report,null,2)+'\n';
+  if(new TextEncoder().encode(payload).length>256*1024){
+    ZSENTINEL_ALL_MESSAGE='Recovery case exceeds the 256 KiB private export bound; select one project.';
+    render();return;
+  }
+  const blob=new Blob([payload],{type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+  anchor.href=url;
+  anchor.download='zsentinel-recovery-case-'+(filter||'portfolio')+'-'+
+    new Date().toISOString().slice(0,10)+'.json';
+  document.body.appendChild(anchor);anchor.click();anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function exportZSentinelHandoff(){
+  const projects=new Set((DATA?.projects||[]).map(item=>item.id));
+  const scope=filter||'all-projects';
+  const clean=(value,n=180)=>String(value??'').replace(/[\r\n\t]+/g,' ')
+    .replace(/[\x00-\x1f\x7f]/g,'').slice(0,n);
+  const observedCoverage=new Map((IMPORTED_PRODUCT_ISSUES?.coverage||[])
+    .map(item=>[item.project,item]));
+  const eligible=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(item=>
+    projects.has(item.project)&&(!filter||item.project===filter)
+    &&(item.priority==='P0'||item.priority==='P1')
+    &&zSentinelTriageMatches(item,observedCoverage));
+  // The export uses the SAME fair P0/P1 inclusion contract as the visible
+  // triage list: a noisy repository cannot consume all 100 handoff entries.
+  const issues=fairProductIssueHistory(eligible,
+    (IMPORTED_PRODUCT_ISSUES?.coverage||[]).filter(row=>projects.has(row.project)),100);
+  const observed=IMPORTED_PRODUCT_ISSUES?.observedAt||'unavailable';
+  const github=IMPORTED_GITHUB_ACTIVITY?.observedAt||'unavailable';
+  const queue=DELIVERY_QUEUE_DATA;
+  const lines=[
+    '# zSentinel product handoff — '+clean(scope,56),
+    '',
+    'Visible triage filter: '+clean(ZSENTINEL_TRIAGE_VIEW,20),
+    'Issues included: '+issues.length+' of '+eligible.length+' matching sampled P0/P1 (fair max 100)',
+    'Source issue filter is only a bounded observation, never permission to take ownership.',
+    'Snapshot generated: '+new Date().toISOString(),
+    'Issue source last observed: '+clean(observed,40),
+    'GitHub activity source last observed: '+clean(github,40),
+    'Queue admission snapshot: '+clean(DELIVERY_QUEUE_OBSERVED||'unavailable',48),
+    '',
+    '**Evidence only — no verified claim ownership, reviewer approval, production deploy, runner recovery or permission to merge.**',
+    '**Missing or partial provider data is unknown work, never zero work.**',
+    '',
+    '## Open P0/P1 product issues (bounded source)',
+    '',
+  ];
+  for(const item of issues){
+    // URLs are generated by the canonical GitHub issue importer or its strict
+    // offline receipt validator. Do not export arbitrary user-supplied URLs.
+    if(!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/issues\/[1-9][0-9]*$/.test(item.url))continue;
+    const triage=zSentinelIssueTriage(item,observedCoverage);
+    lines.push('- **'+item.priority+' '+clean(item.project,56)+' #'+item.number+'** '+clean(item.title)+
+      ' — '+item.url+' · '+clean(triage.label,32)+
+      (item.staleUnverified?' · PREVIOUSLY OPEN, NOT REOBSERVED in latest issue windows':'')+
+      (triage.uncertain?' · SOURCE STALE/UNAVAILABLE/INCOMPLETE':'')+
+      ' · claim unverified');
+    const prs=(item.prs||[]).slice(0,3).filter(pr=>
+      /^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/pull\/[1-9][0-9]*$/.test(pr.url));
+    for(const pr of prs)lines.push('  - Referenced open PR #'+pr.number+' ('+
+      (pr.draft?'draft, ':'')+clean(pr.relationship,32)+', active claim unverified): '+pr.url);
+  }
+  if(!issues.length)lines.push('No matching issues in currently loaded partial sample; sources may be missing.');
+  lines.push('', '## Source freshness and missing-data warnings', '');
+  for(const source of [
+    {name:'P0/P1 issue source',data:IMPORTED_PRODUCT_ISSUES},
+    {name:'PR/CI GitHub source',data:IMPORTED_GITHUB_ACTIVITY}
+  ]){
+    for(const row of (source.data?.coverage||[]).filter(r=>projects.has(r.project)&&(!filter||r.project===filter)).slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT)){
+      lines.push('- '+source.name+' '+clean(row.project,56)+' · '+clean(row.status,32)+
+        ' · observed '+clean(row.observedAt||'unknown',48)+
+        (row.staleEvidence?' · STALE RETAINED EVIDENCE, NOT CURRENT STATUS':'')+
+        (row.lastAttemptAt?' · last attempt '+clean(row.lastAttemptAt,48):'')+
+        (source.name==='PR/CI GitHub source'&&row.providerAdmission&&
+         Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,row.providerAdmission)&&
+         row.providerAdmission!=='none'
+          ?' · GITHUB PROVIDER HOLD: '+GITHUB_PROVIDER_ADMISSIONS[row.providerAdmission]+
+           ' · missing events UNKNOWN'
+          :''));
+    }
+  }
+  lines.push('', '## Product queue admission (provisional)', '');
+  if(queue){
+    lines.push('Total product candidates in observed global queue: '+queue.queued_product_candidates);
+    lines.push('QA-only queued items held from new admission: '+queue.queued_qa_only_held);
+    lines.push('Queued items requiring owner review (not QA): '+queue.queued_requires_owner_review);
+    for(const item of (queue.review_items||[]).filter(row=>projects.has(row.project_id)&&
+      (!filter||row.project_id===filter)).slice(0,8)){
+      lines.push('- Needs owner review: '+clean(item.priority,4)+' '+clean(item.project_id,56)+
+        ' · '+clean(item.reason,32)+'; queue ID withheld');
+    }
+    const rows=(queue.candidates||[]).filter(item=>projects.has(item.project_id)&&(!filter||item.project_id===filter));
+    for(const item of rows.slice(0,8))lines.push('- '+clean(item.priority,4)+' '+clean(item.project_id,56)+
+      ': candidate, unclaimed; ID withheld from export');
+  }else lines.push('Queue admission source unavailable; no capacity or worker ownership inferred.');
+  // The existing local retry observer is a separate, authenticated queue
+  // source. Correlate only by project and priority, never by claim/issue/PR ID.
+  const retrySnapshot=ZSENTINEL_RETRY_SNAPSHOT;
+  const retryCoverage=!!retrySnapshot&&(!filter||
+    retrySnapshot.scope.project==='all'||retrySnapshot.scope.project===filter);
+  lines.push('', '## Queue recovery owner workorders (independent read-only source)', '');
+  if(!retrySnapshot){
+    lines.push('NO QUEUE RETRY SOURCE — explicitly read VPS queue or import a recent snapshot.');
+  }else if(!retryCoverage){
+    lines.push('NO COVERAGE for '+clean(filter,56)+': the last retry snapshot was scoped to '+
+      clean(retrySnapshot.scope.project,56)+'. Do not assume no stalled work.');
+  }else{
+    const orders=retryOwnerWorkorders(retrySnapshot,filter);
+    const retryAge=Date.now()-Date.parse(retrySnapshot.observedAt);
+    lines.push('Source observed: '+clean(retrySnapshot.observedAt,48)+
+      (retryAge>6*3600000?' · STALE >6H':'')+
+      ' · sample '+(retrySnapshot.complete?'COMPLETE':'PARTIAL')+
+      ' · attempts count claims, not confirmed failures.',
+      'Observed project/priority groups: '+orders.length+
+      ' · not evidence of an available unclaimed worker.');
+    for(const row of orders.slice(0,32)){
+      lines.push('Problem: '+clean(row.priority+' '+row.project+' — '+row.problem,210),
+        'Action: '+clean(row.action,210),
+        'Status: '+clean(row.status+'; '+row.coverage+'; live owner unverified.',180),
+        '');
+    }
+    if(orders.length>32)lines.push('TRUNCATED '+(orders.length-32)+
+      ' observed priority/project groups. Filter a project to review remaining groups.');
+    if(!orders.length)lines.push('No high-attempt groups observed in this source scope; historical work unknown.');
+    const rt=ZSENTINEL_RETRY_TREND;
+    if(rt&&retryTrendMatchesSnapshot(rt,retrySnapshot)&&
+        (!filter||rt.scope.project==='all'||rt.scope.project===filter)){
+      lines.push('Observed trend: '+clean(rt.before,48)+' to '+clean(rt.after,48));
+      const worsening=rt.projects.filter(row=>
+        projects.has(row.project)&&(!filter||row.project===filter)&&row.delta>0);
+      lines.push('Worsening high-attempt project counts in matched scope: '+worsening.length);
+      for(const row of worsening.slice(0,8))lines.push('- '+clean(row.project,56)+
+        ' high-attempt items '+row.before+' → '+row.after+
+        '; no failure or completion inferred.');
+    }else lines.push('No comparable, source-bound retry trend observed.');
+  }
+  lines.push('Never join queue aggregates with GitHub issue/PR references as verified ownership.');
+  lines.push('', '## GitHub delivery pulse (bounded source events in last 24h)', '');
+  const pulse=zSentinelDeliveryPulseSummary(IMPORTED_GITHUB_ACTIVITY,projects,filter);
+  lines.push('Canonical sources observed: '+pulse.covered.length+
+    ' · '+(pulse.completeSample?'all observed provider requests recently readable':
+      'source coverage PARTIAL, STALE OR UNKNOWN; events not authoritative totals'));
+  for(const kind of ['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']){
+    lines.push('- '+kind+': '+(IMPORTED_GITHUB_ACTIVITY?
+      pulse.counts[kind]:'UNKNOWN')+' observed bounded events');
+  }
+  lines.push('A GitHub PR merge does not prove live deployment. No event is a verified worker claim.');
+  for(const row of pulse.reportedMerges){
+    lines.push('- GitHub-reported PR merge '+clean(row.project,56)+
+      ' · '+clean(row.ts,40)+' · '+row.url);
+  }
+  lines.push('', '## Independent existing GitHub observations (bounded)', '');
+  const recent=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>
+    projects.has(item.project)&&(!filter||item.project===filter)).slice(0,30);
+  for(const item of recent){
+    if(!isCanonicalGitHubActivityURL(item.url))continue;
+    lines.push('- '+clean(item.project,56)+' · '+clean(item.kind,32)+' · '+clean(item.ts,40)+
+      (item.staleUnverified?' · HISTORICAL ONLY: NOT REOBSERVED':'')+
+      ' · '+clean(item.description,160)+' — '+item.url);
+  }
+  if(!recent.length)lines.push('No valid GitHub events in currently loaded source window.');
+  lines.push('', '## Locally imported PR-less branch ownership sample (zCloud only)', '');
+  const branchProject=(DATA?.projects||[]).find(p=>['https://github.com/Zennay/zCloud','https://github.com/Zennay/zCloud/'].includes(p.repo_url||''));
+  if(IMPORTED_PRLESS_BRANCHES&&(!filter||(branchProject&&filter===branchProject.id))){
+    const proof=IMPORTED_PRLESS_BRANCHES;
+    lines.push('Repository: '+clean(proof.repository,80),
+      'Source observed: '+clean(proof.observedAt,40),
+      'Exact source main SHA (not rechecked): '+clean(proof.main,40),
+      'Global branch coverage: '+(proof.coverageComplete?'complete when observed':'PARTIAL'),
+      'PR-less branches in sample: '+proof.scanned+' of '+proof.prlessTotal);
+    lines.push('Imported slices: '+proof.slices+' (independent observations, not an atomic inventory)');
+    for(const row of proof.branches.slice(0,40)){
+      lines.push('- '+clean(row.ref,200)+' · '+clean(row.classification,24)+
+        ' · '+clean(row.lastCommit,40)+' · overlap count '+row.overlapCount+
+        ' · owner unverified');
+    }
+    if(proof.branches.length>40)lines.push('Other '+(proof.branches.length-40)+' branch rows omitted from bounded handoff.');
+  }else lines.push('Branch source not imported for selected project; ownership unknown.');
+  lines.push('', '## Required continuation', '',
+    'Check actual current Notion claims and exact GitHub PR/CI status before editing. Keep existing human, security, runner and serialized production-release gates intact.',
+    'Only implement unclaimed work and never infer deployment from PR or main-commit history.',
+    '');
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const element=document.createElement('a');
+  element.href=url;element.download='zsentinel-workboard-'+clean(scope,56)+'.md';
+  document.body.appendChild(element);element.click();element.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function zSentinelDeliveryPulseSummary(github,visible,focus){
+  const validKinds=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit','branch_head']);
+  const events=(github?.events||[]).filter(row=>row&&visible.has(row.project)
+    &&(!focus||focus===row.project)&&validKinds.has(row.kind)
+    &&typeof row.id==='string'
+    &&typeof row.url==='string'
+    &&isCanonicalGitHubActivityURL(row.url)
+    &&Number.isFinite(Date.parse(row.ts))&&Date.parse(row.ts)<=Date.now()+120000);
+  // Historical events preserved after incomplete reads do not count as
+  // current 24h delivery pulse evidence even when their source time is recent.
+  const recent=events.filter(row=>row.staleUnverified!==true
+    &&Date.now()-Date.parse(row.ts)<=86400000);
+  const counts=Object.fromEntries([...validKinds].map(key=>[
+    key,recent.filter(event=>event.kind===key).length]));
+  const covered=(github?.coverage||[]).filter(row=>visible.has(row.project)
+    &&(!focus||row.project===focus));
+  const completeSample=covered.length&&covered.every(row=>
+    row.status==='partial_sources'&&!row.staleEvidence
+    &&(!row.providerAdmission||row.providerAdmission==='none')
+    &&Number.isFinite(Date.parse(row.observedAt))
+    &&Date.now()-Date.parse(row.observedAt)<=6*3600000);
+  const reportedMerges=events.filter(row=>row.kind==='pr_merged'
+    &&row.staleUnverified!==true)
+    .sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,5);
+  return {events,recent,counts,covered,completeSample:!!completeSample,reportedMerges};
+}
+function zSentinelDeliveryPulse(github,visible,focus){
+  const {counts,covered,completeSample,reportedMerges}=
+    zSentinelDeliveryPulseSummary(github,visible,focus);
+  const latest=reportedMerges.map(row=>'<div class="service-row"><div>'+
+    '<a href="'+esc(row.url)+'" target="_blank" rel="noopener noreferrer">'+
+    esc(row.project)+' · '+esc(row.description)+'</a></div>'+
+    '<small>'+esc(date(row.ts,true))+'</small></div>').join('');
+  const keys=[['pr_created','PR created'],['pr_updated','PR updated'],
+    ['pr_merged','GitHub-reported PR merges'],['pr_closed','Closed without merge'],
+    ['ci_run','CI run observations'],['main_commit','GitHub main commits'],
+    ['branch_head','Branch head observations']];
+  return '<section class="section-details" aria-label="Observed GitHub delivery pulse">'+
+    '<h3>GitHub delivery pulse · bounded observations in last 24h</h3>'+
+    '<p class="detail-note" role="status">'+
+    (github?'Source has '+covered.length+' canonical project observation(s)'+
+      (completeSample?' · bounded provider responses recently readable':
+        ' · PARTIAL/STALE/UNKNOWN provider coverage'):
+      'GitHub PR/CI source NOT OBSERVED')+
+    '. These are source events within the sampled window, not portfolio totals. A PR merge is NOT a deployment.</p>'+
+    '<div class="service-list">'+keys.map(([key,label])=>
+      '<div class="service-row"><strong>'+esc(label)+'</strong><span>'+
+      (github?counts[key]:'unknown')+'</span></div>').join('')+'</div>'+
+    '<details class="section-details" data-disclosure="zsentinel-recent-merges">'+
+    '<summary>Most recent reported PR merges in sampled sources ('+
+      reportedMerges.length+')</summary><div class="service-list">'+
+      (latest||'<p class="detail-note">No sampled merge evidence available; not proof that no PRs merged.</p>')+
+    '</div></details></section>';
+}
+function zSentinelDeliveryBoard(){
+  const ids=new Set((DATA?.projects||[]).map(project=>project.id));
+  const snapshot=IMPORTED_PRODUCT_ISSUES;
+  const admitted=DELIVERY_QUEUE_DATA;
+  const github=IMPORTED_GITHUB_ACTIVITY;
+  const focus=filter;
+  const relevant=(snapshot?.issues||[]).filter(issue=>
+    ids.has(issue.project)&&(!focus||issue.project===focus)
+    &&(issue.priority==='P0'||issue.priority==='P1'));
+  const priorityValue={P0:0,P1:1};
+  relevant.sort((a,b)=>(priorityValue[a.priority]-priorityValue[b.priority])||
+    a.project.localeCompare(b.project)||a.number-b.number);
+  const candidates=(admitted?.candidates||[]).filter(item=>
+    ids.has(item.project_id)&&(!focus||item.project_id===focus));
+  const coveredIssues=(snapshot?.coverage||[]).filter(item=>
+    ids.has(item.project)&&(!focus||item.project===focus));
+  const unobservedIssueProjects=(DATA?.projects||[]).filter(p=>
+    (!focus||focus===p.id)&&!coveredIssues.some(row=>row.project===p.id)).map(p=>p.id);
+  const triageCoverage=new Map(coveredIssues.map(row=>[row.project,row]));
+  const triageCounts={unlinked:0,draft:0,referenced:0,uncertain:0};
+  for(const issue of relevant){
+    const item=zSentinelIssueTriage(issue,triageCoverage);
+    triageCounts[item.label]++;
+    if(item.uncertain)triageCounts.uncertain++;
+  }
+  const focusedIssues=relevant.filter(issue=>zSentinelTriageMatches(issue,triageCoverage));
+  const fairFocused=fairProductIssueHistory(focusedIssues,coveredIssues,
+    ZSENTINEL_TRIAGE_EXPANDED?100:24);
+  const detailedIssueRows=fairFocused.map(issue=>{
+    const triage=zSentinelIssueTriage(issue,triageCoverage);
+    const refs=issue.prs.slice(0,3).map(pr=>
+      '<a target="_blank" rel="noopener noreferrer" href="'+esc(pr.url)+'">PR #'+pr.number+
+      (pr.draft?' · draft':' · non-draft')+'</a> <small>'+
+      (pr.relationship==='closing_keyword_only'?'closing keyword only':'mentioned only')+
+      '</small>').join(' · ');
+    const proof=triage.source?
+      'sampled '+date(triage.source.observedAt,true)+
+      (triage.uncertain?' · STALE/DEGRADED':' · recent bounded source'):
+      'NO SOURCE OBSERVATION';
+    return '<div class="service-row"><div><strong>'+esc(issue.priority)+' · '+esc(issue.project)+
+      ' · '+esc(triage.label)+'</strong><br>'+
+      '<a target="_blank" rel="noopener noreferrer" href="'+esc(issue.url)+'">'+esc(issue.title)+
+      '</a><br><small>GitHub #'+issue.number+
+      (issue.staleUnverified?' · PREVIOUSLY OPEN; NOT REOBSERVED in latest bounded pages':' · observed open in bounded source')+
+      ' · '+esc(proof)+
+      ' · no claim authority</small>'+
+      (refs?'<div class="detail-note">Open PR references in sample: '+refs+'</div>':
+       '<div class="detail-note">No linked PR in sampled source, ownership unknown.</div>')+
+      '</div></div>';
+  }).join('');
+  const triageButtons=ZSENTINEL_TRIAGE_OPTIONS.map(([key,label])=>{
+    const count=key==='all'?relevant.length:triageCounts[key];
+    return '<button type="button" data-zsentinel-triage="'+key+
+      '" class="'+(ZSENTINEL_TRIAGE_VIEW===key?'active':'')+
+      '" aria-pressed="'+(ZSENTINEL_TRIAGE_VIEW===key?'true':'false')+'">'+
+      esc(label)+' ('+count+')</button>';
+  }).join('');
+  const coveredGitHub=(github?.coverage||[]).filter(item=>
+    ids.has(item.project)&&(!focus||item.project===focus));
+  const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
+    .filter(row=>row.staleEvidence===true).map(row=>row.project))];
+  // Retry evidence is local, separately observed and advisory; do not
+  // attach it to GitHub issues as an owner/claim assertion.
+  const retry=ZSENTINEL_RETRY_SNAPSHOT;
+  const retryCovered=!!retry&&(!focus||retry.scope.project==='all'||retry.scope.project===focus);
+  const retryOrders=retryOwnerWorkorders(retry,focus);
+  const retryStale=retry&&Date.now()-Date.parse(retry.observedAt)>6*3600000;
+  const recoveryTrend=ZSENTINEL_RETRY_TREND;
+  const trendMatches=retry&&recoveryTrend&&retryTrendMatchesSnapshot(recoveryTrend,retry)
+    &&(!focus||recoveryTrend.scope.project==='all'||recoveryTrend.scope.project===focus);
+  const increasingRetryProjects=trendMatches?recoveryTrend.projects.filter(item=>
+    ids.has(item.project)&&(!focus||item.project===focus)&&item.delta>0)
+    .sort((a,b)=>b.delta-a.delta||a.project.localeCompare(b.project)):[];
+  const recoveryTrendText=trendMatches?
+    'Compared '+date(recoveryTrend.before,true)+' → '+date(recoveryTrend.after,true)+
+    ' · '+increasingRetryProjects.length+' project(s) with higher observed high-attempt counts.'+
+    ' This does not prove failures or improvements outside the source window.':
+    'No comparable same-scope retry trend; recovery progress UNKNOWN.';
+  const retryRows=retryOrders.slice(0,5).map(row=>
+    '<div class="service-row"><div><strong>'+esc(row.priority)+' · '+
+      esc(row.project)+'</strong><br><small>Problem: '+esc(row.problem)+
+      '<br>Action: '+esc(row.action)+
+      '<br>Status: '+esc(row.status)+'</small></div></div>').join('');
+  const queueRows=candidates.slice(0,8).map(item=>
+    '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+
+    esc(item.project_id)+'</strong><br><small>Queue '+esc(item.queue_id)+
+    '</small></div><small>Candidate only · not claimed</small></div>').join('');
+  const scopedTime=(rows,fallback)=>{
+    const observed=rows.map(item=>item.observedAt||fallback)
+      .filter(value=>value&&Number.isFinite(Date.parse(value)));
+    if(!observed.length)return 'Not observed';
+    const oldest=Math.min(...observed.map(value=>Date.parse(value)));
+    return date(new Date(oldest).toISOString(),true)+
+      (Date.now()-oldest>6*3600000?' · stale (>6h)':'');
+  };
+  const issueTime=scopedTime(coveredIssues,snapshot?.observedAt);
+  const queueTime=admitted?(DELIVERY_QUEUE_OBSERVED||'Unknown time'):'Not observed';
+  const gitTime=scopedTime(coveredGitHub,github?.observedAt);
+  const active=ZSENTINEL_SOURCES_BUSY||ZSENTINEL_ALL_RUNNING||PUBLIC_ISSUES_BUSY||PUBLIC_GITHUB_BUSY||DELIVERY_QUEUE_BUSY;
+  const recoveryReadBusy=ZSENTINEL_RETRY_BUSY;
+  return '<section class="panel" id="zSentinelDeliveryBoard"><div class="panel-header">'+
+    '<div><h2>zSentinel · product delivery board</h2>'+
+    '<p class="panel-subtitle">Start here: currently sampled open P0/P1 issues, related PR evidence, and eligible queue candidates. Sources are manual and may be stale; no automatic claim.</p></div>'+
+    '<button type="button" class="runner-action" data-zsentinel-source-read '+
+    (active?'disabled aria-busy="true"':'')+'>'+
+    (active?'Reading…':'Read product sources')+'</button>'+
+    (!focus?'<button type="button" class="runner-action runner-action-secondary" data-zsentinel-all-read '+(active?'disabled aria-busy="true"':'')+'>'+
+    (ZSENTINEL_ALL_RUNNING?'Reading portfolio…':'Read next 4 projects')+'</button>':'')+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-vps-read '+
+    (recoveryReadBusy?'disabled aria-busy="true"':'')+'>'+
+    (recoveryReadBusy?'Reading queue recovery…':'Read queue recovery')+'</button>'+
+    '<button type="button" class="runner-action" data-zsentinel-export '+(!snapshot&&!github&&!IMPORTED_PRLESS_BRANCHES&&!ZSENTINEL_RETRY_SNAPSHOT?'disabled':'')+
+    '>Export handoff .md</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-zsentinel-case-export '+
+    (!snapshot&&!github&&!IMPORTED_PRLESS_BRANCHES&&!ZSENTINEL_RETRY_SNAPSHOT&&!admitted?'disabled':'')+
+    '>Export recovery case .json</button></div>'+
+    (ZSENTINEL_ALL_MESSAGE&&!focus?'<p class="detail-note" role="status">'+esc(ZSENTINEL_ALL_MESSAGE)+'</p>':'')+
+    (ZSENTINEL_RETRY_MESSAGE?'<p class="detail-note" role="status">Queue recovery source: '+
+      esc(ZSENTINEL_RETRY_MESSAGE)+'</p>':'')+
+    '<p class="detail-note" role="status">Issue source '+esc(issueTime)+
+    ' · GitHub activity '+esc(gitTime)+' · Queue '+esc(queueTime)+
+    '. Reads are manual, separate, bounded and may be partial or stale.</p>'+
+    (staleProjects.length?'<p class="detail-note" role="alert">GitHub source unavailable/partial — last known issue/PR/CI evidence preserved, NOT current proof: '+esc(staleProjects.join(', '))+'.</p>':'')+
+    zSentinelDeliveryPulse(github,ids,focus)+
+    '<p class="detail-note">'+
+    (focus?'Project: '+esc(focus)+'.':'Select a single project to refresh the sources; current snapshots can be viewed across projects.')+
+    ' Issues sampled: '+coveredIssues.length+' project sources; GitHub activity: '+
+    coveredGitHub.length+' project sources.</p>'+
+    (unobservedIssueProjects.length?'<p class="detail-note" role="status">Issue source NOT OBSERVED for: '+
+      esc(unobservedIssueProjects.join(', '))+'. Use manual project-source reads; absence never means no open issues.</p>':'')+
+    '<h3>Operator issue triage · '+focusedIssues.length+' matching of '+relevant.length+' observed P0/P1</h3>'+
+    '<div role="group" aria-label="Filter product issue follow-ups" class="range-control">'+
+    triageButtons+'</div>'+
+    '<p class="detail-note">No PR reference is not a free claim. A draft or mentioned PR is not an accepted fix. '+
+    'All filters use bounded evidence only; stale and missing sources remain unknown.</p>'+
+    (detailedIssueRows?'<div class="service-list">'+detailedIssueRows+'</div>':
+      '<p class="detail-note">No matching P0/P1 issue in the current sample. This does not prove zero work.</p>')+
+    (focusedIssues.length>24?'<button type="button" class="runner-action runner-action-secondary" data-zsentinel-triage-expand>'+
+      (ZSENTINEL_TRIAGE_EXPANDED?'Show first 24 issues':'Show up to 100 matching issues')+'</button>':'')+
+    (focusedIssues.length>100?'<p class="detail-note">Source has more than 100 matching issues; the display and export remain bounded.</p>':'')+
+    '<h3>Queued items requiring owner review ('+(admitted?admitted.queued_requires_owner_review:'unknown global count')+')</h3>'+
+    (admitted?.review_items?.length?'<div class="service-list">'+admitted.review_items.filter(item=>
+      ids.has(item.project_id)&&(!focus||item.project_id===focus)).slice(0,8).map(item=>
+      '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+esc(item.project_id)+
+      '</strong><br><small>'+esc(item.reason)+'</small></div><small>Not claimed</small></div>').join('')+
+      '</div>':'<p class="detail-note">No review item in bounded snapshot; source may be partial.</p>')+
+    '<h3>Queue recovery workorders · independently observed</h3>'+
+    '<p class="detail-note">Retry observer: '+
+    (retry?(retryCovered?esc(date(retry.observedAt,true))+
+      (retryStale?' · STALE >6H':'')+
+      (retry.complete?' · bounded sample complete':' · PARTIAL sampled rows'):
+      'NO COVERAGE for the selected project'):'NOT OBSERVED')+
+    '. Claim attempts are not failures and do not authorize worker/CI retry.</p>'+
+    '<p class="detail-note">'+esc(recoveryTrendText)+'</p>'+
+    (increasingRetryProjects.length?'<div class="service-list">'+increasingRetryProjects.slice(0,4).map(item=>
+      '<div class="service-row"><strong>'+esc(item.project)+'</strong>'+
+      '<small>Observed high-attempt items '+item.before+' → '+item.after+
+      ' (+'+item.delta+'); owner/cause unverified</small></div>').join('')+'</div>':'')+
+    (retryRows?'<div class="service-list">'+retryRows+'</div>':
+     '<p class="detail-note">No source-bound workorder for this project. '+
+     'Use Read VPS queue in the separate queue retry panel below; absence is not recovery proof.</p>')+
+    (retryOrders.length>5?'<p class="detail-note">'+(retryOrders.length-5)+
+      ' other bounded groups: choose a project or open queue retry incidents below.</p>':'')+
+    '<h3>Queued product candidates ('+(admitted?admitted.queued_product_candidates:'unknown global count')+')</h3>'+
+    (queueRows?'<div class="service-list">'+queueRows+'</div>':
+     '<p class="detail-note">No candidate shown. Queue access, project coverage or remaining pages may be missing.</p>')+
+    '<p class="detail-note">Queue and GitHub records are NOT joined as a verified claim. A PR mention does not confer ownership; green CI is not a merge; merge is not deploy. Active human approvals, runner health and release gates remain separate.</p>'+
+    '</section>';
+}
+
+
+/* zSentinel issue #677 — local, explicitly imported retry incident evidence.
+ * JSON is validated and normalized; no server mutations or claim authorization.
+ * The companion offline CLI is in PR #1555. */
+let ZSENTINEL_RETRY_SNAPSHOT=null,ZSENTINEL_RETRY_TREND=null,ZSENTINEL_RETRY_MESSAGE='';
+let ZSENTINEL_RETRY_BUSY=false;
+let ZSENTINEL_RETRY_EXPANDED_ITEMS=false,ZSENTINEL_RETRY_EXPANDED_MOVEMENT=false;
+function retryKnownProjects(){
+  const active=Array.isArray(DATA?.projects)?DATA.projects:[];
+  const archived=Array.isArray(DATA?.archived_projects)?DATA.archived_projects:[];
+  return new Set([...active,...archived].map(project=>project.id));
+}
+function retryTime(value){
+  return typeof value==='string'&&value.length<=45&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)
+    &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value))
+    &&Date.parse(value)<=Date.now()+120000;
+}
+function retryLeaseTime(value){
+  // Lease deadlines can legitimately be later than the report observation.
+  // Unlike source timestamps they must NOT be capped at now + 2 minutes.
+  return typeof value==='string'&&value.length<=45
+    &&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)
+    &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value));
+}
+function retryScope(raw){
+  const known=retryKnownProjects();
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)
+    ||typeof raw.project!=='string'||(raw.project!=='all'&&!known.has(raw.project))
+    ||!Number.isSafeInteger(raw.minimum_claim_attempts)
+    ||raw.minimum_claim_attempts<1||raw.minimum_claim_attempts>1000)
+    throw Error('Invalid project/threshold scope');
+  return {project:raw.project,minimum_claim_attempts:raw.minimum_claim_attempts};
+}
+function retryCount(number){return Number.isSafeInteger(number)&&number>=0}
+function validateRetryIncident(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)
+    ||raw.schema!=='zsentinel-retry-incident-v1'
+    ||!retryTime(raw.observed_at_utc)
+    ||!raw.coverage||raw.coverage.database_read_only!==true
+    ||raw.coverage.safe_to_authorize_retry!==false
+    ||raw.coverage.attempts_count_claims_not_failures!==true
+    ||raw.coverage.requires_release_owner_for_mutations!==true
+    ||!Number.isSafeInteger(raw.coverage.sample_limit)
+    ||raw.coverage.sample_limit<1||raw.coverage.sample_limit>100
+    ||typeof raw.coverage.sample_is_complete!=='boolean'
+    ||!Array.isArray(raw.project_groups)||raw.project_groups.length>300
+    ||!Array.isArray(raw.high_attempt_samples)
+    ||raw.high_attempt_samples.length>raw.coverage.sample_limit)throw Error('Unknown or unsafe retry snapshot');
+  const scope=retryScope(raw.scope), known=retryKnownProjects();
+  const fields=['active_items','high_attempt_items','ten_plus_items','expired_active_leases','max_claim_attempts'];
+  if(!raw.totals||fields.some(k=>!retryCount(raw.totals[k]))
+    ||raw.totals.high_attempt_items>raw.totals.active_items
+    ||raw.totals.ten_plus_items>raw.totals.active_items
+    ||raw.totals.expired_active_leases>raw.totals.active_items)throw Error('Invalid retry totals');
+  const groups=[],byProject={};
+  for(const item of raw.project_groups){
+    if(!item||!known.has(item.project_id)||scope.project!=='all'&&item.project_id!==scope.project
+      ||!['P0','P1','P2','P3'].includes(item.priority)
+      ||!['queued','claimed','running','verifying'].includes(item.status)
+      ||['items','eligible_items','high_attempts','ten_plus','max_attempts','expired_lease_rows']
+        .some(k=>!retryCount(item[k]))
+      ||item.high_attempts>item.items||item.ten_plus>item.items
+      ||item.expired_lease_rows>item.items)throw Error('Invalid retry project group');
+    groups.push({project:item.project_id,priority:item.priority,status:item.status,
+      items:item.items,eligible:item.eligible_items,tenPlus:item.ten_plus,
+      maxAttempts:item.max_attempts,high:item.high_attempts,
+      expired:item.expired_lease_rows});
+    byProject[item.project_id]=(byProject[item.project_id]||0)+item.high_attempts;
+  }
+  if(groups.reduce((total,item)=>total+item.items,0)!==raw.totals.active_items
+    ||groups.reduce((total,item)=>total+item.high,0)!==raw.totals.high_attempt_items)
+    throw Error('Retry counts do not match group coverage');
+  const refs=new Set(),rows=[];
+  for(const item of raw.high_attempt_samples){
+    if(!item||!known.has(item.project)||scope.project!=='all'&&item.project!==scope.project
+      ||!['P0','P1','P2','P3'].includes(item.priority)
+      ||!['queued','claimed','running','verifying'].includes(item.status)
+      ||typeof item.queue_ref!=='string'||!/^[0-9a-f]{16}$/.test(item.queue_ref)
+      ||refs.has(item.queue_ref)||!retryCount(item.attempts)
+      ||item.attempts<scope.minimum_claim_attempts||typeof item.eligible!=='boolean'
+      ||!retryTime(item.updated_at)||item.title!==undefined||item.queue_id!==undefined
+      ||(item.lease_expires_at!==null&&!retryLeaseTime(item.lease_expires_at)))
+      throw Error('Invalid, duplicate or sensitive retry item');
+    refs.add(item.queue_ref);
+    rows.push({project:item.project,priority:item.priority,status:item.status,
+      ref:item.queue_ref,attempts:item.attempts,eligible:item.eligible,
+      updatedAt:item.updated_at,leaseExpires:item.lease_expires_at,
+      action:item.status==='queued'?'Investigate claim cycles; do not auto-retry.':
+        'Respect current owner; inspect assignment and lease evidence.'});
+  }
+  if(rows.length>raw.totals.high_attempt_items)throw Error('Retry sample exceeds reported totals');
+  rows.sort((a,b)=>({P0:0,P1:1,P2:2,P3:3}[a.priority]-{P0:0,P1:1,P2:2,P3:3}[b.priority])
+    ||b.attempts-a.attempts);
+  return {observedAt:raw.observed_at_utc,scope,totals:raw.totals,rows,
+    groups,highByProject:byProject,complete:raw.coverage.sample_is_complete,
+    sampleLimit:raw.coverage.sample_limit};
+}
+function validateRetryTrend(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)
+    ||raw.schema!=='zsentinel-retry-trend-v1'||raw.non_authorizing!==true
+    ||!retryTime(raw.before_utc)||!retryTime(raw.after_utc)
+    ||Date.parse(raw.after_utc)<=Date.parse(raw.before_utc)
+    ||!Array.isArray(raw.projects)||raw.projects.length>80||!raw.metrics)
+    throw Error('Invalid retry trend');
+  const scope=retryScope(raw.scope),known=retryKnownProjects(),projects=[],seen=new Set();
+  for(const item of raw.projects){
+    if(!item||!known.has(item.project)||seen.has(item.project)
+      ||scope.project!=='all'&&item.project!==scope.project
+      ||!retryCount(item.before_high_attempts)||!retryCount(item.after_high_attempts)
+      ||!Number.isSafeInteger(item.delta)
+      ||item.delta!==item.after_high_attempts-item.before_high_attempts)
+      throw Error('Invalid retry trend project');
+    seen.add(item.project);projects.push({project:item.project,
+      before:item.before_high_attempts,after:item.after_high_attempts,delta:item.delta});
+  }
+  const metrics={};
+  for(const name of ['active_items','high_attempt_items','ten_plus_items','expired_active_leases','max_claim_attempts']){
+    const v=raw.metrics[name];
+    if(!v||!retryCount(v.before)||!retryCount(v.after)
+      ||!Number.isSafeInteger(v.delta)||v.delta!==v.after-v.before)
+      throw Error('Invalid retry trend totals');
+    metrics[name]={before:v.before,after:v.after,delta:v.delta};
+  }
+  // Optional extended evidence from zsentinel_retry_trend.py. Preserve legacy
+  // aggregate-only imports; fail closed when an extended payload is malformed.
+  let sampleCoverage=null,recordChanges=[];
+  if(raw.sample_coverage!==undefined||raw.record_changes!==undefined){
+    const c=raw.sample_coverage,changes=raw.record_changes;
+    const numbers=['previous_sampled','current_sampled','matched_samples',
+      'only_previous_sample','only_current_sample',
+      'matched_rows_with_increased_claim_cycles','known_increase_in_claim_cycles'];
+    if(!c||typeof c!=='object'||!Array.isArray(changes)||changes.length>100
+      ||numbers.some(k=>!retryCount(c[k]))
+      ||typeof c.both_samples_complete!=='boolean'
+      ||c.not_in_both_samples_is_not_completion!==true
+      ||c.previous_sampled>100||c.current_sampled>100
+      ||c.matched_samples>Math.min(c.previous_sampled,c.current_sampled)
+      ||c.only_previous_sample!==c.previous_sampled-c.matched_samples
+      ||c.only_current_sample!==c.current_sampled-c.matched_samples)
+      throw Error('Invalid retry sample movement coverage');
+    const refs=new Set();
+    for(const row of changes){
+      if(!row||typeof row.queue_ref!=='string'||!/^[0-9a-f]{16}$/.test(row.queue_ref)
+        ||refs.has(row.queue_ref)||!known.has(row.project)
+        ||scope.project!=='all'&&row.project!==scope.project
+        ||!['P0','P1','P2','P3'].includes(row.priority_before)
+        ||!['P0','P1','P2','P3'].includes(row.priority_after)
+        ||!['queued','claimed','running','verifying'].includes(row.status_before)
+        ||!['queued','claimed','running','verifying'].includes(row.status_after)
+        ||!retryCount(row.attempts_before)||!retryCount(row.attempts_after)
+        ||!Number.isSafeInteger(row.claim_cycle_delta)
+        ||row.claim_cycle_delta!==row.attempts_after-row.attempts_before
+        ||!['claim_cycles_increased','claim_counter_decreased_review',
+             'status_changed','priority_changed'].includes(row.observation)
+        ||(row.claim_cycle_delta>0)!==(row.observation==='claim_cycles_increased')
+        ||(row.claim_cycle_delta<0)!==(row.observation==='claim_counter_decreased_review')
+        ||row.claim_cycle_delta===0&&row.status_before===row.status_after
+          &&row.priority_before===row.priority_after)
+        throw Error('Invalid retry record movement');
+      refs.add(row.queue_ref);
+      recordChanges.push({ref:row.queue_ref,project:row.project,
+        priority:row.priority_after,beforePriority:row.priority_before,
+        beforeStatus:row.status_before,afterStatus:row.status_after,
+        beforeAttempts:row.attempts_before,afterAttempts:row.attempts_after,
+        delta:row.claim_cycle_delta,observation:row.observation});
+    }
+    if(changes.length>c.matched_samples
+      ||c.matched_rows_with_increased_claim_cycles!==recordChanges.filter(r=>r.delta>0).length
+      ||c.known_increase_in_claim_cycles!==recordChanges.reduce((n,r)=>n+Math.max(0,r.delta),0))
+      throw Error('Retry movement does not match coverage');
+    sampleCoverage={...Object.fromEntries(numbers.map(k=>[k,c[k]])),
+      bothSamplesComplete:c.both_samples_complete};
+  }
+  return {before:raw.before_utc,after:raw.after_utc,scope,projects,metrics,
+    sampleCoverage,recordChanges};
+}
+
+function retrySameScope(a,b){
+  return a?.scope?.project===b?.scope?.project
+    &&a?.scope?.minimum_claim_attempts===b?.scope?.minimum_claim_attempts;
+}
+function retryTrendMatchesSnapshot(trend,snapshot){
+  return !trend||!snapshot||(retrySameScope(trend,snapshot)
+    &&Date.parse(trend.after)===Date.parse(snapshot.observedAt));
+}
+function retryTrendFromSnapshots(before,after){
+  if(!before||!after||!retrySameScope(before,after)
+    ||Date.parse(after.observedAt)<=Date.parse(before.observedAt))return null;
+  const metrics={},names=['active_items','high_attempt_items','ten_plus_items',
+    'expired_active_leases','max_claim_attempts'];
+  for(const key of names){
+    const earlier=before.totals[key],later=after.totals[key];
+    metrics[key]={before:earlier,after:later,delta:later-earlier};
+  }
+  const projects=[];
+  for(const project of new Set([...Object.keys(before.highByProject),...Object.keys(after.highByProject)])){
+    const a=before.highByProject[project]||0,b=after.highByProject[project]||0;
+    projects.push({project,before:a,after:b,delta:b-a});
+  }
+  projects.sort((a,b)=>b.delta-a.delta||a.project.localeCompare(b.project));
+  const earlier=new Map(before.rows.map(r=>[r.ref,r]));
+  const later=new Map(after.rows.map(r=>[r.ref,r]));
+  const matched=[...later.keys()].filter(ref=>earlier.has(ref));
+  const recordChanges=[];
+  for(const ref of matched){
+    const a=earlier.get(ref),b=later.get(ref),delta=b.attempts-a.attempts;
+    if(a.project!==b.project)throw Error('Ambiguous queue reference across snapshots');
+    if(!delta&&a.status===b.status&&a.priority===b.priority)continue;
+    recordChanges.push({ref,project:b.project,priority:b.priority,beforePriority:a.priority,
+      beforeStatus:a.status,
+      afterStatus:b.status,beforeAttempts:a.attempts,afterAttempts:b.attempts,delta,
+      observation:delta>0?'claim_cycles_increased':delta<0?'claim_counter_decreased_review':
+        a.status!==b.status?'status_changed':'priority_changed'});
+  }
+  recordChanges.sort((a,b)=>
+    ({P0:0,P1:1,P2:2,P3:3}[a.priority]-{P0:0,P1:1,P2:2,P3:3}[b.priority])
+    ||b.delta-a.delta||a.project.localeCompare(b.project));
+  const sampleCoverage={
+    previous_sampled:earlier.size,current_sampled:later.size,matched_samples:matched.length,
+    only_previous_sample:earlier.size-matched.length,
+    only_current_sample:later.size-matched.length,
+    matched_rows_with_increased_claim_cycles:recordChanges.filter(r=>r.delta>0).length,
+    known_increase_in_claim_cycles:recordChanges.reduce((n,r)=>n+Math.max(0,r.delta),0),
+    bothSamplesComplete:before.complete&&after.complete,
+  };
+  return {before:before.observedAt,after:after.observedAt,scope:after.scope,
+    projects,metrics,sampleCoverage,recordChanges};
+}
+
+async function retryReadJsonFile(file){
+  if(!file||file.size<2||file.size>1024*1024)
+    throw Error('Each JSON file must be 2 bytes to 1 MiB');
+  return JSON.parse(await file.text());
+}
+async function importRetrySnapshots(files){
+  // One or two explicit operator-selected snapshots, never hidden polling.
+  // Stage ALL validation before touching the currently visible evidence.
+  if(files.length<1||files.length>2)throw Error('Select one or two snapshot JSON files');
+  const snapshots=[];
+  for(const file of files)snapshots.push(validateRetryIncident(await retryReadJsonFile(file)));
+  snapshots.sort((a,b)=>Date.parse(a.observedAt)-Date.parse(b.observedAt));
+  if(snapshots.length===2){
+    const [before,after]=snapshots;
+    if(!retrySameScope(before,after))throw Error('Snapshots have different project or threshold scope');
+    if(Date.parse(before.observedAt)>=Date.parse(after.observedAt))
+      throw Error('Two snapshots need distinct, increasing observation times');
+    const trend=retryTrendFromSnapshots(before,after);
+    if(!trend)throw Error('Snapshots cannot form a comparable trend');
+    ZSENTINEL_RETRY_SNAPSHOT=after;ZSENTINEL_RETRY_TREND=trend;
+    ZSENTINEL_RETRY_MESSAGE='Compared two operator-selected queue snapshots from '+
+      date(before.observedAt,true)+' to '+date(after.observedAt,true)+
+      '; per-item movement is limited to matched sampled queue refs. No claims changed.';
+    return;
+  }
+  const fresh=snapshots[0],previous=ZSENTINEL_RETRY_SNAPSHOT;
+  if(previous&&retrySameScope(previous,fresh)
+    &&Date.parse(fresh.observedAt)<=Date.parse(previous.observedAt)){
+    throw Error('Snapshot is not newer for this scope; clear evidence or select two snapshots');
+  }
+  const trend=retryTrendFromSnapshots(previous,fresh);
+  ZSENTINEL_RETRY_SNAPSHOT=fresh;ZSENTINEL_RETRY_TREND=trend;
+  ZSENTINEL_RETRY_MESSAGE=trend?
+    'Compared this snapshot with the previous same-scope observation; matched item movement displayed.':
+    'Imported one queue snapshot; import a newer same-scope snapshot to compare. Existing unrelated trend cleared.';
+}
+async function importRetryTrend(file){
+  const trend=validateRetryTrend(await retryReadJsonFile(file));
+  if(!retryTrendMatchesSnapshot(trend,ZSENTINEL_RETRY_SNAPSHOT))
+    throw Error('Trend scope or ending time differs from displayed queue snapshot; clear evidence first');
+  if(ZSENTINEL_RETRY_TREND&&retrySameScope(trend,ZSENTINEL_RETRY_TREND)
+      &&Date.parse(trend.after)<=Date.parse(ZSENTINEL_RETRY_TREND.after))
+    throw Error('Trend is not newer for this scope; clear existing evidence to import older history');
+  ZSENTINEL_RETRY_TREND=trend;
+  ZSENTINEL_RETRY_MESSAGE='Source-bound offline retry trend imported; no worker or queue changes.';
+}
+
+async function readVpsRetryIncidents(){
+  if(ZSENTINEL_RETRY_BUSY||route!=='activity')return;
+  const version=routeVersion,project=filter||'all';
+  ZSENTINEL_RETRY_BUSY=true;ZSENTINEL_RETRY_MESSAGE='Reading trusted VPS queue source…';render();
+  try{
+    const response=await api('/api/queue-retry-incidents?project='+encodeURIComponent(project),10000);
+    if(routeVersion!==version||(filter||'all')!==project)return;
+    const fresh=validateRetryIncident(response);
+    if(fresh.scope.project!==project)throw Error('VPS response scope mismatch');
+    const previous=ZSENTINEL_RETRY_SNAPSHOT;
+    if(previous&&retrySameScope(previous,fresh)
+       &&Date.parse(fresh.observedAt)<=Date.parse(previous.observedAt))
+      throw Error('Trusted source observation is not newer; current evidence retained');
+    // Compare only two explicit operator reads of the same scope. No poll.
+    const trend=retryTrendFromSnapshots(previous,fresh);
+    ZSENTINEL_RETRY_SNAPSHOT=fresh;
+    ZSENTINEL_RETRY_TREND=trend;
+    ZSENTINEL_RETRY_MESSAGE='Trusted VPS queue snapshot read at '+date(fresh.observedAt,true)+
+      '. '+(trend?'Change since previous operator read is shown.':'A second manual read can show movement.')+
+      ' No worker state changed.';
+  }catch(error){
+    if(routeVersion===version&&(filter||'all')===project)
+      ZSENTINEL_RETRY_MESSAGE=String(error.message||'').includes('not newer')?
+        'VPS supplied no newer queue observation; existing source evidence retained.':
+        'VPS retry source unavailable or denied ('+
+        (String(error.message||'').includes('403')?'management access required':
+         String(error.message||'').includes('503')?'queue read incomplete':'unverified response')+
+        '). Existing evidence preserved; offline import remains available.';
+  }finally{ZSENTINEL_RETRY_BUSY=false;if(route==='activity')render()}
+}
+
+/* Real #677 operator handoff from grouped observed counts, never claim authority. */
+function retryOwnerWorkorders(snap,selected){
+  if(!snap||(selected&&snap.scope.project!=='all'&&snap.scope.project!==selected))return [];
+  const groups=new Map();
+  for(const item of snap.groups){
+    if(item.high<1||(selected&&item.project!==selected))continue;
+    const key=item.project+'/'+item.priority;
+    if(!groups.has(key))groups.set(key,{
+      project:item.project,priority:item.priority,high:0,queued:0,owned:0,expired:0});
+    const row=groups.get(key);row.high+=item.high;
+    if(item.status==='queued')row.queued+=item.high;else row.owned+=item.high;
+    row.expired+=item.expired;
+  }
+  const stale=Date.now()-Date.parse(snap.observedAt)>6*3600000;
+  return [...groups.values()].sort((a,b)=>
+    ({P0:0,P1:1,P2:2,P3:3}[a.priority]-{P0:0,P1:1,P2:2,P3:3}[b.priority])
+    ||b.high-a.high||a.project.localeCompare(b.project)).map(row=>({
+    ...row,
+    problem:row.high+' high-attempt item(s): '+row.owned+' observed owned, '+
+      row.queued+' queued, '+row.expired+' potentially expired lease rows.',
+    action:row.owned||row.expired?
+      'Check current worker, Notion and queue ownership before intervention.':
+      'Ask runtime owner to classify claim/requeue churn; do not automatically retry.',
+    status:stale?'STALE — REFRESH REQUIRED':
+      !snap.complete?'PARTIAL SAMPLE — OWNER REVIEW':'OWNER REVIEW REQUIRED',
+    coverage:snap.complete?'bounded sample complete':'bounded sample partial',
+  }));
+}
+
+function zSentinelRetryPanel(){
+  const snap=ZSENTINEL_RETRY_SNAPSHOT,trend=ZSENTINEL_RETRY_TREND;
+  const project=filter,known=retryKnownProjects();
+  const samples=(snap?.rows||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
+  const groups=(snap?.groups||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
+  const changed=(trend?.projects||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
+  const observedRows=(trend?.recordChanges||[]).filter(r=>known.has(r.project)
+    &&(!project||r.project===project));
+  const stale=snap&&Date.now()-Date.parse(snap.observedAt)>6*3600000;
+  const trendStale=trend&&Date.now()-Date.parse(trend.after)>6*3600000;
+  const trendCovered=!project||(trend&&(trend.scope.project==='all'||trend.scope.project===project));
+  const scopedCount=groups.reduce((n,g)=>n+g.high,0);
+  const projectCovered=!project||(snap&&(snap.scope.project==='all'||snap.scope.project===project));
+  const totals=snap?(projectCovered?(project?scopedCount:snap.totals.high_attempt_items):'unknown'):'unknown';
+  const ownerOrders=retryOwnerWorkorders(snap,project);
+  return '<section class="panel" id="zSentinelRetryPanel"><div class="panel-header"><div>'+
+    '<h2>zSentinel · queue retry incidents</h2><p class="panel-subtitle">'+
+    'Import local, read-only queue snapshots and trend evidence; never assign, retry or release from this view.</p></div>'+
+    '<button type="button" class="runner-action" data-retry-vps-read '+
+    (ZSENTINEL_RETRY_BUSY?'disabled aria-busy="true"':'')+'>'+
+    (ZSENTINEL_RETRY_BUSY?'Reading VPS…':'Read VPS queue')+'</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-handoff '+
+    (!snap&&!trend?'disabled':'')+'>Export retry handoff .md</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-workorders-json '+
+    (!snap?'disabled':'')+'>Export owner workorders .json</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-trend-json '+
+    (!trend?'disabled':'')+'>Export offline trend .json</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-retry-snapshot-json '+
+    (!snap?'disabled':'')+'>Export snapshot .json</button>'+
+    '<button type="button" class="runner-action" data-retry-clear '+
+    (!snap&&!trend?'disabled':'')+'>Clear imported evidence</button></div>'+
+    '<label for="zSentinelRetryReceiptFile">One or two queue snapshot JSON files (before / after)</label> '+
+    '<input id="zSentinelRetryReceiptFile" type="file" multiple accept=".json,application/json" aria-label="Import up to two bounded zSentinel retry incident snapshots"> '+
+    '<label for="zSentinelRetryTrendFile">Optional trend JSON</label> '+
+    '<input id="zSentinelRetryTrendFile" type="file" accept=".json,application/json" aria-label="Import zSentinel retry trend">'+
+    '<p role="status" aria-live="polite" class="detail-note">'+
+    esc(ZSENTINEL_RETRY_MESSAGE||(snap?'Snapshot '+date(snap.observedAt,true)+
+      ' · '+snap.rows.length+' sampled incidents · '+(snap.complete?'sample marked complete':'partial sample')+
+      (stale?' · STALE (>6h)':''):'No retry data imported.'))+'</p>'+
+    (snap&&projectCovered?'<h3>Recovery owner workorders ('+ownerOrders.length+
+      ' project/priority groups)</h3>'+
+      '<p class="detail-note">Read-only grouped queue evidence; no failure classification, '+
+      'claim takeover, retry or release authorization.</p><div class="service-list">'+
+      (ownerOrders.slice(0,12).map(row=>
+        '<div class="service-row"><div><strong>Problem · '+esc(row.priority)+
+        ' · '+esc(row.project)+'</strong><br><small>'+esc(row.problem)+'</small>'+
+        '<br><strong>Action · </strong><small>'+esc(row.action)+'</small>'+
+        '<br><strong>Status · </strong><small>'+esc(row.status)+
+        ' · '+esc(row.coverage)+'</small></div></div>').join('')||
+        '<p class="detail-note">No high-attempt group in this observed source scope; historical state unknown.</p>')+
+      (ownerOrders.length>12?'<p class="detail-note">First 12 of '+ownerOrders.length+
+        ' groups shown; filter by project for more.</p>':'')+'</div>':'')+
+    (snap?'<h3>Observed high-attempt queue items: '+totals+
+      (project?' in '+esc(project):' across canonical projects')+'</h3>'+
+      '<p class="detail-note">Claims are NOT failures. Source '+esc(date(snap.observedAt,true))+
+      (stale?' (stale)':'')+' · threshold '+snap.scope.minimum_claim_attempts+
+      ' · bounded '+snap.rows.length+'/'+snap.sampleLimit+' sample. '+
+      (!projectCovered?'NO COVERAGE FOR SELECTED PROJECT — count unknown; import its source or select All projects.':
+        'Owner and lease status are not independently verified.')+
+      '</p><div class="service-list">'+
+      (samples.slice(0,ZSENTINEL_RETRY_EXPANDED_ITEMS?100:12).map(item=>'<div class="service-row"><div><strong>'+
+        esc(item.priority)+' · '+esc(item.project)+' · '+item.attempts+' claim cycles</strong><br>'+
+        '<small>'+esc(item.status)+' · '+esc(item.ref)+' · '+esc(item.action)+'</small></div>'+
+        '<small>'+esc(date(item.updatedAt,true))+'</small></div>').join('')||
+        '<p class="detail-note">No sample for current project. This does not prove zero incidents.</p>')+
+      (samples.length>12?'<button type="button" class="runner-action runner-action-secondary" data-retry-items-expand>'+
+        (ZSENTINEL_RETRY_EXPANDED_ITEMS?'Show first 12 items':'Show all '+samples.length+' sampled items')+'</button>':'')+
+      '</div>':'')+
+    (trend?'<h3>Retry movement (offline snapshots)</h3>'+
+      '<p class="detail-note">'+esc(date(trend.before,true))+' → '+esc(date(trend.after,true))+
+      (trendStale?' · STALE (>6h)':'')+
+      (trendCovered?' · scoped to '+esc(trend.scope.project):' · NO COVERAGE for selected project')+
+      '. Counts describe observed queue state, not confirmed failures or recovery.</p>'+
+      '<div class="service-list">'+(changed.slice(0,18).map(item=>
+        '<div class="service-row"><div><strong>'+esc(item.project)+
+        '</strong><br><small>High-attempt items '+item.before+' → '+item.after+
+        '</small></div><strong>'+esc(item.delta>0?'+'+item.delta:String(item.delta))+
+        '</strong></div>').join('')||
+        '<p class="detail-note">'+(trendCovered?'No movement in available project sample.':'Project movement unknown: imported trend covers another scope.')+'</p>')+
+      '</div>':'')+
+    (trend?.sampleCoverage?'<h3>Matched individual queue items</h3>'+
+      '<p class="detail-note">Compared '+trend.sampleCoverage.matched_samples+' opaque references · '+
+      trend.sampleCoverage.matched_rows_with_increased_claim_cycles+
+      ' matched items gained '+trend.sampleCoverage.known_increase_in_claim_cycles+
+      ' claim cycles. Earlier-only '+trend.sampleCoverage.only_previous_sample+
+      ' · later-only '+trend.sampleCoverage.only_current_sample+
+      '. '+(trend.sampleCoverage.bothSamplesComplete?'Both bounded samples marked complete.':
+        'PARTIAL: one or both bounded samples may omit items.')+
+      ' Disappearance from a sample never proves completion.</p>'+
+      '<div class="service-list">'+
+      (observedRows.slice(0,ZSENTINEL_RETRY_EXPANDED_MOVEMENT?100:12).map(row=>'<div class="service-row"><div><strong>'+
+        esc(row.priority)+' · '+esc(row.project)+' · '+esc(row.ref)+
+        '</strong><br><small>'+esc(row.beforeStatus)+' → '+esc(row.afterStatus)+
+        ' · '+row.beforeAttempts+' → '+row.afterAttempts+' claims ('+
+        esc(row.delta>0?'+'+row.delta:String(row.delta))+') · '+esc(row.observation)+
+        '</small></div></div>').join('')||
+        '<p class="detail-note">No changed items in the matched sample; does not prove no churn.</p>')+
+      (observedRows.length>12?'<button type="button" class="runner-action runner-action-secondary" data-retry-movement-expand>'+
+        (ZSENTINEL_RETRY_EXPANDED_MOVEMENT?'Show first 12 changes':'Show all '+observedRows.length+' matched changes')+'</button>':'')+
+      '</div>':'')+
+    '<p class="detail-note">Local browser memory only. No upload, auto-polling, credential storage, queue write, claim takeover or retry dispatch. '+
+    '<a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue retry issue #677</a>.</p></section>';
+}
+function exportRetrySnapshotJson(){
+  // Canonical safe subset of one explicitly observed, validated snapshot.
+  // Deliberately never copies the untrusted raw response or its extra fields.
+  const snap=ZSENTINEL_RETRY_SNAPSHOT;
+  if(!snap)return;
+  const report={
+    schema:'zsentinel-retry-incident-v1',
+    observed_at_utc:snap.observedAt,
+    scope:{...snap.scope},
+    coverage:{
+      active_queue_states_only:['queued','claimed','running','verifying'],
+      sample_limit:snap.sampleLimit,
+      sample_is_complete:snap.complete,
+      database_read_only:true,safe_to_authorize_retry:false,
+      attempts_count_claims_not_failures:true,
+      requires_release_owner_for_mutations:true
+    },
+    totals:Object.fromEntries(['active_items','high_attempt_items','ten_plus_items',
+      'expired_active_leases','max_claim_attempts'].map(key=>[key,snap.totals[key]])),
+    project_groups:snap.groups.map(row=>({
+      project_id:row.project,priority:row.priority,status:row.status,
+      items:row.items,eligible_items:row.eligible,high_attempts:row.high,
+      ten_plus:row.tenPlus,max_attempts:row.maxAttempts,
+      expired_lease_rows:row.expired,
+      interpretation:row.high===0?'no-high-attempts-observed':
+        row.status==='queued'?'candidate-for-manual-retry-policy-review':
+        'requires-owner-review: active claim/lease'
+    })),
+    high_attempt_samples:snap.rows.map(row=>({
+      queue_ref:row.ref,project:row.project,priority:row.priority,status:row.status,
+      attempts:row.attempts,eligible:row.eligible,updated_at:row.updatedAt,
+      lease_expires_at:row.leaseExpires,operator_action:row.action
+    })),
+    operator_note:'Explicit operator observation only; claim attempts are not proven failures and never grant retry, release or worker ownership.'
+  };
+  const blob=new Blob([JSON.stringify(report,null,2)+'\n'],{type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;
+  link.download='zsentinel-retry-snapshot-'+snap.scope.project+'-'+
+    snap.observedAt.slice(0,19).replace(/[:]/g,'-')+'.json';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportRetryTrendJson(){
+  // Explicit client-side export from previously validated evidence.
+  // No stored raw queue identities, titles, prompt text, credentials or API calls.
+  const trend=ZSENTINEL_RETRY_TREND;
+  if(!trend||!retryTrendMatchesSnapshot(trend,ZSENTINEL_RETRY_SNAPSHOT))return;
+  const coverage=trend.sampleCoverage;
+  const raw={
+    schema:'zsentinel-retry-trend-v1',before_utc:trend.before,after_utc:trend.after,
+    scope:{...trend.scope},
+    metrics:Object.fromEntries(Object.entries(trend.metrics).map(([key,row])=>[
+      key,{before:row.before,after:row.after,delta:row.delta}])),
+    projects:trend.projects.map(row=>({
+      project:row.project,before_high_attempts:row.before,
+      after_high_attempts:row.after,delta:row.delta})),
+    worsening_projects:trend.projects.filter(row=>row.delta>0).length,
+    non_authorizing:true,
+    notes:'Operator-observed queue claim cycles, not confirmed failures. Missing sample rows are not completed tasks, and this JSON grants no retry or claim authority.'
+  };
+  if(coverage){
+    raw.sample_coverage={
+      previous_sampled:coverage.previous_sampled,
+      current_sampled:coverage.current_sampled,
+      matched_samples:coverage.matched_samples,
+      only_previous_sample:coverage.only_previous_sample,
+      only_current_sample:coverage.only_current_sample,
+      both_samples_complete:coverage.bothSamplesComplete,
+      matched_rows_with_increased_claim_cycles:coverage.matched_rows_with_increased_claim_cycles,
+      known_increase_in_claim_cycles:coverage.known_increase_in_claim_cycles,
+      not_in_both_samples_is_not_completion:true,
+    };
+    raw.record_changes=(trend.recordChanges||[]).slice(0,100).map(row=>({
+      queue_ref:row.ref,project:row.project,
+      priority_before:row.beforePriority,priority_after:row.priority,
+      status_before:row.beforeStatus,status_after:row.afterStatus,
+      attempts_before:row.beforeAttempts,attempts_after:row.afterAttempts,
+      claim_cycle_delta:row.delta,observation:row.observation
+    }));
+  }
+  const payload=JSON.stringify(raw,null,2)+'\n';
+  const blob=new Blob([payload],{type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='zsentinel-retry-trend-'+String(trend.scope.project).replace(/[^a-z0-9_-]/g,'')+'.json';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportRetryWorkordersJson(){
+  // Bounded human handoff of already-validated groups; no raw queue identifiers.
+  const snap=ZSENTINEL_RETRY_SNAPSHOT;
+  if(!snap)return;
+  const selected=filter||null, covered=!selected||snap.scope.project==='all'
+    ||snap.scope.project===selected;
+  const rows=retryOwnerWorkorders(snap,selected);
+  const report={
+    schema:'zsentinel-queue-owner-workorders-v1',
+    generated_at_utc:new Date().toISOString(),observed_at_utc:snap.observedAt,
+    source_scope:{...snap.scope},selected_project:selected||'all',
+    source_covers_selection:covered,source_sample_complete:snap.complete,
+    source_stale:Date.now()-Date.parse(snap.observedAt)>6*3600000,
+    workorder_count:rows.length,workorders_truncated:rows.length>64,
+    workorders:rows.slice(0,64).map(row=>({
+      project:row.project,priority:row.priority,
+      observed_high_attempt_items:row.high,
+      observed_owned_high_attempt_items:row.owned,
+      observed_queued_high_attempt_items:row.queued,
+      expired_active_lease_rows_in_group:row.expired,
+      problem:row.problem,action:row.action,status:row.status,
+      coverage:row.coverage,manual_review_required:true,
+      owner_identity_verified:false,
+    })),
+    claim_attempts_are_not_failures:true,active_claims_independently_verified:false,
+    current_github_notion_ownership_verified:false,
+    authorizes_retry:false,authorizes_claim:false,authorizes_merge:false,
+    authorizes_deploy:false,actions_executed:false,
+  };
+  const blob=new Blob([JSON.stringify(report,null,2)+'\n'],
+    {type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='zsentinel-owner-workorders-'+
+    (selected||'portfolio')+'-'+snap.observedAt.slice(0,10)+'.json';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function exportRetryHandoff(){
+  if(!ZSENTINEL_RETRY_SNAPSHOT&&!ZSENTINEL_RETRY_TREND)return;
+  const snap=ZSENTINEL_RETRY_SNAPSHOT,trend=ZSENTINEL_RETRY_TREND,known=retryKnownProjects();
+  const clean=value=>String(value??'').replace(/[\r\n<>|]/g,' ').slice(0,160);
+  const lines=['# zSentinel queue retry incident handoff','',
+    'LOCAL SNAPSHOT ONLY · No retry/claim/release authorization. Confirm current Notion ownership and required CI gates.',''];
+  if(snap){
+    lines.push('Observed at: '+clean(snap.observedAt),
+      'Project scope: '+clean(snap.scope.project),
+      'Claim-attempt threshold: '+snap.scope.minimum_claim_attempts,
+      'Sample complete: '+snap.complete,
+      'High-attempt items: '+snap.totals.high_attempt_items,'',
+      '## Recovery owner workorders (advisory only)','');
+    const orders=retryOwnerWorkorders(snap,filter);
+    if(filter&&snap.scope.project!=='all'&&snap.scope.project!==filter)
+      lines.push('Current evidence has no coverage for the selected project; action UNKNOWN.');
+    else if(!orders.length)lines.push('No high-attempt group in current source; past issues remain UNKNOWN.');
+    for(const row of orders.slice(0,32)){
+      lines.push('Problem: '+clean(row.priority+' '+row.project+' — '+row.problem),
+        'Action: '+clean(row.action),
+        'Status: '+clean(row.status+'; '+row.coverage+'; no authority granted.'),'');
+    }
+    if(orders.length>32)lines.push('TRUNCATED: filter by project for remaining workorders.');
+    for(const row of snap.rows.filter(x=>known.has(x.project)&&(!filter||x.project===filter)).slice(0,30))
+      lines.push('- '+row.priority+' '+row.project+' ['+row.ref+']: '+row.attempts+
+        ' claims · '+row.status+' · owner unverified; do not auto-retry.');
+    if(!snap.complete)lines.push('PARTIAL coverage: do not infer a complete list.');
+  }else lines.push('No queue snapshot available.');
+  if(trend){
+    lines.push('','## Offline trend',clean(trend.before)+' → '+clean(trend.after),'');
+    for(const row of trend.projects.filter(x=>known.has(x.project)&&(!filter||x.project===filter)).slice(0,30))
+      lines.push('- '+row.project+': '+row.before+' → '+row.after+' ('+(row.delta>0?'+':'')+row.delta+')');
+    if(trend.sampleCoverage){
+      const c=trend.sampleCoverage;
+      lines.push('','## Matched queue-item movement',
+        'Matched '+c.matched_samples+' items; additional claim cycles observed: '+
+          c.known_increase_in_claim_cycles+' across '+
+          c.matched_rows_with_increased_claim_cycles+' matched rows.',
+        'Only in earlier sample: '+c.only_previous_sample+
+          '; only in later sample: '+c.only_current_sample+
+          '; both samples complete: '+c.bothSamplesComplete+'.',
+        'Not sampled in both does NOT prove completion, creation or release.','');
+      for(const row of (trend.recordChanges||[]).filter(x=>known.has(x.project)
+          &&(!filter||x.project===filter)).slice(0,30))
+        lines.push('- '+row.project+' ['+row.ref+']: '+row.beforeAttempts+' → '+
+          row.afterAttempts+' claim cycles ('+(row.delta>0?'+':'')+row.delta+
+          '); '+row.beforeStatus+' → '+row.afterStatus+'; '+row.observation+'.');
+    }
+  }else lines.push('','No trend snapshot available.');
+  lines.push('','Read-only evidence only. Preserve original claims and the serialized runtime owner/release gates.','');
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'}),url=URL.createObjectURL(blob);
+  const anchor=document.createElement('a');
+  anchor.href=url;anchor.download='zsentinel-retry-'+clean(filter||'portfolio')+'.md';
+  document.body.appendChild(anchor);anchor.click();anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+// Issue #1518: unified, explicitly sourced operator timeline.
+//
+// Evidence reaches this view only through the existing verified per-project
+// local Activity API or validated, manually requested GitHub observations.
+// No new poller, API mutation, source authorization or background fetch.
+let COMBINED_ACTIVITY_SOURCE='all';
+const COMBINED_ACTIVITY_LIMIT=140;
+function combinedActivityRows(){
+  const visible=new Set((DATA?.projects||[]).map(project=>project.id));
+  const groups=new Map([...visible].filter(id=>!filter||id===filter).map(id=>[id,[]]));
+  const seen=new Set();
+  // Same immutable commit in both inventories is one code change, not two.
+  // Match only exact 40-hex SHA and canonical project; never conflate a
+  // branch PR with a main merge or dedupe by a fuzzy title/date.
+  const githubMainByCommit=new Map();
+  for(const item of IMPORTED_GITHUB_ACTIVITY?.events||[]){
+    if(item?.kind!=='main_commit'||!groups.has(item.project)
+        ||typeof item.id!=='string'||typeof item.url!=='string')continue;
+    const match=/^github:Zennay\/[A-Za-z0-9_.-]{1,100}:main_commit:([0-9a-f]{40})$/.exec(item.id);
+    if(match&&item.url.endsWith('/commit/'+match[1]))
+      githubMainByCommit.set(item.project+':'+match[1],item);
+  }
+  const pairedMainCommits=new Set();
+  for(const row of ACTIVITY||[]){
+    if(!row||!groups.has(row.project)||typeof row.id!=='string'
+        ||typeof row.title!=='string'||typeof row.ts!=='string'
+        ||!Number.isFinite(Date.parse(row.ts)))continue;
+    const key='local:'+row.project+':'+row.id;
+    if(seen.has(key))continue;
+    seen.add(key);
+    const sha=row.kind==='commit'&&row.id.startsWith(row.project+':git:')
+      ?row.id.slice((row.project+':git:').length):'';
+    const matched=/^[0-9a-f]{40}$/.test(sha)
+      ?githubMainByCommit.get(row.project+':'+sha):null;
+    if(matched)pairedMainCommits.add(matched.id);
+    groups.get(row.project).push({key,source:matched?'both':'local',project:row.project,
+      kind:matched?'main_commit':row.kind,summary:row.title,
+      detail:matched?'Local checkout + independently observed GitHub main; not deployment proof':
+        row.detail||'Local project event',
+      observedAt:matched?
+        (IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||row.ts:
+        row.ts,
+      ts:row.ts,url:matched?matched.url:''});
+  }
+  for(const row of IMPORTED_GITHUB_ACTIVITY?.events||[]){
+    if(!row||!groups.has(row.project)||!GITHUB_RECEIPT_KINDS.has(row.kind)
+        ||typeof row.id!=='string'||typeof row.description!=='string'
+        ||typeof row.url!=='string'||typeof row.ts!=='string'
+        ||!isCanonicalGitHubActivityURL(row.url)
+        ||!Number.isFinite(Date.parse(row.ts)))continue;
+    const key='github:'+row.project+':'+row.id;
+    if(seen.has(key)||pairedMainCommits.has(row.id))continue;
+    seen.add(key);
+    groups.get(row.project).push({key,source:'github',project:row.project,
+      kind:row.kind,summary:row.description,
+      detail:row.kind==='branch_head'
+        ?(row.description||'Branch head observed; owner/merge/deploy unverified')
+        :row.staleUnverified
+          ?'HISTORICAL GITHUB EVENT: NOT REOBSERVED after incomplete provider refresh'
+          :row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
+      observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
+      ts:row.ts,url:row.url});
+  }
+  // Operator-imported PR-less zCloud branches carry an actual last-commit
+  // timestamp but only a bounded source-observation moment. They are not
+  // GitHub main commits, merge proof or evidence of an active Notion owner.
+  const zcloud=(DATA?.projects||[]).find(p=>
+    /^https:\/\/github\.com\/Zennay\/zCloud\/?$/.test(p.repo_url||''));
+  const imported=IMPORTED_PRLESS_BRANCHES;
+  if(zcloud&&groups.has(zcloud.id)&&imported?.repository==='Zennay/zCloud'){
+    for(const row of (imported.branches||[]).slice(0,96)){
+      if(!row||typeof row.ref!=='string'||!/^[A-Za-z0-9_./-]{1,200}$/.test(row.ref)
+          ||row.ref.includes('..')||!(/^[a-f0-9]{40}$/).test(row.sha)
+          ||!Number.isFinite(Date.parse(row.lastCommit))
+          ||Date.parse(row.lastCommit)>Date.now()+300000)continue;
+      const key='prless:'+zcloud.id+':'+row.ref+':'+row.sha;
+      if(seen.has(key))continue;
+      seen.add(key);
+      groups.get(zcloud.id).push({
+        key,source:'github',project:zcloud.id,kind:'branch_observed',
+        summary:'PR-less branch '+row.ref+' · '+row.classification,
+        detail:'Offline imported branch inventory; owner NOT verified; '+row.sha.slice(0,12)+
+          ' · '+(row.ahead===null?'ahead count unknown':'ahead '+row.ahead)+
+          (row.overlapCount?' · possible path overlaps '+row.overlapCount:''),
+        observedAt:imported.observedAt,ts:row.lastCommit,url:'',
+      });
+    }
+  }
+  for(const rows of groups.values()){
+    rows.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.key.localeCompare(b.key));
+  }
+  // Reserve turns for quiet projects instead of allowing a flood from zCloud
+  // or Supa to crowd out every other project's latest event.
+  const keys=[...groups.keys()].sort(),cursor=new Map(keys.map(key=>[key,0]));
+  const output=[];
+  while(output.length<COMBINED_ACTIVITY_LIMIT){
+    let changed=false;
+    for(const project of keys){
+      const rows=groups.get(project),index=cursor.get(project);
+      if(index<rows.length){
+        const row=rows[index];
+        cursor.set(project,index+1);
+        if(COMBINED_ACTIVITY_SOURCE==='all'||row.source==='both'
+            ||row.source===COMBINED_ACTIVITY_SOURCE){
+          output.push(row);
+        }
+        changed=true;
+      }
+      if(output.length>=COMBINED_ACTIVITY_LIMIT)break;
+    }
+    if(!changed)break;
+  }
+  return output.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.key.localeCompare(b.key));
+}
+function combinedActivityCoverage(){
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const scope=[...visible].filter(id=>!filter||id===filter);
+  const local=ACTIVITY_COVERAGE,coverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[])
+    .filter(c=>scope.includes(c.project));
+  const blocked=coverage.filter(c=>c.providerAdmission&&c.providerAdmission!=='none').length;
+  const liveProjects=coverage.filter(c=>c.status==='partial_sources'
+    &&(!c.providerAdmission||c.providerAdmission==='none')).length;
+  const stale=coverage.filter(c=>c.staleEvidence||
+    !Number.isFinite(Date.parse(c.observedAt))||Date.now()-Date.parse(c.observedAt)>6*3600000).length;
+  const missing=scope.length-coverage.length;
+  const textParts=[
+    'Local VPS '+(local.lastSuccess?'last read '+date(local.lastSuccess,true):'not yet read'),
+    'GitHub '+coverage.length+'/'+scope.length+' projects observed in bounded windows',
+    missing?'missing '+missing:'',stale?'stale '+stale:'',
+    blocked?'provider holds '+blocked:'',
+    liveProjects?'partial source '+liveProjects:'',
+    'never a complete GitHub or production ledger'
+  ];
+  if(IMPORTED_PRLESS_BRANCHES&&scope.includes(
+      (DATA?.projects||[]).find(p=>/^https:\/\/github\.com\/Zennay\/zCloud\/?$/.test(p.repo_url||''))?.id)){
+    textParts.push('PR-less branch inventory '+IMPORTED_PRLESS_BRANCHES.scanned+
+      ' sampled, '+(IMPORTED_PRLESS_BRANCHES.coverageComplete?'whole when observed':'PARTIAL')+
+      (Date.now()-Date.parse(IMPORTED_PRLESS_BRANCHES.observedAt)>6*3600000?' (stale)':''));
+  }
+  return textParts.filter(Boolean).join(' · ');
+}
+function combinedProjectCoverageRows(){
+  const projectIds=(DATA?.projects||[]).map(project=>project.id).filter(id=>!filter||filter===id);
+  const observations=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
+  const current=Date.now(),rows=[];
+  for(const id of projectIds.slice(0,24)){
+    const project=(DATA?.projects||[]).find(item=>item.id===id);
+    const canonicalRepo=/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/?$/.test(project?.repo_url||'')
+      ?(project.repo_url||'').replace(/\/$/,''):null;
+    const localCache=ACTIVITY_LOCAL_PROJECT_CACHE.get(id);
+    const localFailed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(id);
+    const localSourceAt=localCache?.observedAt||null;
+    // A global 80-row fallback is not a successful scoped project read.
+    const localStatus=!localCache?(localFailed?'unavailable':'not scoped'):
+      localFailed?'stale after failed refresh':
+      !Number.isFinite(localSourceAt)||current-localSourceAt>6*3600000?'stale':'scoped read';
+    const localEvents=localCache?.rows||[];
+    const localLast=localEvents.length?
+      localEvents.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
+    const github=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>item?.project===id
+      &&Number.isFinite(Date.parse(item.ts)));
+    const ghLast=github.length?github.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
+    const ghCoverage=observations.find(c=>c.project===id);
+    const syncAt=ghCoverage?.observedAt||null;
+    const ghFresh=syncAt&&Number.isFinite(Date.parse(syncAt))
+      &&current-Date.parse(syncAt)<=6*3600000;
+    // A fresh timestamp on a provider-denied read is *not* a fresh feed.
+    // Provider reasons are from a fixed validated allowlist, not free text.
+    const providerAdmission=ghCoverage?.providerAdmission||'none';
+    const status=!ghCoverage?'not observed':
+      providerAdmission!=='none'?'provider blocked / incomplete':
+      ghCoverage.status==='unavailable'?'unavailable':
+      !ghFresh||ghCoverage.staleEvidence?'stale/partial':
+      ghCoverage.status||'partial';
+    rows.push({project:id,canonicalRepo,localLast,localStatus,localSourceAt,
+      localCount:localCache?.rows.length??null,localLimited:localCache?.limited===true,
+      ghLast,syncAt,status,providerAdmission});
+  }
+  return rows;
+}
+function combinedProjectCoverageTable(){
+  const entries=combinedProjectCoverageRows();
+  const missing=entries.filter(r=>r.status==='not observed').length;
+  const stale=entries.filter(r=>['stale/partial','unavailable','provider blocked / incomplete'].includes(r.status)).length;
+  const unscoped=entries.filter(r=>r.localStatus!=='scoped read').length;
+  return '<details data-disclosure="timelineCoverage"><summary>Project source coverage ('+
+    entries.length+' projects · '+unscoped+' local not fresh · '+missing+
+    ' GitHub unobserved · '+stale+' GitHub unavailable/stale)</summary>'+
+    '<div class="service-list">'+entries.map(row=>
+      '<div class="service-row"><div><a class="text-link" href="#activity?project='+encodeURIComponent(row.project)+'">'+
+      esc((DATA.projects.find(p=>p.id===row.project)||{}).name||row.project)+'</a><br>'+
+      '<small>Local scoped source: '+esc(row.localStatus)+
+      (row.localSourceAt?' · read '+esc(date(new Date(row.localSourceAt).toISOString(),true)):' · never read')+
+      (row.localCount!==null?' · '+row.localCount+' bounded events':'')+
+      (row.localLimited?' · 80-row limit':'')+
+      ' · latest event '+(row.localLast?esc(date(row.localLast,true)):'unknown')+
+      '</small></div><small>GitHub '+esc(row.status)+'<br>'+
+      (row.syncAt?'observed '+esc(date(row.syncAt,true)):'not fetched')+
+      (row.ghLast?'<br>latest sampled event '+esc(date(row.ghLast,true)):'')+
+      (row.providerAdmission!=='none'?
+        '<br><strong>GitHub provider HOLD:</strong> '+
+        esc(GITHUB_PROVIDER_ADMISSIONS[row.providerAdmission]||'Source admission unknown')+
+        ' · missing activity UNKNOWN':'')+
+      (row.canonicalRepo?'<br><a href="'+esc(row.canonicalRepo+'/pulls')+
+        '" target="_blank" rel="noopener noreferrer">Current PRs ↗</a> · <a href="'+
+        esc(row.canonicalRepo+'/actions')+
+        '" target="_blank" rel="noopener noreferrer">Current CI ↗</a>':'')+
+      '</small></div>').join('')+
+    '</div><p class="detail-note">Source observation time and last event time are separate. A scoped read returning zero events is not proof of no commits; a fallback global list is not project coverage. GitHub samples, PRs and checks never authorize a merge or deployment.</p></details>';
+}
+function combinedActivityPanel(){
+  const rows=combinedActivityRows();
+  const providerHolds=new Set((IMPORTED_GITHUB_ACTIVITY?.coverage||[])
+    .filter(c=>c.providerAdmission&&c.providerAdmission!=='none')
+    .map(c=>c.project));
+  const list=rows.map(row=>{
+    const project=DATA.projects.find(p=>p.id===row.project);
+    const main=row.url?
+      '<a href="'+esc(row.url)+'" rel="noopener noreferrer" target="_blank">'+esc(row.summary)+'</a>':
+      '<strong>'+esc(row.summary)+'</strong>';
+    const source=row.source==='both'?'Local VPS + GitHub main commit':
+      row.source==='github'?'GitHub '+row.kind.replaceAll('_',' '):
+      'Local VPS '+(row.kind||'event');
+    const freshness=row.observedAt&&Date.now()-Date.parse(row.observedAt)>6*3600000?' · STALE OBSERVATION':'';
+    const held=(row.source==='github'||row.source==='both')&&providerHolds.has(row.project)
+      ?' · PRIOR GITHUB EVIDENCE; CURRENT PROVIDER READ BLOCKED, NOT RECONFIRMED':'';
+    return '<div class="service-row"><div>'+main+'<br><small>'+
+      esc(project?.name||row.project)+' · '+esc(source)+
+      ' · '+esc(row.detail)+esc(freshness)+esc(held)+'</small></div><small>'+
+      esc(date(row.ts,true))+'</small></div>';
+  }).join('');
+  return '<section class="panel" id="combinedActivityTimeline">'+
+    '<div class="panel-header"><div><h2>Project timeline · VPS + GitHub</h2>'+
+    '<p class="panel-subtitle">Unified read-only evidence. A PR, CI completion, and main merge are different events; none alone proves VPS deployment.</p></div>'+
+    '<button type="button" class="runner-action" data-activity-timeline-source-read '+
+    (ZSENTINEL_SOURCES_BUSY||ZSENTINEL_ALL_RUNNING||PUBLIC_GITHUB_BUSY||PUBLIC_ISSUES_BUSY?'disabled aria-busy="true"':'')+'>'+
+    (ZSENTINEL_ALL_RUNNING?'Reading portfolio…':filter?'Read project sources':'Read next 4 project sources')+'</button>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-activity-timeline-export>'+
+    'Export timeline .md</button></div>'+
+    '<div role="group" aria-label="Timeline source" class="range-control">'+
+    [['all','All sources'],['local','Local VPS'],['github','GitHub']].map(pair=>
+      '<button type="button" data-activity-source="'+pair[0]+'" class="'+
+      (COMBINED_ACTIVITY_SOURCE===pair[0]?'active':'')+'" aria-pressed="'+
+      (COMBINED_ACTIVITY_SOURCE===pair[0]?'true':'false')+'">'+pair[1]+'</button>').join('')+
+    '</div>'+
+    '<p class="detail-note" role="status">'+esc(combinedActivityCoverage())+'</p>'+
+    combinedProjectCoverageTable()+
+    '<div class="service-list">'+(list||'<div class="empty">No evidence for the selected source and project. Missing coverage is not proof of zero work.</div>')+'</div>'+
+    '<p class="detail-note">'+rows.length+' visible bounded events; local event IDs and GitHub provider IDs stay distinct. '+
+    'Use the separate manual source buttons to refresh GitHub. No automatic GitHub polling, lease assignment, PR merge or deploy occurs here.</p></section>';
+}
+function exportCombinedActivityTimeline(){
+  const rows=combinedActivityRows(),clean=value=>String(value||'').replace(/[\r\n<>|]/g,' ').slice(0,200);
+  const lines=['# zCloud combined Activity handoff','','Observation only · no claim/merge/deploy authorization.',
+    'Source scope: '+clean(COMBINED_ACTIVITY_SOURCE),'Project filter: '+clean(filter||'all'),'',
+    combinedActivityCoverage(),'','## Bounded timeline',''];
+  for(const row of rows){
+    lines.push('- '+clean(row.ts)+' · '+clean(row.project)+' · '+clean(row.source)+
+      '/'+clean(row.kind)+' · '+clean(row.summary)+
+      ' · '+clean(row.detail)+
+      (row.url?' · '+row.url:''));
+  }
+  lines.push('','## Scoped local VPS source coverage','',
+    'The global fallback feed is not per-project coverage. Local host status is not GitHub PR/CI proof.','');
+  for(const project of (DATA?.projects||[]).slice(0,ACTIVITY_LOCAL_CACHE_LIMIT)){
+    const item=ACTIVITY_LOCAL_PROJECT_CACHE.get(project.id);
+    const failed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(project.id);
+    const stale=item&&(failed||Date.now()-item.observedAt>6*3600000);
+    lines.push('- '+clean(project.id)+' · '+(item?
+      'read '+new Date(item.observedAt).toISOString()+' · '+item.rows.length+
+        ' sampled local events'+(item.limited?' (80-row local source cap)':'')+
+        (stale?' · STALE / failed refresh':''):
+      'project source NOT OBSERVED'+(failed?' · last read unavailable':'')));
+  }
+  lines.push('','## Bounded GitHub source coverage','',
+    'These provider receipts are read-only observations, not an authorization for main or production.','');
+  const scoped=(DATA?.projects||[]).filter(project=>!filter||project.id===filter).slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const ghCoverage=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
+  for(const project of scoped){
+    const source=ghCoverage.find(row=>row.project===project.id);
+    const observed=source?.observedAt||null;
+    const stale=source&&(source.staleEvidence===true||!Number.isFinite(Date.parse(observed))
+      ||Date.now()-Date.parse(observed)>6*3600000);
+    const events=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(row=>row.project===project.id);
+    const last=events.length?events.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y):null;
+    lines.push('- '+clean(project.id)+' · '+(source?
+      clean(source.status)+' · sampled '+events.length+' events · observed '+clean(observed)+
+        (stale?' · STALE / unverified':'')+
+        (source.providerAdmission&&source.providerAdmission!=='none'&&
+         Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,source.providerAdmission)
+          ?' · GITHUB PROVIDER HOLD: '+GITHUB_PROVIDER_ADMISSIONS[source.providerAdmission]+
+           ' · missing events UNKNOWN':'')+
+        (last?' · latest event '+clean(last.ts):' · event timestamp unknown'):
+      'GitHub NOT OBSERVED in this bounded snapshot'));
+    // Manual public page/source diagnostics are a separate bounded source.
+    // Export only fixed vocabulary and numeric counts; never an HTTP error,
+    // provider payload, authentication value or raw user-provided field.
+    if(source&&Array.isArray(source.sourceCoverage)&&source.sourceCoverage.length===3){
+      const statuses=source.sourceCoverage.map((entry,index)=>{
+        const name=['PR','Actions','main'][index];
+        const status=['bounded_full','bounded_end','unavailable'].includes(entry?.status)
+          ?entry.status:'unavailable';
+        const count=Number.isSafeInteger(entry?.rows)&&entry.rows>=0
+          ?Math.min(entry.rows,[20,20,15][index]):null;
+        return name+' '+status+(count===null?'':' ('+count+' observed records)');
+      });
+      lines.push('  - Manual public source page: '+(
+        Number.isInteger(source.page)&&source.page>=1&&source.page<=5
+          ?source.page:'unverified')+
+        ' · '+statuses.join(' · '),
+        '  - Next safe operator step: '+(
+          source.status!=='partial_sources'
+            ?'Confirm GitHub access/rate limit; preserve prior evidence without treating missing records as zero.'
+            :source.morePossible===true&&source.page<5
+              ?'An operator may explicitly read the next bounded page after the cooldown.'
+              :'The observed page window ended or page limit was reached; do not assume full repository coverage.'));
+    }else if(source){
+      lines.push('  - Endpoint-level page coverage not included in this receipt; no current completeness claim.');
+    }
+  }
+  lines.push('','Missing provider coverage is unknown, not zero. An Actions run is not production proof.','');
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='zcloud-activity-'+clean(filter||'portfolio')+'.md';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 function activityPage(){
   const visible=new Set(DATA.projects.map(p=>p.id));
   const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
   const coverage=activityCoverageText();
   return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
+  ${zSentinelCapacityNotice()}
+  ${zSentinelDeliveryBoard()}
+  ${combinedActivityPanel()}
+  ${zSentinelRetryPanel()}
+  ${zSentinelBranchEvidencePanel()}
+  ${githubActivityImportPanel()}
+  ${productIssueInboxPanel()}
+  ${workerProgressPanel()}
+  ${productQueueAdmissionPanel()}
+  ${pagedLocalActivityPanel()}
   <div class="panel"><div class="panel-header"><div><h2>Local event coverage</h2><p class="panel-subtitle" role="status" aria-live="polite">${esc(coverage)}</p></div><button type="button" class="runner-action" data-activity-refresh ${ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':''}>Refresh project history</button></div>
+  ${activityLocalCoverageDisclosure()}
   <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local events are available for this selection. GitHub activity may still exist.</div>'}</div>
   <div class="detail-note">Local event timestamps are not proof that a PR was merged or a CI run passed. The API returns at most 80 events per project; projects are interleaved to stop noisy projects hiding quieter work. Archived projects are hidden.</div></div></div>`;
 }
@@ -684,7 +3807,8 @@ svg+='</svg>';el.innerHTML=svg;const countTimes=new Set(points.map(p=>p.date)).s
 function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects.map(p=>({name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))})));else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p)chart('progressChart',[{name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))}])}else if(route==='infrastructure')chart('hostChart',[['cpu','CPU','#c2f970'],['memory','Memory','#82b8ff'],['disk','Storage','#a899ff']].map(([key,name,color])=>({name,color,data:HOST.map(r=>({date:r.ts,value:r[key]}))}))) }
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
 async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled'&&Array.isArray(results[0].value)&&
-    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
+    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))
+    ACTIVITY=mergeLocalProjectActivity(results[0].value);if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
 async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';return false}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
@@ -694,8 +3818,26 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();if(projectLayoutActionPending){draggedProject=null;projectLayoutNotice('Finish archiving or restoring before reordering projects.');return}const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const timelineRead=e.target.closest('[data-activity-timeline-source-read]');if(timelineRead){e.preventDefault();if(filter)void readZSentinelSources();else void readZSentinelAllProjects();return}const activitySource=e.target.closest('[data-activity-source]');if(activitySource){e.preventDefault();const next=activitySource.dataset.activitySource;if(['all','local','github'].includes(next)){COMBINED_ACTIVITY_SOURCE=next;render();}return}const activityTimelineExport=e.target.closest('[data-activity-timeline-export]');if(activityTimelineExport){e.preventDefault();exportCombinedActivityTimeline();return}const expandItems=e.target.closest('[data-retry-items-expand]');if(expandItems){e.preventDefault();ZSENTINEL_RETRY_EXPANDED_ITEMS=!ZSENTINEL_RETRY_EXPANDED_ITEMS;render();return}
+const expandMovement=e.target.closest('[data-retry-movement-expand]');if(expandMovement){e.preventDefault();ZSENTINEL_RETRY_EXPANDED_MOVEMENT=!ZSENTINEL_RETRY_EXPANDED_MOVEMENT;render();return}
+const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventDefault();void readVpsRetryIncidents();return}const retryClear=e.target.closest('[data-retry-clear]');if(retryClear){e.preventDefault();ZSENTINEL_RETRY_SNAPSHOT=null;ZSENTINEL_RETRY_TREND=null;ZSENTINEL_RETRY_MESSAGE='';ZSENTINEL_RETRY_EXPANDED_ITEMS=false;ZSENTINEL_RETRY_EXPANDED_MOVEMENT=false;render();return}const retryExport=e.target.closest('[data-retry-handoff]');if(retryExport){e.preventDefault();exportRetryHandoff();return}const retryOwnerJson=e.target.closest('[data-retry-workorders-json]');if(retryOwnerJson){e.preventDefault();exportRetryWorkordersJson();return}const retryTrendJson=e.target.closest('[data-retry-trend-json]');if(retryTrendJson){e.preventDefault();exportRetryTrendJson();return}const retrySnapshotJson=e.target.closest('[data-retry-snapshot-json]');if(retrySnapshotJson){e.preventDefault();exportRetrySnapshotJson();return}const vpsIssuesRead=e.target.closest('[data-vps-issues-read]');if(vpsIssuesRead){e.preventDefault();void readVpsProductIssues();return}const vpsGithubRead=e.target.closest('[data-vps-github-refresh]');if(vpsGithubRead){e.preventDefault();void readVpsGitHubActivity();return}const branchImport=e.target.closest('[data-zsentinel-branch-open]');if(branchImport){e.preventDefault();document.getElementById('zSentinelBranchFile')?.click();return}const branchClear=e.target.closest('[data-zsentinel-branch-clear]');if(branchClear){e.preventDefault();IMPORTED_PRLESS_BRANCHES=null;IMPORTED_PRLESS_ERROR='';render();return}const triageFilter=e.target.closest('[data-zsentinel-triage]');if(triageFilter){e.preventDefault();
+  const key=triageFilter.dataset.zsentinelTriage;
+  if(ZSENTINEL_TRIAGE_OPTIONS.some(row=>row[0]===key)){
+    ZSENTINEL_TRIAGE_VIEW=key;ZSENTINEL_TRIAGE_EXPANDED=false;render();
+  }return}
+const triageExpand=e.target.closest('[data-zsentinel-triage-expand]');if(triageExpand){e.preventDefault();
+  ZSENTINEL_TRIAGE_EXPANDED=!ZSENTINEL_TRIAGE_EXPANDED;render();return}
+const zSentinelExport=e.target.closest('[data-zsentinel-export]');if(zSentinelExport){e.preventDefault();exportZSentinelHandoff();return}const zSentinelCase=e.target.closest('[data-zsentinel-case-export]');if(zSentinelCase){e.preventDefault();exportZSentinelRecoveryCase();return}const zSentinelAll=e.target.closest('[data-zsentinel-all-read]');if(zSentinelAll){e.preventDefault();void readZSentinelAllProjects();return}const zSentinelRead=e.target.closest('[data-zsentinel-source-read]');if(zSentinelRead){e.preventDefault();void readZSentinelSources();return}const localPage=e.target.closest('[data-local-activity-next]');if(localPage){e.preventDefault();void readPagedLocalActivity();return}const deliveryRefresh=e.target.closest('[data-delivery-queue-refresh]');if(deliveryRefresh){e.preventDefault();void refreshDeliveryQueue();return}const progressRefresh=e.target.closest('[data-worker-progress-refresh]');if(progressRefresh){e.preventDefault();void refreshWorkerProgress();return}const progressHandoff=e.target.closest('[data-worker-progress-handoff]');if(progressHandoff){e.preventDefault();saveWorkerProgressHandoff();return}const progressBrief=e.target.closest('[data-worker-progress-brief]');if(progressBrief){e.preventDefault();saveWorkerProgressHandoff('markdown');return}const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const publicOlder=e.target.closest('[data-github-public-older]');if(publicOlder){e.preventDefault();void refreshPublicGitHubEvidence(null,false,true);return}const pageNewer=e.target.closest('[data-github-view-newer]');if(pageNewer&&filter){e.preventDefault();PUBLIC_GITHUB_VIEW_PAGE.set(filter,Math.max(1,(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1)-1));render();return}const pageOlder=e.target.closest('[data-github-view-older]');if(pageOlder&&filter){e.preventDefault();PUBLIC_GITHUB_VIEW_PAGE.set(filter,Math.min(PUBLIC_GITHUB_PAGE.get(filter)||1,(PUBLIC_GITHUB_VIEW_PAGE.get(filter)||1)+1));render();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';PUBLIC_GITHUB_PAGE.clear();PUBLIC_GITHUB_VIEW_PAGE.clear();PUBLIC_GITHUB_MORE.clear();render();return}const localRead=e.target.closest('[data-local-source-read]');if(localRead){e.preventDefault();const id=localRead.dataset.localSourceRead;if(route==='activity'&&!ACTIVITY_COVERAGE.pending
+  &&(DATA?.projects||[]).some(p=>p.id===id)){filter=id;history.replaceState(null,'','#activity?project='+encodeURIComponent(id));render();void refreshProjectActivity(routeVersion,true)}return}
+const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('change',async e=>{if(e.target.id==='zSentinelRetryReceiptFile'||e.target.id==='zSentinelRetryTrendFile'){const files=[...(e.target.files||[])];if(!files.length)return;try{if(e.target.id==='zSentinelRetryReceiptFile')await importRetrySnapshots(files);else {if(files.length!==1)throw Error('Select one trend JSON file');await importRetryTrend(files[0]);}}catch(error){ZSENTINEL_RETRY_MESSAGE='Retry receipt rejected: '+(error instanceof SyntaxError?'invalid JSON':String(error.message||'invalid format'))+'. Existing evidence preserved.';}e.target.value='';if(route==='activity')render();return}if(e.target.id==='zSentinelBranchFile'){const files=[...(e.target.files||[])];if(!files.length)return;try{if(files.length>8)throw Error('Import at most eight bounded branch receipts');let merged=IMPORTED_PRLESS_BRANCHES;for(const file of files){if(file.size<2||file.size>512*1024)throw Error('Each branch JSON must be under 512 KiB');const report=validateZSentinelBranchSnapshot(JSON.parse(await file.text()));merged=mergeZSentinelBranchSnapshots(merged,report);}IMPORTED_PRLESS_BRANCHES=merged;IMPORTED_PRLESS_ERROR='';}catch(error){IMPORTED_PRLESS_ERROR='Branch receipt not imported: '+(error instanceof SyntaxError?'invalid JSON':String(error.message||'invalid source'))+'; previous evidence preserved.';}if(route==='activity')render();return}if(e.target.id==='workerProgressSlot'){const slot=Number(e.target.value);WORKER_PROGRESS_SLOT=Number.isInteger(slot)&&slot>=1&&slot<=8?slot:1;WORKER_PROGRESS_DATA=null;WORKER_PROGRESS_ERROR='';render();return}if(e.target.id==='productIssueReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');const receipt=validateProductIssueInbox(JSON.parse(await file.text()));IMPORTED_PRODUCT_ISSUES=mergeValidatedZSentinelReceipts(IMPORTED_PRODUCT_ISSUES,receipt,'issues');IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;}catch(error){IMPORTED_PRODUCT_ERROR='Product issue receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'))+'. Previous observations preserved; use Clear to discard them.';}if(route==='activity')render();return}if(e.target.id==='githubReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');const payload=JSON.parse(await file.text());const receipt=validateGitHubActivityReceipt(payload);IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(IMPORTED_GITHUB_ACTIVITY,receipt,'github');for(const c of receipt.coverage){PUBLIC_GITHUB_PAGE.delete(c.project);PUBLIC_GITHUB_VIEW_PAGE.delete(c.project);PUBLIC_GITHUB_MORE.delete(c.project);}IMPORTED_GITHUB_ERROR='';}catch(error){IMPORTED_GITHUB_ERROR='GitHub receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'))+'. Previous observations preserved; use Clear to discard them.';}if(route==='activity')render();return}const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){const chosen=e.target.value;
+  if(chosen&&!(DATA?.projects||[]).some(p=>p.id===chosen))return;
+  filter=chosen;history.replaceState(null,'','#activity'+(filter?'?project='+encodeURIComponent(filter):''));
+  render();
+  // Choosing a project is an explicit source request, not background polling:
+  // read that project's bounded feed unless this exact scope is cached fresh.
+  void refreshProjectActivity(routeVersion);
+}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();const cachedStatus=loadCachedStatus();if(cachedStatus){DATA=cachedStatus;setConnection(false);$('notice').hidden=false;$('notice').textContent='Live connection is temporarily unavailable. Showing the last successful dashboard snapshot while reconnecting automatically.';$('syncTime').textContent='Last successful measurement '+clock(DATA.time)+' · reconnecting…';render()}refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});

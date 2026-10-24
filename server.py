@@ -7,7 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report
+from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live, zcloud_queue_retry_live
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 
 ROOT = Path(__file__).resolve().parent
@@ -168,16 +168,10 @@ def action_request_allowed(handler):
         allowed = set()
     if addr in allowed:
         return True
-    host = (handler.headers.get('Host') or '').strip()
-    origin = (handler.headers.get('Origin') or '').strip()
-    referer = (handler.headers.get('Referer') or '').strip()
-    fetch_site = (handler.headers.get('Sec-Fetch-Site') or '').strip().lower()
-    same_origin = bool(host) and (
-        origin in ('http://' + host, 'https://' + host) or
-        referer.startswith('http://' + host + '/') or
-        referer.startswith('https://' + host + '/')
-    )
-    return same_origin and fetch_site in ('same-origin', 'same-site')
+    # Request headers are supplied by the remote caller; they are not
+    # proof of identity. Only real loopback peers and the existing explicit
+    # peer allowlist above authorize a management API.
+    return False
 
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
@@ -1073,6 +1067,8 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS host_samples(ts TEXT PRIMARY KEY, cpu REAL, memory REAL, disk REAL, load REAL)')
         c.execute('CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, ts TEXT, project TEXT, kind TEXT, title TEXT, detail TEXT)')
         c.execute('CREATE INDEX IF NOT EXISTS events_ts ON events(ts)')
+        # Prepared only at an authorized startup, never by Activity GET.
+        c.execute('CREATE INDEX IF NOT EXISTS events_project_ts_id ON events(project,ts DESC,id DESC)')
         c.execute('CREATE TABLE IF NOT EXISTS runner_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, event TEXT, target TEXT, title TEXT, generating INTEGER, sending INTEGER, reason TEXT, tab_id INTEGER, error TEXT)')
         columns={r['name'] for r in c.execute('PRAGMA table_info(runner_events)').fetchall()}
         if 'project_id' not in columns: c.execute('ALTER TABLE runner_events ADD COLUMN project_id TEXT')
@@ -4870,6 +4866,53 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/queue-retry-incidents':
+            # Explicit operator read, not an admission, lease or recovery action.
+            # Apply the existing trusted management peer gate before DB access.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project of all'},400)
+            project_id=names[0]
+            if project_id!='all' and project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                result=zcloud_queue_retry_live.snapshot(
+                    DB,set(PORTFOLIO_PROJECT_INDEX),project_id,threshold=3,limit=40
+                )
+            except zcloud_queue_retry_live.ObservationUnavailable:
+                # Never convert a denied/partial DB read into a false zero count.
+                return self.reply({'error':'Queue bron tijdelijk niet betrouwbaar'},503)
+            return self.reply(result)
+        if u.path in ('/api/github-activity-live','/api/product-issues-live'):
+            # On-demand only, never a queue/worker action. Private or remote
+            # API reads require the existing trusted management peer admission.
+            # Reject before a GitHub network request or refresh is scheduled.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project'},400)
+            project_id=names[0]
+            if project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                kind='activity' if u.path=='/api/github-activity-live' else 'issues'
+                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id,kind=kind)
+            except (ValueError,OSError):
+                return self.reply({'error':'GitHub bron niet beschikbaar'},400)
+            # Explicit state=refreshing is NOT a successful synced feed; clients
+            # may poll by user initiation, with the bounded cache guarding calls.
+            return self.reply(sample)
+        if u.path=='/api/worker-progress-history':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+            try:
+                slot=int(q.get('slot',['1'])[0]);limit=int(q.get('limit',['24'])[0])
+                report=zcloud_worker_progress_history.read_worker_progress(DB,project_id,slot,limit)
+            except (ValueError,TypeError):
+                return self.reply({'error':'Ongeldige worker-selectie'},400)
+            return self.reply(report)
         if u.path=='/api/worker-debug':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply(worker_debug_report())
@@ -4976,10 +5019,54 @@ class Handler(BaseHTTPRequestHandler):
                 if pid not in [p['id'] for p in data['projects']]:return self.reply({'error':'Onbekend project'},404)
                 days={'24h':1,'7d':7,'30d':30,'all':0}.get(q.get('range',['7d'])[0],7)
                 return self.reply(history(pid,days))
-            if u.path=='/api/activity':
+            if u.path in ('/api/activity','/api/activity-page'):
+                # Keep the old array API compatible while removing the global
+                # 80-row starvation problem (#1518). The new paged endpoint
+                # offers explicit, source-limited coverage and safe cursors.
+                project_ids=([pid] if pid else sorted(PROJECT_INDEX))
+                if pid and pid not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},404)
+                if u.path=='/api/activity-page':
+                    try:
+                        limit=int(q.get('limit',['80'])[0])
+                        raw_cursor=q.get('cursor',[''])[0]
+                        if len(raw_cursor)>4096:raise ValueError('cursor exceeds budget')
+                        cursor=json.loads(raw_cursor) if raw_cursor else None
+                        with connect() as c:
+                            c.execute('BEGIN')
+                            page=zcloud_activity_fair_page.fair_page(
+                                c,project_ids,page_size=limit,cursor=cursor
+                            )
+                    except (TypeError,ValueError):
+                        return self.reply({'error':'Ongeldige paginaselectie of bron-tijdstempel'},400)
+                    return self.reply(page)
                 with connect() as c:
-                    rows=c.execute('SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',(pid,pid)).fetchall()
-                return self.reply([dict(r) for r in rows])
+                    c.execute('BEGIN')
+                    try:
+                        page=zcloud_activity_fair_page.fair_page(c,project_ids)
+                        ids=[item['id'] for item in page['events']]
+                        if ids:
+                            marks=','.join('?' for _ in ids)
+                            rows=c.execute(
+                                'SELECT * FROM events WHERE id IN ('+marks+')',ids
+                            ).fetchall()
+                            by_id={row['id']:dict(row) for row in rows}
+                            result=[by_id[eid] for eid in ids if eid in by_id]
+                        else:
+                            result=[]
+                    except ValueError:
+                        # Corrupt legacy event timestamps must not take down
+                        # the original dashboard route; preserve the previous
+                        # bounded fallback. /api/activity-page surfaces the
+                        # explicit coverage failure instead.
+                        logging.warning('Activity fair source unavailable: malformed event timestamp')
+                        rows=c.execute(
+                            'SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',
+                            (pid,pid),
+                        ).fetchall()
+                        result=[dict(row) for row in rows]
+                # Release the SQLite read snapshot BEFORE socket I/O to avoid
+                # slow HTTP readers extending the database read transaction.
+                return self.reply(result)
             if u.path=='/api/host-history':
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
