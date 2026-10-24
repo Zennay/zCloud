@@ -10,8 +10,9 @@ on:
       - project-contracts.json
       - tests/test_resource_governor_canary_workflow.py
       - tests/test_resource_governor_canary_trust.py
+      - tests/test_zcloud_governed_exec.py
   push:
-    branches: [worker/cloud-resource-governor-vps-canary-20261004]
+    branches: [worker/cloud-resource-governor-vps-canary-20261004, main]
     paths:
       - .github/workflows/zcloud-resource-governor-canary.yml
       - scripts/zcloud_governed_exec.py
@@ -20,6 +21,7 @@ on:
       - project-contracts.json
       - tests/test_resource_governor_canary_workflow.py
       - tests/test_resource_governor_canary_trust.py
+      - tests/test_zcloud_governed_exec.py
   workflow_dispatch:
 
 permissions:
