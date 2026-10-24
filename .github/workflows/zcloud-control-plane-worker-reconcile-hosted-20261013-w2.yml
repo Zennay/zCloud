@@ -1,0 +1,39 @@
+name: zCloud control-plane worker reconciliation (offline)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/zcloud_control_plane_worker_reconcile.py'
+      - 'tests/test_control_plane_worker_reconcile_20261013_w2.py'
+      - '.github/workflows/zcloud-control-plane-worker-reconcile-hosted-20261013-w2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: ${{ github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud' && github.actor == 'Zennay') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Python source syntax
+        run: python3 -m py_compile scripts/zcloud_control_plane_worker_reconcile.py tests/test_control_plane_worker_reconcile_20261013_w2.py
+      - name: Offline SQLite and live-evidence regressions
+        run: python3 -m unittest discover -v -s tests -p test_control_plane_worker_reconcile_20261013_w2.py
+      - name: Trust boundary: no privileged runner or mutations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          t = Path(".github/workflows/zcloud-control-plane-worker-reconcile-hosted-20261013-w2.yml").read_text()
+          trusted = t.split("      - name: Trust boundary", 1)[0]
+          assert "runs-on: ubuntu-latest" in trusted
+          assert "contents: read" in trusted
+          assert trusted.count("runs-on:") == 1
+          assert ("self" + "-hosted") not in trusted
+          assert ("sudo" + " ") not in trusted
+          assert "persist-credentials: false" in trusted
+          PY
