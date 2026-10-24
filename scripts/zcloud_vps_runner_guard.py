@@ -36,11 +36,25 @@ def validate_runner(
         if str(token).strip()
     ]
 
+    # Keep the established production host valid during cutover, but bind
+    # every migrated host to one exact GitHub runner identity. A generic
+    # hostname allowance could let a different tenant/project runner pass
+    # the privileged VPS canary merely by sharing the new machine.
+    migrated = runner.get("verified_host_runners", {})
     errors: list[str] = []
+    if not isinstance(migrated, dict) or len(migrated) > 8:
+        errors.append("runner_identity_policy_invalid")
+        migrated = {}
     if not expected_host:
         errors.append("policy_host_missing")
     elif actual_host != expected_host:
-        errors.append("host_mismatch")
+        expected_name = migrated.get(actual_host)
+        if (not isinstance(expected_name, str)
+                or not expected_name.strip()
+                or _short_host(actual_host) != actual_host):
+            errors.append("host_mismatch")
+        elif actual_runner and actual_runner.lower() != expected_name.strip().lower():
+            errors.append("runner_identity_mismatch")
 
     if not actual_runner:
         errors.append("runner_name_missing")
