@@ -51,6 +51,16 @@ class ResourceGovernorCanaryTrustTests(unittest.TestCase):
         self.assertNotIn("sudo ", text)
         self.assertNotIn("systemctl", text)
 
+    def test_relevant_main_pushes_and_governor_tests_trigger_canary(self):
+        text = self.text
+        self.assertIn(
+            "branches: [worker/cloud-resource-governor-vps-canary-20261004, main]",
+            text,
+        )
+        self.assertIn("  pull_request:\\n", text)
+        self.assertEqual(text.count("      - tests/test_zcloud_governed_exec.py"), 2)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+
 
 if __name__ == "__main__":
     unittest.main()
