@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MAX_BYTES = 65536
+MAX_TARGET_WIRE_BYTES = 262144  # bounded localhost response before field minimization
 MAX_WORKERS = 32
 MAX_PROGRESS_AGE_SECONDS = 45
 KEY = re.compile(r"^[a-z][a-z0-9-]{0,63}::w[1-9][0-9]{0,3}$")
@@ -43,8 +44,8 @@ def _pairs_unique(pairs):
     return result
 
 
-def _load(raw):
-    if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
+def _load(raw, *, max_bytes=MAX_BYTES):
+    if not isinstance(raw, bytes) or len(raw) > max_bytes:
         raise EvidenceDenied("oversized_observation")
     try:
         payload = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_pairs_unique,
@@ -79,6 +80,61 @@ def _load(raw):
     return payload
 
 
+def _compact_allocated_targets(payload):
+    """Retain only allocated worker identity/claim data needed for evidence.
+
+    /api/runner-targets serves a much larger dashboard with every project's
+    worker config. Reading its entire body under the standard 64-KiB evidence
+    bound rejected valid three-worker allocations as oversized_observation.
+    Parse a separately bounded localhost response with the same strict JSON
+    rules, then discard unallocated config and private UI fields BEFORE using
+    it as an evidence snapshot. Never change the general 64-KiB bound.
+    """
+    allocation = payload.get("global_allocation")
+    projects = payload.get("projects")
+    workers = allocation.get("workers") if isinstance(allocation, dict) else None
+    if not isinstance(workers, list) or not isinstance(projects, dict):
+        return payload  # caller still rejects malformed/ambiguous evidence
+    if len(workers) > MAX_WORKERS:
+        raise EvidenceDenied("oversized_allocation")
+    worker_fields = ("worker_key", "project_id", "worker_slot",
+                     "global_worker_slot", "queue_id", "provider")
+    target_fields = ("project_id", "base_project_id", "worker_slot",
+                     "global_worker_slot", "provider", "active",
+                     "assignment_ready", "desired_state")
+    claim_fields = ("queue_id", "project_id", "worker_slot", "status",
+                    "eligible", "claimed_at", "claim_expires")
+    selected_workers = []
+    selected_projects = {}
+    for row in workers:
+        if not isinstance(row, dict):
+            selected_workers.append(row)
+            continue
+        key = row.get("worker_key")
+        selected_workers.append({name: row[name] for name in worker_fields if name in row})
+        if not isinstance(key, str):
+            continue
+        target = projects.get(key)
+        if not isinstance(target, dict):
+            selected_projects[key] = target
+            continue
+        selected = {name: target[name] for name in target_fields if name in target}
+        queue = target.get("queue_item")
+        selected["queue_item"] = (
+            {name: queue[name] for name in claim_fields if name in queue}
+            if isinstance(queue, dict) else queue
+        )
+        selected_projects[key] = selected
+    reduced = {
+        "global_allocation": {"workers": selected_workers},
+        "projects": selected_projects,
+    }
+    compact = json.dumps(reduced, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(compact) > MAX_BYTES:
+        raise EvidenceDenied("oversized_compact_allocation")
+    return reduced
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         raise EvidenceDenied("redirect_denied")
@@ -97,10 +153,14 @@ def _fetch(path):
             media_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             if response.status != 200 or media_type != "application/json":
                 raise EvidenceDenied("invalid_http_response")
-            raw = response.read(MAX_BYTES + 1)
+            maximum = MAX_TARGET_WIRE_BYTES if path == "/api/runner-targets" else MAX_BYTES
+            raw = response.read(maximum + 1)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise EvidenceDenied("observation_unavailable") from exc
-    return _load(raw)
+    payload = _load(raw, max_bytes=maximum)
+    if path == "/api/runner-targets":
+        return _compact_allocated_targets(payload)
+    return payload
 
 
 def _target_binding(targets, key, item):
