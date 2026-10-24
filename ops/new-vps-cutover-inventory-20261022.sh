@@ -64,11 +64,14 @@ echo 'A rclone/FUSE archive or /dev/sda2 system partition is NEVER a training di
 echo 'Fuckball external training requires a separately mounted ext4/xfs/btrfs block disk.'
 echo "-- docker --"
 if command -v docker >/dev/null 2>&1; then
-  systemctl is-active docker.service || true
-  if [[ "$mode" == 'apply-base' ]]; then
-    docker info --format 'Server: {{.ServerVersion}}' || true
+  # A Docker CLI request to an inactive daemon can activate docker.socket.
+  # Never contact the daemon in status mode unless docker.service is already active.
+  if systemctl is-active --quiet docker.service; then
+    echo 'Docker service: active'
+    docker ps -a --format '{{.Names}}: {{.Status}}' || true
+  else
+    echo 'Docker service: inactive (daemon not contacted)'
   fi
-  docker ps -a --format '{{.Names}}: {{.Status}}' || true
 else
   echo 'Docker not installed.'
 fi
