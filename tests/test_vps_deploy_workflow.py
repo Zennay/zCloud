@@ -5,6 +5,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
+    def test_governor_executor_promotes_in_guarded_backend_transaction(self):
+        workflow = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        before = workflow.index("      - name: Promote backend runtime core")
+        after = workflow.index("      - name: Promote autonomy policies and queue seed")
+        backend = workflow[before:after]
+        self.assertIn("steps.prewrite.outputs.deploy == 'true'", backend)
+        self.assertIn("scripts/zcloud_transactional_promote.py", backend)
+        self.assertIn("--candidate \"$GITHUB_WORKSPACE\"", backend)
+        self.assertIn("--path server.py", backend)
+        self.assertIn("--path project_runtime.py", backend)
+        self.assertIn("--path scripts/zcloud_governed_exec.py", backend)
+        self.assertIn("--path project-contracts.json", backend)
+        self.assertLess(
+            backend.index("--path project_runtime.py"),
+            backend.index("--path scripts/zcloud_governed_exec.py"),
+        )
+        self.assertEqual(
+            workflow.count("--path scripts/zcloud_governed_exec.py"), 1
+        )
+        self.assertNotIn("--path history.db", workflow)
+        self.assertNotIn("--path history.db-wal", workflow)
+        # The existing LKG transaction must snapshot/restore the entire
+        # scripts tree; changing the workflow alone cannot disable rollback.
+        recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('    "scripts",', recovery)
+        self.assertIn('    "history.db",', recovery)
+        promoter = (ROOT / "scripts/zcloud_transactional_promote.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('    "history.db",', promoter)
+        self.assertNotIn('    "scripts/zcloud_governed_exec.py",', promoter.split("BLOCKED_PREFIXES = (")[1].split(")")[0])
+
     def test_deploy_only_follows_green_main_regression(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn('workflows: ["zCloud regression smoke"]', text)
@@ -339,6 +375,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "server.py",
             "project_runtime.py",
             "lane_generator.py",
+            "scripts/zcloud_governed_exec.py",
             "scripts/zcloud_recovery.py",
             "project-contracts.json",
             "autonomy-policy.json",
