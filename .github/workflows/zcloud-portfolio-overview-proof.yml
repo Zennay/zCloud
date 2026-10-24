@@ -1,0 +1,116 @@
+name: zCloud portfolio overview proof
+
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_portfolio_overview.py"
+      - "tests/test_portfolio_overview.py"
+      - "tests/test_portfolio_overview_workflow.py"
+      - ".github/workflows/zcloud-portfolio-overview-proof.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_portfolio_overview.py"
+      - "tests/test_portfolio_overview.py"
+      - "tests/test_portfolio_overview_workflow.py"
+      - ".github/workflows/zcloud-portfolio-overview-proof.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-portfolio-overview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+      - name: Run portfolio overview contract
+        run: python3 -m unittest -v tests.test_portfolio_overview tests.test_portfolio_overview_workflow
+
+  permanent-vps-proof:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.owner.login == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify exact checkout and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Read live portfolio surfaces and prove compact overview
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json
+          import sys
+          import urllib.request
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          base = "http://127.0.0.1:8765"
+          paths = {
+              "runner-live": "/api/runner-live",
+              "queue": "/api/portfolio-queue?all=1",
+              "attention": "/api/portfolio-attention",
+              "resources": "/api/resources",
+          }
+          for name, path in paths.items():
+              with urllib.request.urlopen(base + path, timeout=10) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"{name} HTTP {response.status}")
+                  data = json.load(response)
+              (root / f"{name}.json").write_text(json.dumps(data), encoding="utf-8")
+          PY
+          out="$RUNNER_TEMP/portfolio-overview.json"
+          python3 scripts/zcloud_portfolio_overview.py \
+            --runner-live "$RUNNER_TEMP/runner-live.json" \
+            --queue "$RUNNER_TEMP/queue.json" \
+            --attention "$RUNNER_TEMP/attention.json" \
+            --resources "$RUNNER_TEMP/resources.json" \
+            --require-complete > "$out"
+          python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data["schema_version"] == "zcloud-portfolio-overview-v1"
+          assert data["coverage_complete"] is True
+          assert data["summary"]["projects"] == len(data["projects"])
+          forbidden = {"queue_id", "attention_id", "title", "detail", "action", "prompt", "conversation_id"}
+          assert all(not (forbidden & set(item)) for item in data["projects"])
+          print(
+              "ZCLOUD_PORTFOLIO_OVERVIEW_LIVE_READ_GREEN",
+              f"projects={data['summary']['projects']}",
+              f"running={data['summary']['running']}",
+              f"attention={data['summary']['needs_attention']}",
+          )
+          PY
