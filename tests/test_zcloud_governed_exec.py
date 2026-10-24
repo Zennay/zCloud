@@ -75,6 +75,18 @@ class GovernedExecTests(unittest.TestCase):
                                 "memory_soft_mb": 1024,
                             },
                         },
+                        "lightup": {
+                            "queue_mode": "execution",
+                            "lane_profile": "research-validation",
+                            "ai_worker_cap": 1,
+                            "autonomy": {"mode": "ai_worker", "auto_start": True},
+                            "compute": {
+                                "class": "research-heavy",
+                                "pool": "heavy",
+                                "cpu_soft_cores": 1,
+                                "memory_soft_mb": 1024,
+                            },
+                        },
                     },
                 }
             ),
@@ -241,6 +253,52 @@ class GovernedExecTests(unittest.TestCase):
         self.assertFalse(snapshot["admission_granted"])
         legacy.assert_not_called()
         recovery.assert_not_called()
+
+    def test_three_research_projects_share_one_heavy_slot(self):
+        # FTMO, HaxLab and LightUp must not independently admit research
+        # work when the same temporary SQLite authority has one heavy slot.
+        holder = self._connect()
+        lease = runtime.acquire_resource(holder, "ftmo", "three-way-holder")
+        self.assertTrue(lease["acquired"], lease)
+        holder.commit()
+        try:
+            for project in ("haxlab", "lightup"):
+                marker = self.root / (project + "-must-not-run")
+                rc = governed.run_governed(
+                    self.db, project, project + "-contender",
+                    [
+                        sys.executable, "-c",
+                        f"from pathlib import Path; Path({str(marker)!r}).write_text('wrong')",
+                    ],
+                )
+                self.assertEqual(75, rc, project)
+                self.assertFalse(marker.exists(), project)
+            self.assertEqual(
+                1, holder.execute(
+                    "SELECT COUNT(*) FROM resource_leases WHERE pool='heavy'"
+                ).fetchone()[0],
+            )
+            runtime.release_resource(holder, "ftmo", "three-way-holder")
+            holder.commit()
+            marker = self.root / "lightup-after-release"
+            rc = governed.run_governed(
+                self.db, "lightup", "after-ftmo-release",
+                [
+                    sys.executable, "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).write_text('ready')",
+                ],
+            )
+            self.assertEqual(0, rc)
+            self.assertEqual("ready", marker.read_text())
+            self.assertEqual(
+                0, holder.execute(
+                    "SELECT COUNT(*) FROM resource_leases WHERE pool='heavy'"
+                ).fetchone()[0],
+            )
+        finally:
+            runtime.release_resource(holder, "ftmo", "three-way-holder")
+            holder.commit()
+            holder.close()
 
     def test_busy_heavy_pool_fails_closed_before_child_starts(self):
         conn = self._connect()
