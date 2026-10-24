@@ -10,6 +10,11 @@ on:
       - "tests/test_ftmo_diagnostic_dispatch_isolation_20261014.py"
       - ".github/workflows/zcloud-ftmo-research-runner-diagnostic.yml"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact current main SHA approved for a read-only FTMO diagnostic"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -56,7 +61,9 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -79,6 +86,8 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "${{ inputs.confirm_sha }}" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           # Fail closed if main moved since the manual run was dispatched.
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
