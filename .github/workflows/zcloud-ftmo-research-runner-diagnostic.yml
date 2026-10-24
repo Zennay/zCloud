@@ -79,6 +79,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.sha }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -87,7 +88,7 @@ jobs:
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
           test "$GITHUB_RUN_ATTEMPT" = "1"
-          test "${{ inputs.confirm_sha }}" = "$GITHUB_SHA"
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           # Fail closed if main moved since the manual run was dispatched.
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
