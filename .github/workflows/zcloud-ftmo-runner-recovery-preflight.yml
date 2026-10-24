@@ -10,6 +10,11 @@ on:
       - "tests/test_ftmo_runner_recovery_dispatch_isolation_20261014.py"
       - ".github/workflows/zcloud-ftmo-runner-recovery-preflight.yml"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Confirm the exact current main commit for owner-only VPS inspection"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -60,7 +65,9 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -76,6 +83,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.sha }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -83,6 +91,10 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
