@@ -30,8 +30,7 @@ concurrency:
 jobs:
   verify:
     name: Verify offline tab-preservation regressions
-    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Read the exact approved source without persisted credentials
@@ -67,14 +66,22 @@ jobs:
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     steps:
       - name: Checkout exact approved main SHA without credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
           fetch-depth: 1
+      - name: Admit permanent VPS identity before any executable preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Verify owner identity and immutable release intent before writes
         shell: bash
         env:
@@ -115,6 +122,32 @@ jobs:
           prewrite_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$prewrite_main"
           test "$prewrite_main" = "$GITHUB_SHA"
+          # Preserve the existing VPS owner's checkout. A matching GitHub
+          # dispatch SHA does NOT prove this separate runtime checkout is
+          # clean or even on the same commit. Refuse to overwrite an untracked,
+          # modified, or symlinked watchdog file during a serialized release.
+          test ! -L "$live"
+          test ! -d "$live"
+          if test -d "$root/scripts" && test -w "$root/scripts"; then
+            test ! -L "$root"
+            test ! -L "$root/scripts"
+            test ! -L "$root/scripts/zcloud_worker_watchdog.py"
+            runtime_main="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" rev-parse --verify HEAD)"
+            if test "$runtime_main" != "$GITHUB_SHA"; then
+              echo "::error::Runtime checkout is not the exact approved main; preserve the owner's checkout."
+              exit 1
+            fi
+            watchdog_status="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" status --porcelain=v1 --untracked-files=all -- scripts/zcloud_worker_watchdog.py)"
+            if test -n "$watchdog_status"; then
+              echo "::error::Runtime watchdog path has uncommitted or untracked owner work; refusing to overwrite."
+              exit 1
+            fi
+          fi
+          # A backup pathname must not redirect through an unexpected
+          # symlink; prepare the private directory only after all preflights.
+          state_dir="$HOME/.local/state/zcloud"
+          test ! -L "$state_dir"
+          umask 077
           backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
