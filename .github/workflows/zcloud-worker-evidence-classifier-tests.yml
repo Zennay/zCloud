@@ -1,0 +1,23 @@
+name: zCloud worker evidence classifier tests
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/zcloud_worker_evidence_classifier.py'
+      - 'tests/test_zcloud_worker_evidence_classifier.py'
+      - '.github/workflows/zcloud-worker-evidence-classifier-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classifier-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run isolated fail-closed classifier regressions
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_worker_evidence_classifier.py' -v
