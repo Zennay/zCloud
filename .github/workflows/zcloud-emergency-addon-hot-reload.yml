@@ -62,16 +62,24 @@ jobs:
       github.run_attempt == 1 &&
       inputs.approve_addon_reload == true &&
       inputs.confirm_sha == github.sha
+    # Serialize live VPS writers with the canonical production release; do not cancel an active release.
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Checkout immutable exact approved main revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
 
+      - name: Verify permanent zCloud runner before any live commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Verify manually approved exact current main and permanent runner before live reads
         shell: bash
         env:
@@ -134,6 +142,19 @@ jobs:
           test "$(id -un)" = "ubuntu"
           python3 scripts/zcloud_vps_runner_guard.py --json
           python3 scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
+          # The earlier read-only add-on check is not an immutable admission:
+          # re-verify the exact installed bytes after the final idle/main gate.
+          source="firefox-extension/background.js"
+          live="$HOME/snap/firefox/common/chatgpt-project-extension/background.js"
+          if test -L "$source" || test -L "$live" || test -L "${live%/*}"; then
+            echo "::error::Add-on source/installed path changed to a symlink; deny reload."
+            exit 1
+          fi
+          test -f "$source"
+          test -f "$live"
+          cmp -- "$source" "$live"
+          ! grep -Fq 'browser.tabs.create(' "$live"
+          ! grep -Fq 'browser.tabs.remove(' "$live"
           main_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test -n "$main_pid"
           kill -0 "$main_pid"
@@ -145,3 +166,4 @@ jobs:
           test "$main_pid" = "$new_pid"
           echo "FIREFOX_MAIN_PID_AFTER=$new_pid"
           echo "NO_FIREFOX_RESTART_OR_TAB_TERMINATION_ISSUED=1"
+          python3 scripts/zsentinel_release_receipt.py --component emergency-addon --outcome reload-command-succeeded

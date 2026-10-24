@@ -69,17 +69,27 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
     needs: unit
+    # Serialize live VPS writers with the canonical production release; do not cancel an active release.
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
+      - name: Verify permanent zCloud runner before any live commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
       - name: Verify exact immutable main and authorized permanent runner
         env:
           APPLY: ${{ inputs.apply }}
@@ -91,6 +101,8 @@ jobs:
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
           test "$APPLY" = true
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
@@ -110,20 +122,123 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          source="/home/ubuntu/zennay-cloud/firefox-extension"
+          # A queued VPS job may start long after the admission step: fail closed before any writes.
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          runtime_root="/home/ubuntu/zennay-cloud"
+          source="$runtime_root/firefox-extension"
           live="$HOME/snap/firefox/common/chatgpt-project-extension"
+          # Never overwrite unreviewed local owner edits or redirect through
+          # a symlink. An approved Actions SHA is not the runtime tree SHA.
+          for guarded_path in "$runtime_root" "$source" "$source/background.js" "$live" "$live/background.js"; do
+            if test -L "$guarded_path"; then
+              echo "::error::Worker add-on path is a symlink; refusing live overwrite."
+              exit 1
+            fi
+          done
+          if test "$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" rev-parse --verify HEAD)" != "$GITHUB_SHA"; then
+            echo "::error::Runtime checkout does not match approved main; leave owner files untouched."
+            exit 1
+          fi
+          # Git inspection errors are UNKNOWN, never proof of a clean tree.
+          if ! runtime_background_status="$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" status --porcelain=v1 --untracked-files=all -- firefox-extension/background.js)"; then
+            echo "::error::Unable to inspect runtime worker background; refusing overwrite."
+            exit 1
+          fi
+          if test -n "$runtime_background_status"; then
+            echo "::error::Runtime worker background has uncommitted owner changes; refusing overwrite."
+            exit 1
+          fi
+          if [ ! -f "$source/background.js" ] || [ ! -f "$live/background.js" ]; then
+            echo "::error::Missing installed worker background; no blind creation."
+            exit 1
+          fi
           if [ ! -f "$source/manifest.json" ] || [ ! -f "$live/manifest.json" ]; then
             echo "Worker extension location differs from the verified VPS layout; refuse replacing unknown code."
             exit 1
           fi
-          # Update the source and running extension profile independently,
-          # without a service restart, cache eviction or tab reassignment.
-          install -m 0644 firefox-extension/background.js "$source/background.js"
-          install -m 0644 firefox-extension/background.js "$live/background.js"
-          cmp firefox-extension/background.js "$source/background.js"
-          cmp firefox-extension/background.js "$live/background.js"
+          # The approved runtime checkout must ALREADY match the source.
+          # Never edit its tracked background file as a side effect of activation.
+          if ! cmp -s -- firefox-extension/background.js "$source/background.js"; then
+            echo "::error::Runtime background differs from approved source; refusing to overwrite owner work."
+            exit 1
+          fi
+          # The approved version may already be staged from an earlier
+          # authorized run whose live reload was deferred. Never rewrite an
+          # identical installed file just to try the separate reload again.
+          if cmp -s -- firefox-extension/background.js "$live/background.js"; then
+            echo "WORKER_TAB_GUARD_ALREADY_CURRENT=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome already-current
+            exit 0
+          fi
+          # A running or unknown worker must not see a new installed add-on
+          # before the safe-idle decision. Unknown evidence refuses the write.
+          python3 scripts/zsentinel_addon_idle_gate.py
+          # Only the installed add-on is replaced. Stage and preserve the old
+          # bytes in its own directory, so rename and rollback are same-FS.
+          # An interrupted process can leave an approved new file in place,
+          # but never a partially copied live background.js.
+          live_dir="$live"
+          staged=""
+          backup=""
+          swapped=0
+          cleanup_live_install() {
+            rc=$?
+            if test "$rc" -ne 0 && test "$swapped" -eq 1; then
+              # An owner might change the live add-on even after our atomic
+              # swap. Never roll back over those newer bytes.
+              if test -L "$live" || test -L "$live/background.js" \
+                 || ! cmp -s -- firefox-extension/background.js "$live/background.js"; then
+                echo "::error::Installed addon changed after our swap; preserve owner bytes and recovery backup."
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-owner-preserved || true
+                backup=""
+              elif ! mv -f -- "$backup" "$live/background.js"; then
+                echo "::error::Failed to restore previous live add-on; backup retained for operator recovery."
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-failed || true
+                # Do not delete the only remaining recoverable copy.
+                backup=""
+              else
+                python3 scripts/zsentinel_release_receipt.py --component addon --outcome rollback-restored || true
+              fi
+            fi
+            if test -n "$staged"; then rm -f -- "$staged"; fi
+            if test -n "$backup"; then rm -f -- "$backup"; fi
+          }
+          trap cleanup_live_install EXIT
+          staged="$(mktemp "$live_dir/.background.zsentinel.new.XXXXXXXX")"
+          backup="$(mktemp "$live_dir/.background.zsentinel.old.XXXXXXXX")"
+          install -m 0644 firefox-extension/background.js "$staged"
+          cmp -- firefox-extension/background.js "$staged"
+          cp -p -- "$live/background.js" "$backup"
+          # A late remote-main change denies the live write, not just the
+          # earlier checkout and admission step.
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          # Recheck the admission after the staged copy and backup. A worker
+          # may begin generation during the bounded copy window.
+          python3 scripts/zsentinel_addon_idle_gate.py
+          # A concurrently running owner may have changed the installed
+          # background while the idle observation was waiting. Refuse to
+          # overwrite those bytes rather than trusting the earlier snapshot.
+          if test -L "$live" || test -L "$live/background.js" \
+             || ! cmp -s -- "$backup" "$live/background.js"; then
+            echo "::error::Installed add-on changed during guarded admission; owner bytes preserved."
+            exit 1
+          fi
+          if ! cmp -s -- firefox-extension/background.js "$source/background.js"; then
+            echo "::error::Runtime source changed during guarded admission; refusing live overwrite."
+            exit 1
+          fi
+          mv -f -- "$staged" "$live/background.js"
+          swapped=1
+          cmp -- firefox-extension/background.js "$live/background.js"
           echo "WORKER_TAB_GUARD_INSTALLED=1"
           echo "Worker extension source installed; no active tabs touched during install."
+          python3 scripts/zsentinel_release_receipt.py --component addon --outcome disk-installed
 
       - name: Activate patch only when worker browser has a safe idle window
         shell: bash
@@ -132,66 +247,40 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
+          # Each GitHub Actions step starts a fresh shell. The install step's
+          # 'live' variable is NOT available here; resolve it independently.
+          live="$HOME/snap/firefox/common/chatgpt-project-extension"
           # The active user session normally runs as standalone Violentmonkey
           # Firefox. systemd may be inactive even though a live Firefox with
           # the remote debugger is open. Detect the actual browser process
           # and hot-reload only the add-on, not the window or any tab.
           if ! ps -eo args= | grep -E '[f]irefox.*-start-debugger-server[[:space:]]+[0-9]+' >/dev/null; then
             echo "No running Firefox debugger: defer extension reload; never start a window."
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-no-debugger
             exit 0
           fi
-          if ! python3 - <<'PY'
-          import json
-          import time
-          import urllib.request
-
-          def read():
-              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live",timeout=8) as response:
-                  data=json.load(response)
-              runners=data.get("chatgpt_runners")
-              if not isinstance(runners,dict) or not runners:
-                  raise ValueError("No reliable worker observations")
-              workers=[w for p in runners.values() if isinstance(p,dict)
-                       for w in (p.get("workers") or []) if isinstance(w,dict)]
-              if not workers:
-                  raise ValueError("No observed worker entries")
-              identities=set()
-              for worker in workers:
-                  if not worker.get("active"):
-                      continue
-                  wid=str(worker.get("worker_id") or "")
-                  if not wid or wid in identities:
-                      raise ValueError("Worker identity incomplete/colliding")
-                  identities.add(wid)
-                  if worker.get("generating") or worker.get("sending") or worker.get("desired_state")=="draining":
-                      raise ValueError("Worker is actively generating, sending or draining")
-                  if ((worker.get("command") or {}).get("status")=="pending"):
-                      raise ValueError("Command pending")
-                  age=worker.get("age_seconds")
-                  last=(worker.get("last_event") or {}).get("event")
-                  if last in {"prompt-sent","generation-started"} and (age is None or age < 180):
-                      raise ValueError("Recent generation not proven finished")
-              return identities
-
-          try:
-              first=read()
-              time.sleep(12)
-              second=read()
-              if first!=second:
-                  raise ValueError("Worker allocation changed during idle window")
-              print("SAFE_IDLE_WORKERS="+str(len(second)))
-          except Exception as e:
-              print("SKIP_WORKER_FIREFOX_RESTART="+str(e)[:200])
-              raise SystemExit(1)
-          PY
-          then
-            echo "Existing worker is busy/unknown: no forced browser restart. Patch will activate on next natural safe restart."
+          if ! python3 scripts/zsentinel_addon_idle_gate.py; then
+            echo "Existing worker busy/unknown: defer addon reload; no forced tab restart."
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-busy
             exit 0
           fi
           # Reload only the extension, never terminate the visible Firefox
           # session. Defer activation if there is no debugger connection.
+          # Revalidate current main immediately before in-place addon reload.
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          # Deny activation if the installed add-on changed after the last
+          # prewrite admission, even if the browser became idle again.
+          test ! -L "$live"
+          test ! -L "$live/background.js"
+          cmp -- firefox-extension/background.js "$live/background.js"
           if node scripts/zcloud_reload_extension.mjs; then
             echo "WORKER_TAB_GUARD_ACTIVATED_IN_PLACE=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-command-succeeded
           else
             echo "WORKER_TAB_GUARD_RELOAD_DEFERRED=1"
+            python3 scripts/zsentinel_release_receipt.py --component addon --outcome reload-deferred-error
           fi
