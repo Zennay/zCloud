@@ -78,12 +78,14 @@ jobs:
 
       - name: Verify exact candidate and permanent runner
         shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
           test "$GITHUB_RUN_ATTEMPT" = "1"
-          test "${{ inputs.confirm_sha }}" = "$GITHUB_SHA"
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(id -un)" = ubuntu
           # Manual proof uses only a fresh, owner-dispatched canonical main.
           # A stale workflow_dispatch SHA may not be interpreted as current state.
