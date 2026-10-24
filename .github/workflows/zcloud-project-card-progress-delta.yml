@@ -1,0 +1,62 @@
+name: zCloud project card progress delta
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - public/enhancements.js
+      - tests/test_project_card_progress_delta.js
+      - tests/test_project_card_progress_delta.py
+      - tests/test_resource_technical_details_disclosure.py
+      - .github/workflows/zcloud-project-card-progress-delta.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-project-card-progress-delta-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Run dashboard finish contracts
+        run: |
+          python3 -m unittest -v tests.test_project_card_progress_delta
+          python3 -m unittest -v tests.test_resource_technical_details_disclosure
+
+  permanent-vps-proof:
+    if: ${{ github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact head and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Prove previous-session progress delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_project_card_progress_delta
+          python3 -m unittest -v tests.test_resource_technical_details_disclosure
+          echo ZCLOUD_PROJECT_CARD_PROGRESS_DELTA_VPS_GREEN=1
+          echo ZCLOUD_RESOURCE_TECHNICAL_DETAILS_DISCLOSURE_VPS_GREEN=1
