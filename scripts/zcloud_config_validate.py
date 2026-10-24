@@ -84,6 +84,14 @@ def validate_projects(data, errors: list[str]) -> set[str]:
         if not isinstance(project, dict):
             errors.append(f"{prefix}: must be an object")
             continue
+        # Projects.json is presentation metadata only. Runtime-owned keys
+        # cannot silently override the versioned canonical contract.
+        legacy_runtime_keys = sorted(set(project) & {
+            "queue_mode", "lane_profile", "ai_worker_cap",
+            "autonomy", "compute", "protected",
+        })
+        add(errors, not legacy_runtime_keys,
+            f"{prefix}: duplicated runtime contract keys {legacy_runtime_keys}")
         pid = project.get("id")
         add(errors, isinstance(pid, str) and bool(ID_RE.fullmatch(pid or "")), f"{prefix}.id: lowercase slug required")
         if isinstance(pid, str):
@@ -151,7 +159,7 @@ def validate_project_contracts(
     priorities: set[str],
     errors: list[str],
 ) -> dict:
-    summary = {"project_count": 0, "resource_pools": []}
+    summary = {"project_count": 0, "resource_pools": [], "ai_worker_caps": {}}
     if not isinstance(data, dict):
         errors.append("project-contracts.json: object required")
         return summary
@@ -189,7 +197,8 @@ def validate_project_contracts(
         if not isinstance(contract, dict):
             errors.append(f"{prefix}: object required")
             continue
-        add(errors, isinstance(contract.get("queue_mode"), str) and bool(contract.get("queue_mode", "").strip()), f"{prefix}.queue_mode: non-empty string required")
+        add(errors, contract.get("queue_mode") in {"execution", "human-gated"},
+            f"{prefix}.queue_mode: execution or human-gated required")
         lane_profile = str(contract.get("lane_profile") or "").strip().lower()
         add(
             errors,
@@ -225,6 +234,9 @@ def validate_project_contracts(
         add(errors, isinstance(memory, int) and not isinstance(memory, bool) and memory >= 0, f"{prefix}.compute.memory_soft_mb: non-negative integer required")
         add(errors, compute.get("priority") in priorities, f"{prefix}.compute.priority: expected one of {sorted(priorities)}")
         add(errors, isinstance(compute.get("protected"), bool), f"{prefix}.compute.protected: boolean required")
+        if isinstance(compute.get("protected"), bool) and pool_name in pools:
+            add(errors, compute["protected"] == (pool_name == "protected"),
+                f"{prefix}.compute.protected: must match canonical resource pool")
 
         if contract.get("queue_mode") == "human-gated":
             add(errors, autonomy.get("auto_start") is False, f"{prefix}: human-gated project must not auto-start")
@@ -234,6 +246,12 @@ def validate_project_contracts(
 
     summary["project_count"] = len(contract_ids)
     summary["resource_pools"] = sorted(str(name) for name in pools)
+    summary["ai_worker_caps"] = {
+        str(pid): cap for pid, contract in contracts.items()
+        if isinstance(contract, dict)
+        for cap in [contract.get("ai_worker_cap")]
+        if isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0
+    }
     return summary
 
 
@@ -259,7 +277,8 @@ def validate_resource_policy(
         add(errors, priority in priorities, f"resource-policy.json.{pid}.priority: expected one of {sorted(priorities)}")
 
 
-def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int, errors: list[str]) -> dict:
+def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int,
+                          project_worker_caps: dict[str, int], errors: list[str]) -> dict:
     summary = {"checked": False, "targets": 0, "workers": 0}
     if not db_path.exists():
         errors.append("history.db: missing worker-state store")
@@ -278,8 +297,18 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
         workers = [dict(row) for row in conn.execute(
             "SELECT project_id,worker_slot,desired_state FROM runner_workers ORDER BY project_id,worker_slot"
         )]
+        allocations = (
+            [dict(row) for row in conn.execute(
+                "SELECT project_id,worker_slot FROM ai_global_slots ORDER BY slot"
+            )]
+            if "ai_global_slots" in tables else []
+        )
         conn.close()
-        summary = {"checked": True, "targets": len(targets), "workers": len(workers)}
+        summary = {
+            "checked": True, "targets": len(targets), "workers": len(workers),
+            "allocations": len(allocations),
+            "allocation_caps_checked": "ai_global_slots" in tables,
+        }
         desired = {"running", "paused", "draining"}
         by_project: dict[str, set[int]] = {}
         for worker in workers:
@@ -304,6 +333,26 @@ def validate_worker_state(db_path: Path, project_ids: set[str], max_workers: int
             add(errors, 1 <= count <= max_workers, f"history.db: worker_count out of range for {pid}: {count}")
             missing = [slot for slot in range(1, count + 1) if slot not in by_project.get(pid, set())]
             add(errors, not missing, f"history.db: missing configured worker slots for {pid}: {missing}")
+        # Runner target count is provisioned browser capacity, not the
+        # canonical active AI/code-work allocation limit. Only actual
+        # ai_global_slots reservations count against each project cap.
+        active: dict[str, int] = {}
+        for slot in allocations:
+            pid = str(slot["project_id"])
+            if pid == "portfolio-review":
+                continue  # not a normal project execution allocation
+            add(errors, pid in project_ids,
+                f"history.db: unknown AI allocation project {pid!r}")
+            cap = project_worker_caps.get(pid)
+            add(errors, cap is not None,
+                f"history.db: missing canonical AI worker cap for {pid!r}")
+            if pid not in project_ids or cap is None:
+                continue
+            active[pid] = active.get(pid, 0) + 1
+        for pid, count in sorted(active.items()):
+            add(errors, count <= project_worker_caps[pid],
+                f"history.db: active AI allocations exceed runtime contract for {pid}: "
+                f"{count}>{project_worker_caps[pid]}")
     except Exception as exc:
         errors.append(f"history.db: worker-state validation failed: {exc}")
     return summary
@@ -391,7 +440,10 @@ def validate(
         errors,
     )
     worker_state = (
-        validate_worker_state(db_path, executable_ids, max_workers, errors)
+        validate_worker_state(
+            db_path, executable_ids, max_workers,
+            runtime_contracts.get("ai_worker_caps", {}), errors,
+        )
         if db_path is not None and isinstance(max_workers, int) and max_workers > 0
         else {"checked": False}
     )

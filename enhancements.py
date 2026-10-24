@@ -72,16 +72,10 @@ def load_resource_policy():
             for pid, contract in contracts["projects"].items()
         }
     except Exception:
-        default = {
-            "haxlab": {"priority": "background"},
-            "ftmo": {"priority": "turbo"},
-            "supa": {"priority": "normal"},
-            "raiseai": {"priority": "normal"},
-            "cloud": {"priority": "normal"},
-            "ulab": {"priority": "normal"},
-            "zssh": {"priority": "high"},
-            "lightup": {"priority": "normal"},
-        }
+        # The dashboard may still render partial telemetry, but an absent or
+        # invalid canonical contract must never synthesize project policies.
+        return {}
+
     try:
         raw = json.loads(RESOURCE_FILE.read_text())
     except Exception:
@@ -209,6 +203,8 @@ def set_priority(project, priority):
     if priority not in PRIORITY_WEIGHTS:
         raise ValueError("Ongeldige prioriteit")
     policy = load_resource_policy()
+    if project not in policy:
+        raise ValueError("Project heeft geen geldig runtimecontract")
     policy[project] = {"priority": priority}
     tmp = RESOURCE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(policy, ensure_ascii=False, indent=2) + "\n")
