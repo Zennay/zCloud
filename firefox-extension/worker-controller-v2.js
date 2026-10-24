@@ -122,6 +122,12 @@
     }
     return workerMarker(tab.url);
   }
+  browser.runtime.onMessage.addListener((message,sender) => {
+    if(message?.type!=="zcloud-worker-identity" || !sender.tab ||
+       !isWorkerUrl(sender.tab.url))return undefined;
+    return tagOf(sender.tab).then(key=>
+      /^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(key||"")?key:null);
+  });
   async function restoredTabIdentity(tab) {
     const tagged = await tagOf(tab);
     if (tagged) return tagged;
@@ -163,6 +169,15 @@
       try { await browser.sessions.setTabValue(tab.id, TAG, id); } catch (_) {}
       await rememberWorker(id);
       if (workerWindow === null) workerWindow = tab.windowId;
+    }
+    // A restored Firefox session tag is the durable authority. Bootstrap
+    // the page even if document-start messaging raced extension startup.
+    for(const [key,tabId] of ownership){
+      const tab=tabs.find(t=>t.id===tabId);
+      if(!tab || !isWorkerUrl(tab.url) || await tagOf(tab)!==key)continue;
+      try{await browser.tabs.executeScript(tabId,{code:
+        '(() => { const key='+JSON.stringify(key)+'; const prior=sessionStorage.getItem("zcloud-v2-worker"); if(prior && prior!==key)return; sessionStorage.setItem("zcloud-v2-worker",key); document.documentElement?.dispatchEvent(new Event("zcloud-worker-identity-ready")); })()'
+      })}catch(_){}
     }
     return tabs;
   }
