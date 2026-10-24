@@ -665,6 +665,7 @@ jobs:
             --candidate "$GITHUB_WORKSPACE" \
             --path server.py \
             --path project_runtime.py \
+            --path scripts/zcloud_governed_exec.py \
             --path project-contracts.json \
             --path lane_generator.py \
             --path vps-execution-policy.json \
