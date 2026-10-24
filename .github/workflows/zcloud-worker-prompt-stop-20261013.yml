@@ -35,7 +35,7 @@ jobs:
   trusted-pr-source:
     # No checkout of pull_request source until the owner/repository admission
     # is explicitly successful. A fork must fail, not report a green skip.
-    if: (github.event_name == 'pull_request') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    if: github.event_name == 'pull_request' && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
