@@ -63,7 +63,11 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             text.index("jobs:\n  preflight:"):
             text.index("\n  deploy:", text.index("jobs:\n  preflight:"))
         ]
-        self.assertIn("runs-on: ubuntu-latest", preflight)
+        # Repository-owned, actor-trusted metadata jobs now use the
+        # migrated zCloud runner rather than GitHub-hosted runners.
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", preflight)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", preflight)
+        self.assertIn("github.actor == 'Zennay'", preflight)
         self.assertIn("Skip current main when production is already green", preflight)
         self.assertIn("/commits/main/status", preflight)
         self.assertIn('"context") or "") == "zcloud/vps-production"', preflight)
@@ -584,7 +588,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertLess(text.index("Resume external self-heal"), text.index(step))
         self.assertLess(text.index(step), text.index("Write deploy operator summary"))
 
-    def test_terminal_production_status_is_hosted_and_survives_vps_job_failure(self):
+    def test_terminal_production_status_is_trusted_after_vps_job_failure(self):
         text = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("id: production_pending", text)
         self.assertIn('echo "marked=true" >> "$GITHUB_OUTPUT"', text)
@@ -593,10 +597,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         publish = text[text.index("  finalize-production-status:"):]
         self.assertIn("needs: deploy", publish)
         self.assertIn(
-            "if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''",
+            "always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''",
             publish,
         )
-        self.assertIn("runs-on: ubuntu-latest", publish)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", publish)
+        self.assertIn("github.actor == 'Zennay'", publish)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", publish)
         self.assertIn("DEPLOY_SHA: ${{ needs.deploy.outputs.deploy_sha }}", publish)
         self.assertIn("DEPLOY_RESULT: ${{ needs.deploy.result }}", publish)
         self.assertIn('"context": "zcloud/vps-production"', publish)
