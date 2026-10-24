@@ -98,6 +98,20 @@ class GovernedExecTests(unittest.TestCase):
         runtime.CONTRACT_FILE = self.original_contract
         self.tmp.cleanup()
 
+    def _run_with_isolated_host_headroom(self, *args, **kwargs):
+        """Exercise process/lease behavior without live host RAM pressure.
+
+        These tests use a private temp SQLite DB, bounded short-lived child
+        commands and a synthetic tiny portfolio contract. Real host memory
+        headroom is neither deterministic nor the behavior under test here.
+        Dedicated memory arithmetic and fail-closed guards have separate
+        independent test coverage; production admission stays unchanged.
+        """
+        with mock.patch.object(
+            governed, "_nonprotected_memory_admission", return_value=None
+        ):
+            return governed.run_governed(*args, **kwargs)
+
     def _connect(self):
         conn = sqlite3.connect(self.db, timeout=15)
         conn.row_factory = sqlite3.Row
@@ -370,7 +384,7 @@ class GovernedExecTests(unittest.TestCase):
         with mock.patch.object(
             governed, "_group_rss_bytes", return_value=2 * 1024 * 1024 * 1024
         ) as sample:
-            rc = governed.run_governed(
+            rc = self._run_with_isolated_host_headroom(
                 self.db,
                 "ftmo",
                 "memory-breach-test",
@@ -474,6 +488,8 @@ class GovernedExecTests(unittest.TestCase):
             "import project_runtime as runtime; "
             f"runtime.CONTRACT_FILE = Path({str(self.contract)!r}); "
             "from scripts import zcloud_governed_exec as governed; "
+            "governed._nonprotected_memory_admission = "
+            "lambda *_args, **_kwargs: None; "
             "raise SystemExit(governed.run_governed("
             f"Path({str(self.db)!r}), 'ftmo', 'lost-generation-owner', "
             f"[sys.executable, '-c', {program!r}], "
@@ -636,7 +652,7 @@ class GovernedExecTests(unittest.TestCase):
             "'import time;time.sleep(8)']); "
             f"Path({str(marker)!r}).write_text(str(child.pid))"
         )
-        rc = governed.run_governed(
+        rc = self._run_with_isolated_host_headroom(
             self.db,
             "ftmo",
             "parent-exit-tree-cleanup",
@@ -727,7 +743,7 @@ class GovernedExecTests(unittest.TestCase):
         conn.close()
 
     def test_failed_child_preserves_exit_code_and_releases_lease(self):
-        rc = governed.run_governed(
+        rc = self._run_with_isolated_host_headroom(
             self.db,
             "ftmo",
             "run-failure",
@@ -750,7 +766,7 @@ class GovernedExecTests(unittest.TestCase):
             f"Path({str(marker)!r}).write_text(json.dumps({{'cpus':len(os.sched_getaffinity(0)),"
             "'memory':resource.getrlimit(resource.RLIMIT_AS)[0]}))"
         )
-        rc = governed.run_governed(
+        rc = self._run_with_isolated_host_headroom(
             self.db,
             "ftmo",
             "run-limits",
