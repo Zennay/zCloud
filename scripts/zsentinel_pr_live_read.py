@@ -1,0 +1,1892 @@
+#!/usr/bin/env python3
+"""Bounded live GitHub PR observations for the source-linked zSentinel owner desk.
+
+This read-only adapter observes at most three historically referenced
+candidate PRs for *one* exact issue. It deliberately cannot authorize a
+merge, claim, rerun or deployment. GitHub API failures are UNKNOWN, never
+a missing PR, available owner or green required CI.
+"""
+from __future__ import annotations
+
+import hashlib
+import html
+import json
+import os
+import re
+from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, parse_qs
+from urllib.request import Request, HTTPRedirectHandler, build_opener
+
+UTC = timezone.utc
+SHA = re.compile("^[a-f0-9]{40}$")
+REPO_URL = re.compile(
+    "^https://github[.]com/(Zennay)/([A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]*)$"
+)
+ISSUE_URL = re.compile(
+    "^https://github[.]com/(Zennay)/([A-Za-z0-9_.-]{1,100})/issues/([1-9][0-9]*)$"
+)
+MAX_BODY_BYTES = 160 * 1024
+MAX_DISCOVERY_BODY_BYTES = 2 * 1024 * 1024
+MAX_CANDIDATES = 3
+MAX_LIST_PAGE = 30
+MAX_DISCOVERY_PAGES = 4  # Bounded open-PR inventory; never an exhaustive ownership claim.
+MAX_DISCOVERY_HINTS = 12  # Navigation-only hints; at most 3 can get live PR reads.
+MAX_TIMELINE_PAGES = 3  # First + at most two recent tail pages.
+MAX_ASSIGNEES = 20
+
+
+class GitHubReadError(ValueError):
+    """GitHub public/private source was not usable for a non-authorizing view."""
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise GitHubReadError("GitHub API redirect refused")
+
+
+def utc():
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _timeline_last_page(link_header, requested_path):
+    """Parse only a canonical GitHub timeline rel=last page number.
+
+    Never follow provider-supplied URLs. Reconstruct the next request from
+    the already-validated issue identity and one bounded integer.
+    """
+    if not isinstance(link_header, str) or len(link_header) > 4096:
+        return None
+    expected_path = requested_path.partition("?")[0]
+    for part in link_header.split(","):
+        match = re.fullmatch(
+            r'\s*<([^<>]{1,1000})>\s*;\s*rel="last"\s*',
+            part,
+        )
+        if not match:
+            continue
+        try:
+            parsed = urlsplit(match.group(1))
+        except ValueError:
+            continue
+        if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
+                or parsed.path != expected_path or parsed.fragment):
+            continue
+        try:
+            query = parse_qs(parsed.query, strict_parsing=True)
+        except ValueError:
+            continue
+        if set(query) != {"per_page", "page"} or query["per_page"] != [str(MAX_LIST_PAGE)]:
+            continue
+        page = query["page"][0] if len(query["page"]) == 1 else ""
+        if re.fullmatch(r"[1-9][0-9]{0,5}", page):
+            return int(page)
+    return None
+
+
+def _limited_json(path, *, token=None, max_body_bytes=MAX_BODY_BYTES,
+                  include_timeline_last_page=False):
+    """One fixed-host HTTPS GitHub GET, no redirects, strict byte cap."""
+    # Canonical search route is the only non-/repos source admitted.
+    # Exact shape, owner, issue-only filter, fixed sort and page cap prevent
+    # passing arbitrary external provider URLs or unbounded search queries.
+    issue_search = isinstance(path, str) and re.fullmatch(
+        r"/search/issues\?q=repo%3AZennay%2F[A-Za-z0-9_.-]{1,100}"
+        r"\+is%3Aissue\+is%3Aopen(?:\+P[01]\+in%3Atitle"
+        r"|\+label%3AP0%2Cpriority%3AP0%2Cpriority%2FP0"
+        r"|\+label%3AP1%2Cpriority%3AP1%2Cpriority%2FP1)?"
+        r"&sort=updated&order=desc"
+        r"&per_page=30&page=[123]",
+        path,
+    ) is not None
+    if (max_body_bytes not in (MAX_BODY_BYTES, MAX_DISCOVERY_BODY_BYTES)
+            or (max_body_bytes == MAX_DISCOVERY_BODY_BYTES
+                and not (
+                    "/pulls?state=open&per_page=" in path or
+                    "/timeline?per_page=" in path or issue_search
+                ))):
+        raise GitHubReadError(
+            "oversized read requires bounded PR, timeline or issue-only search"
+        )
+    if include_timeline_last_page and "/timeline?per_page=" not in path:
+        raise GitHubReadError("timeline pagination metadata requires timeline path")
+    if (not (path.startswith("/repos/Zennay/") or issue_search) or
+            any(char in path for char in ("#", "\\", "\n", "\r", "\t"))):
+        raise GitHubReadError("invalid bounded GitHub API path")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "zsentinel-readonly-pr-owner-desk",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = Request("https://api.github.com" + path, headers=headers, method="GET")
+    try:
+        with build_opener(NoRedirect).open(req, timeout=7) as response:
+            if response.status != 200:
+                raise GitHubReadError("GitHub API returned non-200 status")
+            data = response.read(max_body_bytes + 1)
+            if len(data) > max_body_bytes:
+                raise GitHubReadError("bounded GitHub response size exceeded")
+            payload = json.loads(data.decode("utf-8"))
+            if include_timeline_last_page:
+                return payload, _timeline_last_page(
+                    response.headers.get("Link"), path
+                )
+            return payload
+    except HTTPError as exc:
+        # Never print provider error bodies: a private error could echo secrets.
+        if exc.code == 401:
+            raise GitHubReadError("GitHub authentication unavailable") from exc
+        if exc.code == 429:
+            raise GitHubReadError("GitHub rate limit confirmed") from exc
+        if exc.code == 403:
+            # A 403 can be limited to one private/inaccessible repository.
+            # Only confirmed primary/secondary cooldown signals stop portfolio reads.
+            remaining = (exc.headers.get("X-RateLimit-Remaining")
+                         if exc.headers is not None else None)
+            retry_after = (exc.headers.get("Retry-After")
+                           if exc.headers is not None else None)
+            if remaining == "0" or retry_after is not None:
+                raise GitHubReadError(
+                    "GitHub authentication, quota or provider admission unavailable"
+                ) from exc
+            raise GitHubReadError(
+                "GitHub repository inaccessible or not found; access denied or secondary limit unknown"
+            ) from exc
+        if exc.code == 404:
+            raise GitHubReadError(
+                "GitHub resource inaccessible or not found; do not infer deletion"
+            ) from exc
+        raise GitHubReadError(
+            "GitHub read unavailable (HTTP " + str(exc.code) + ")"
+        ) from exc
+    except (URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:
+        raise GitHubReadError("GitHub read unavailable or malformed") from exc
+
+
+def _issue_summary(payload, full_name, number):
+    """Current issue state, never proof a fix landed or was deployed."""
+    if (type(payload) is not dict or type(payload.get("number")) is not int
+            or payload["number"] != number
+            or payload.get("pull_request") is not None
+            or payload.get("state") not in ("open", "closed")
+            or payload.get("repository_url") !=
+                "https://api.github.com/repos/" + full_name):
+        raise GitHubReadError("live issue identity or status is unavailable")
+    state = payload["state"]
+    reason = payload.get("state_reason")
+    if reason not in (None, "completed", "not_planned", "reopened"):
+        reason = "UNKNOWN"
+    # Only explicit GitHub labels are classified; an issue title,
+    # arbitrary issue body or guessed severity cannot elevate priority.
+    labels = payload.get("labels")
+    observed_priorities = set()
+    labels_complete = isinstance(labels, list) and len(labels) <= 100
+    if labels_complete:
+        for row in labels:
+            label = row.get("name") if isinstance(row, dict) else None
+            if not isinstance(label, str):
+                labels_complete = False
+                break
+            normalized = label.strip().lower().replace(" ", "")
+            if normalized in {
+                    "p0", "p1", "p2", "p3", "priority:p0",
+                    "priority:p1", "priority:p2", "priority:p3",
+                    "priority/p0", "priority/p1", "priority/p2",
+                    "priority/p3"}:
+                observed_priorities.add(normalized[-2:].upper())
+    conflict = len(observed_priorities) > 1
+    explicit_priority = (
+        next(iter(observed_priorities))
+        if labels_complete and len(observed_priorities) == 1
+        else "UNKNOWN"
+    )
+    raw_assignees = payload.get("assignees")
+    assignees_complete = (
+        isinstance(raw_assignees, list) and len(raw_assignees) <= MAX_ASSIGNEES
+    )
+    assignee_logins = []
+    if assignees_complete:
+        for assignee in raw_assignees:
+            login = assignee.get("login") if isinstance(assignee, dict) else None
+            if (not isinstance(login, str)
+                    or re.fullmatch(r"[A-Za-z0-9-]{1,39}", login) is None):
+                assignees_complete = False
+                break
+            assignee_logins.append(login)
+    if assignees_complete:
+        assignee_logins = sorted(set(assignee_logins))
+    else:
+        assignee_logins = None
+    return {
+        "observed_state": state,
+        "reported_state_reason": reason or "UNKNOWN",
+        "priority_from_explicit_labels": explicit_priority,
+        "priority_label_source_complete": labels_complete,
+        "priority_label_conflict": conflict,
+        "github_assignees": assignee_logins,
+        "github_assignees_source_complete": assignees_complete,
+        "github_assignees_are_active_claims": False,
+        "priority_is_authority": False,
+        "source_issue_still_open": state == "open",
+        "closed_does_not_prove_fix_merged": True,
+        "source_link_to_candidate_reverified": False,
+        "owner_claim_verified": False,
+        "issue_work_cleared": False,
+        "observed_at_utc": utc(),
+    }
+
+
+def _assignee_display(issue):
+    """Render current GitHub assignment without implying a worker lease."""
+    if issue.get("github_assignees_source_complete") is not True:
+        return "UNKNOWN"
+    names = issue.get("github_assignees")
+    if not isinstance(names, list):
+        return "UNKNOWN"
+    return ", ".join(names) if names else "none assigned in issue metadata"
+
+
+def _body_issue_reference(payload, full_name, issue_number):
+    """Inspect only the already-fetched PR body; never expose its contents.
+
+    Textual GitHub references are hints, not current issue cross-reference
+    graph proof, owner admission, closing automation or merged-main proof.
+    """
+    body = payload.get("body")
+    if body is None:
+        return "BODY_UNKNOWN", None
+    if type(body) is not str:
+        raise GitHubReadError("PR body is not canonical text")
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    if len(body) > 32768:
+        return "BODY_TOO_LARGE_UNKNOWN", digest
+    number = str(issue_number)
+    local = re.search(r"(?<![A-Za-z0-9_])#" + number + r"(?![0-9])", body)
+    full = re.search(
+        r"https://github[.]com/" + re.escape(full_name) +
+        r"/issues/" + number + r"(?![0-9])",
+        body, flags=re.IGNORECASE,
+    )
+    if not local and not full:
+        return "NO_TEXT_REFERENCE_IN_PR_BODY", digest
+    close = re.search(
+        r"\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
+        r"\s+(?:" + re.escape(full_name) + r")?#" + number + r"(?![0-9])",
+        body, flags=re.IGNORECASE,
+    )
+    return (
+        "CLOSING_KEYWORD_TEXT_OBSERVED" if close
+        else "ISSUE_TEXT_MENTION_OBSERVED"
+    ), digest
+
+
+def _title_issue_reference(payload, full_name, issue_number):
+    """Bounded title-only link hint; never proof of an issue cross-reference."""
+    title = payload.get("title")
+    if not isinstance(title, str) or len(title) > 300:
+        return "TITLE_UNKNOWN", None
+    return _body_issue_reference({"body": title}, full_name, issue_number)
+
+
+def _review_request_identities(payload):
+    """Canonical pending requests for an in-memory same-PR source comparison.
+
+    GitHub's requested reviewers are not submitted approvals. Never persist
+    identities or hashes of identities in reports; only expose bounded counts.
+    Partial, duplicate and malformed payloads are UNKNOWN, not zero requests.
+    """
+    if type(payload) is not dict:
+        return None
+    people, teams = payload.get("requested_reviewers"), payload.get("requested_teams")
+    if (type(people) is not list or type(teams) is not list
+            or len(people) > 100 or len(teams) > 100):
+        return None
+    def collect(rows, field, pattern):
+        admitted = []
+        for item in rows:
+            value = item.get(field) if type(item) is dict else None
+            if type(value) is not str or re.fullmatch(pattern, value) is None:
+                return None
+            admitted.append(value)
+        if len(set(admitted)) != len(admitted):
+            return None
+        return tuple(sorted(admitted))
+    users = collect(people, "login", r"[A-Za-z0-9-]{1,39}")
+    slugs = collect(teams, "slug", r"[A-Za-z0-9_-]{1,100}")
+    return (users, slugs) if users is not None and slugs is not None else None
+
+
+def _pr_summary(payload, full_name, number):
+    if not isinstance(payload, dict) or (
+        type(payload.get("number")) is not int or payload["number"] != number
+    ):
+        raise GitHubReadError("PR response has inconsistent identity")
+    base, head = payload.get("base"), payload.get("head")
+    if not isinstance(base, dict) or not isinstance(head, dict):
+        raise GitHubReadError("PR response omitted base/head")
+    repo = base.get("repo")
+    if not isinstance(repo, dict) or repo.get("full_name") != full_name:
+        raise GitHubReadError("PR response is from a different repository")
+    sha = head.get("sha")
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise GitHubReadError("PR HEAD SHA missing or invalid")
+    head_ref = head.get("ref")
+    head_repo = head.get("repo")
+    head_repo_full_name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+    if (not isinstance(head_ref, str) or not head_ref or len(head_ref) > 255
+            or head_ref != head_ref.strip()
+            or any(not char.isprintable() or char.isspace() for char in head_ref)
+            or not isinstance(head_repo_full_name, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repo_full_name)):
+        raise GitHubReadError("PR source repository/ref missing or invalid")
+    state, draft, merged = payload.get("state"), payload.get("draft"), payload.get("merged")
+    if state not in ("open", "closed") or type(draft) is not bool or type(merged) is not bool:
+        raise GitHubReadError("PR state incomplete or inconsistent")
+    base_ref = base.get("ref")
+    if (not isinstance(base_ref, str) or not base_ref or len(base_ref) > 255
+            or base_ref != base_ref.strip()
+            or any(not char.isprintable() or char.isspace() for char in base_ref)):
+        raise GitHubReadError("PR target branch invalid")
+    base_sha = base.get("sha")
+    if not isinstance(base_sha, str) or not SHA.fullmatch(base_sha):
+        raise GitHubReadError("PR base SHA missing or invalid")
+    # Preserve only counts in durable observations; the caller can compare
+    # canonical reviewer sets in memory before admitting a stable snapshot.
+    requested = _review_request_identities(payload)
+    pending_user_count = len(requested[0]) if requested is not None else None
+    pending_team_count = len(requested[1]) if requested is not None else None
+    return {
+        "number": number, "url": "https://github.com/" + full_name + "/pull/" + str(number),
+        "observed_state": state, "observed_draft": draft,
+        "pending_reviewer_requests": pending_user_count,
+        "pending_team_review_requests": pending_team_count,
+        "reported_merged": merged, "target_branch": base_ref,
+        "base_repo_full_name": repo,
+        "base_sha": base_sha,
+        "head_repo_full_name": head_repo_full_name,
+        "head_ref": head_ref,
+        "exact_head_sha": sha, "head_verified_by_live_get": True,
+        "exact_head_checks_url": "https://github.com/" + full_name + "/commit/" + sha + "/checks",
+        "pr_files_url": "https://github.com/" + full_name + "/pull/" + str(number) + "/files",
+        "mergeable_hint": payload.get("mergeable") if type(payload.get("mergeable")) is bool else None,
+        "updated_at_source": payload.get("updated_at") if isinstance(payload.get("updated_at"), str) else None,
+    }
+
+
+def _checks_summary(payload, sha, full_name):
+    """A bounded incomplete HEAD-scoped observation, never a required-CI verdict."""
+    if not isinstance(payload, dict) or type(payload.get("total_count")) is not int:
+        raise GitHubReadError("check-run response missing total count")
+    rows = payload.get("check_runs")
+    count = payload["total_count"]
+    if not isinstance(rows, list) or len(rows) > MAX_LIST_PAGE or count < len(rows):
+        raise GitHubReadError("check-run sample invalid")
+    sums = {"completed_success": 0, "completed_other": 0, "not_completed": 0}
+    observed_names = []
+    sampled_blocking_checks = []
+    sampled_non_success_checks = []
+    sampled_pending_checks = []
+    sampled_check_observations = []
+    # Cancelled, stale, unknown and other non-success terminal conclusions
+    # must not silently disappear from the merge-first operator's attention.
+    # These are sampled hints, not proof that branch protection requires them.
+    for row in rows:
+        if not isinstance(row, dict):
+            raise GitHubReadError("invalid check-run row")
+        source_sha = row.get("head_sha")
+        # The endpoint URL is SHA-scoped, but unbound individual rows are
+        # not independent evidence of the expected HEAD. Require the exact
+        # row identity instead of silently accepting missing provenance.
+        if type(source_sha) is not str or source_sha != sha:
+            raise GitHubReadError("check-run row lacks matching exact HEAD identity")
+        status = row.get("status")
+        conclusion = row.get("conclusion")
+        check_id = row.get("id")
+        check_link = (
+            "https://github.com/" + full_name + "/runs/" + str(check_id)
+            if type(check_id) is int and 1 <= check_id <= 2**53 - 1 else None
+        )
+        name = row.get("name")
+        # Do not place provider-supplied control characters in human
+        # handoffs. The check URL itself is built from canonical identity.
+        clean_name = (
+            "".join(c if c.isprintable() else " " for c in name)[:90]
+            if isinstance(name, str) else "unnamed sampled check"
+        )
+        clean_context_name = (
+            "".join(c if c.isprintable() else " " for c in name)[:200]
+            if isinstance(name, str) else "unnamed sampled check"
+        )
+        if not isinstance(status, str) or not status or len(status) > 32:
+            raise GitHubReadError("check-run status is malformed")
+        if conclusion is not None and (not isinstance(conclusion, str) or len(conclusion) > 64):
+            raise GitHubReadError("check-run conclusion is malformed")
+        app = row.get("app")
+        app_id = app.get("id") if isinstance(app, dict) else None
+        if app_id is not None and (type(app_id) is not int or app_id < 0):
+            raise GitHubReadError("check-run app identity is malformed")
+        sampled_check_observations.append({
+            "name": clean_context_name,
+            "status": status,
+            "conclusion": conclusion,
+            "app_id": app_id,
+            "head_sha": source_sha,
+            "url": check_link,
+        })
+        if status == "completed" and conclusion not in ("success", "neutral", "skipped"):
+            if len(sampled_blocking_checks) < 6:
+                sampled_blocking_checks.append({
+                    "name": clean_name,
+                    "conclusion": conclusion if isinstance(conclusion, str) else "UNKNOWN",
+                    "url": check_link,
+                    "required_by_branch_protection": "UNKNOWN",
+                })
+        elif status == "completed" and conclusion in ("neutral", "skipped"):
+            if len(sampled_non_success_checks) < 6:
+                sampled_non_success_checks.append({
+                    "name": clean_name, "conclusion": conclusion, "url": check_link,
+                    "required_by_branch_protection": "UNKNOWN",
+                })
+        if status != "completed" and len(sampled_pending_checks) < 6:
+            sampled_pending_checks.append({
+                "name": clean_name, "status": str(status)[:32],
+                "url": check_link, "required_by_branch_protection": "UNKNOWN",
+            })
+        if status == "completed":
+            sums["completed_success" if row.get("conclusion") == "success"
+                 else "completed_other"] += 1
+        else:
+            sums["not_completed"] += 1
+        if clean_name not in observed_names:
+            observed_names.append(clean_name)
+    return {
+        "sampled_count": len(rows), "provider_total_count": count,
+        "sample_incomplete": count > len(rows),
+        "sample_status_counts": sums, "sample_names": observed_names[:12],
+        "sampled_check_observations": sampled_check_observations,
+        "sampled_blocking_checks": sampled_blocking_checks,
+        "sampled_non_success_checks": sampled_non_success_checks,
+        "sampled_pending_checks": sampled_pending_checks,
+        "required_checks_identified": False,
+        "required_ci_verdict": "UNKNOWN",
+    }
+
+
+def _commit_status_summary(payload, sha, full_name):
+    """Bounded commit-status observation pinned to one immutable SHA."""
+    if not isinstance(full_name, str) or not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", full_name):
+        raise GitHubReadError("commit-status repository identity is invalid")
+    if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{40}", sha):
+        raise GitHubReadError("commit-status exact HEAD SHA is invalid")
+    if type(payload) is not dict or payload.get("sha") != sha:
+        raise GitHubReadError("commit-status response SHA does not match exact HEAD")
+    count = payload.get("total_count")
+    rows = payload.get("statuses")
+    state = payload.get("state")
+    if type(count) is not int or not 0 <= count <= 10**9:
+        raise GitHubReadError("commit-status total count is invalid")
+    if not isinstance(rows, list) or len(rows) > MAX_LIST_PAGE or count < len(rows):
+        raise GitHubReadError("commit-status sample is invalid")
+    if state not in ("pending", "success", "failure", "error"):
+        raise GitHubReadError("combined commit-status state is invalid")
+    sampled = []
+    for row in rows:
+        if type(row) is not dict:
+            raise GitHubReadError("commit-status row is malformed")
+        context = row.get("context")
+        row_state = row.get("state")
+        if not isinstance(context, str) or not context.strip() or len(context) > 200:
+            raise GitHubReadError("commit-status context is malformed")
+        if row_state not in ("pending", "success", "failure", "error"):
+            raise GitHubReadError("commit-status row state is malformed")
+        updated_at = row.get("updated_at")
+        if updated_at is not None and (not isinstance(updated_at, str) or len(updated_at) > 64):
+            raise GitHubReadError("commit-status update clock is malformed")
+        sampled.append({
+            "context": context.strip(),
+            "state": row_state,
+            "updated_at": updated_at,
+        })
+    return {
+        "schema_version": "zsentinel-exact-commit-status-sample-v1",
+        "source_sha": sha,
+        "combined_state": state,
+        "sampled_count": len(sampled),
+        "provider_total_count": count,
+        "sample_incomplete": count > len(sampled),
+        "sampled_statuses": sampled,
+        "required_ci_verified": False,
+    }
+
+
+def _review_summary(rows, exact_head_sha=None):
+    if not isinstance(rows, list) or len(rows) > MAX_LIST_PAGE:
+        raise GitHubReadError("bounded PR review sample invalid")
+    if exact_head_sha is not None and (
+            not isinstance(exact_head_sha, str) or not SHA.fullmatch(exact_head_sha)):
+        raise GitHubReadError("review binding HEAD missing or invalid")
+    valid_states = (
+        "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"
+    )
+    states = {}
+    exact_head_states = {}
+    other_head_states = {}
+    unbound_states = {}
+    exact_head_count = other_head_count = unbound_count = 0
+    unknown_state_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise GitHubReadError("invalid review entry")
+        state = row.get("state")
+        valid_state = state if isinstance(state, str) and state in valid_states else None
+        if valid_state is not None:
+            states[valid_state] = states.get(valid_state, 0) + 1
+        else:
+            unknown_state_count += 1
+        if exact_head_sha is None:
+            continue
+        commit_id = row.get("commit_id")
+        if not isinstance(commit_id, str) or not SHA.fullmatch(commit_id):
+            unbound_count += 1
+            if valid_state is not None:
+                unbound_states[valid_state] = unbound_states.get(valid_state, 0) + 1
+        elif commit_id == exact_head_sha:
+            exact_head_count += 1
+            if valid_state is not None:
+                exact_head_states[valid_state] = exact_head_states.get(valid_state, 0) + 1
+        else:
+            other_head_count += 1
+            if valid_state is not None:
+                other_head_states[valid_state] = other_head_states.get(valid_state, 0) + 1
+    result = {
+        "sampled_count": len(rows), "may_be_truncated": len(rows) == MAX_LIST_PAGE,
+        "observed_review_states": states,
+        "unknown_review_state_count": unknown_state_count,
+        "independent_review_verdict": "UNKNOWN",
+        "review_binding_sha": exact_head_sha,
+        "exact_head_review_count": exact_head_count if exact_head_sha is not None else None,
+        "other_head_review_count": other_head_count if exact_head_sha is not None else None,
+        "unbound_review_count": unbound_count if exact_head_sha is not None else None,
+        "observed_review_states_exact_head": exact_head_states if exact_head_sha is not None else None,
+        "observed_review_states_other_heads": other_head_states if exact_head_sha is not None else None,
+        "observed_review_states_unbound": unbound_states if exact_head_sha is not None else None,
+        "exact_head_review_coverage": (
+            "NOT_REQUESTED" if exact_head_sha is None else
+            "PARTIAL" if unbound_count or unknown_state_count or len(rows) == MAX_LIST_PAGE else
+            "OBSERVED"
+        ),
+    }
+    return result
+
+
+def _discover_sampled_open_prs(issue_url, *, token=None):
+    """Best-effort same-repo, issue-text hints from a bounded PR window.
+
+    Missing text mentions in these pages never prove a repair PR absent.
+    GitHub's issue cross-reference graph is not reconstructed here.
+    """
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise GitHubReadError("discovery issue identity is not canonical")
+    owner, repo, number = match.groups()
+    full_name = owner + "/" + repo
+    path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
+    matched_candidates, seen, matched_total, skipped_rows = [], set(), 0, 0
+    scanned_rows = 0
+    pages_scanned = 0
+    get_attempts = 0
+    source_error = None
+    first_page_rows = None
+    first_page_skipped_rows = 0
+    last_page_short = False
+    # Pagination is limited to four 30-PR pages. The last short page is a
+    # historical observation, not durable proof that no other repair exists.
+    for page_number in range(1, MAX_DISCOVERY_PAGES + 1):
+        try:
+            get_attempts += 1
+            payload = _limited_json(
+                path + "/pulls?state=open&per_page=" + str(MAX_LIST_PAGE) +
+                "&page=" + str(page_number),
+                token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+            )
+        except GitHubReadError as exc:
+            # Preserve previously observed candidates AND independently
+            # observed issue timeline links. Incomplete provider coverage
+            # must remain visible and cannot authorize new work.
+            source_error = str(exc)
+            break
+        if not isinstance(payload, list) or len(payload) > MAX_LIST_PAGE:
+            source_error = "bounded GitHub open-PR page has invalid shape"
+            break
+        pages_scanned += 1
+        scanned_rows += len(payload)
+        if first_page_rows is None:
+            first_page_rows = len(payload)
+        last_page_short = len(payload) < MAX_LIST_PAGE
+        for row_offset, row in enumerate(payload):
+            if not isinstance(row, dict):
+                skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
+                continue
+            identity = row.get("number")
+            base = row.get("base")
+            if (type(identity) is not int or not 1 <= identity <= 100000000
+                    or not isinstance(base, dict)
+                    or not isinstance(base.get("repo"), dict)
+                    or base["repo"].get("full_name") != full_name
+                    or row.get("state") != "open"
+                    or type(row.get("draft")) is not bool):
+                skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
+                continue
+            if identity in seen:
+                skipped_rows += 1
+                if page_number == 1:
+                    first_page_skipped_rows += 1
+                continue
+            seen.add(identity)
+            status, _ = _body_issue_reference(row, full_name, int(number))
+            title_status, _ = _title_issue_reference(row, full_name, int(number))
+            matched_in = "body"
+            body_matched = status in (
+                "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+            )
+            title_matched = title_status in (
+                "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+            )
+            if not body_matched and not title_matched:
+                continue
+            # Prefer the strongest textual hint across title and body.
+            # It is still only a hint, never a linked-issue fact.
+            if title_status == "CLOSING_KEYWORD_TEXT_OBSERVED" and (
+                    status != "CLOSING_KEYWORD_TEXT_OBSERVED"):
+                status = title_status
+                matched_in = "title" if body_matched else "title_only"
+            elif not body_matched:
+                status = title_status
+                matched_in = "title_only"
+            matched_total += 1
+            matched_candidates.append({
+                "number": identity,
+                "url": "https://github.com/" + full_name + "/pull/" + str(identity),
+                "draft_at_source": row["draft"],
+                "relationship_at_source": (
+                    "closing_keyword_only" if status == "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    else "text_reference_only"
+                ),
+                "candidate_origin": "sampled_open_pr_bounded_window_" + matched_in,
+                "source_window_position": scanned_rows - len(payload) + row_offset,
+            })
+        if last_page_short:
+            break
+    # A strong closing-keyword textual hint takes priority over a casual
+    # issue-number mention. Both remain unverified issue relationships.
+    matched_candidates.sort(
+        key=lambda item: (
+            0 if item["relationship_at_source"] == "closing_keyword_only" else 1,
+            item["source_window_position"],
+        )
+    )
+    candidates = [
+        {key: val for key, val in item.items() if key != "source_window_position"}
+        for item in matched_candidates[:MAX_DISCOVERY_HINTS]
+    ]
+    return candidates, {
+        "performed": True,
+        "first_page_rows": first_page_rows,
+        "first_page_limit": MAX_LIST_PAGE,
+        "pages_scanned": pages_scanned,
+        "get_attempts": get_attempts,
+        "source_error": source_error,
+        "partial_or_unknown": bool(source_error) or not last_page_short,
+        "max_pages": MAX_DISCOVERY_PAGES,
+        "open_pr_rows_scanned": scanned_rows,
+        "last_page_short_at_observation": last_page_short,
+        "pagination_window_full": not last_page_short,
+        "candidate_text_matches_in_page": matched_total,
+        "candidate_records_returned": len(candidates),
+        "candidate_selection_order": "closing_keyword_first_then_source_window_order",
+        "discovery_hint_limit": MAX_DISCOVERY_HINTS,
+        "title_only_matches_in_window": sum(
+            item["candidate_origin"].endswith("_title_only")
+            for item in matched_candidates
+        ),
+        "closing_keyword_matches_in_window": sum(
+            item["relationship_at_source"] == "closing_keyword_only"
+            for item in matched_candidates
+        ),
+        "closing_keyword_candidates_retained": sum(
+            item["relationship_at_source"] == "closing_keyword_only"
+            for item in candidates
+        ),
+        "skipped_or_malformed_first_page_rows": first_page_skipped_rows,
+        "skipped_or_malformed_rows_in_window": skipped_rows,
+        "candidate_list_truncated": matched_total > len(candidates),
+        "source_page_may_be_incomplete": True,
+        "existing_repair_absence_verified": False,
+        "issue_pr_relationship_verified": False,
+    }
+
+
+
+def _discover_issue_timeline_prs(issue_url, *, token=None):
+    """Read early and newest GitHub issue cross-references with finite GETs.
+
+    A GitHub timeline cross-reference establishes only a provider-recorded
+    link. It does not establish a repair, an active owner, required CI, or
+    delivery on main. The page window may deliberately omit middle history.
+    """
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    if issue_match is None:
+        raise GitHubReadError("timeline issue identity is not canonical")
+    owner, repo, issue_number = issue_match.groups()
+    full_name = owner + "/" + repo
+    path = "/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
+    candidates, seen = [], set()
+    sampled_pages = []
+    pages_to_read = [1]
+    linked_last_page = None
+    gets_attempted = 0
+    events_scanned = 0
+    last_page_short = False
+    skipped = 0
+    source_error = None
+    while pages_to_read and gets_attempted < MAX_TIMELINE_PAGES:
+        page_number = pages_to_read.pop(0)
+        try:
+            gets_attempted += 1
+            events, reported_last_page = _limited_json(
+                path + "/issues/" + issue_number + "/timeline?per_page=" +
+                str(MAX_LIST_PAGE) + "&page=" + str(page_number),
+                token=token, max_body_bytes=MAX_DISCOVERY_BODY_BYTES,
+                include_timeline_last_page=True,
+            )
+        except GitHubReadError as exc:
+            source_error = str(exc)
+            break
+        if not isinstance(events, list) or len(events) > MAX_LIST_PAGE:
+            source_error = "GitHub timeline response has invalid shape"
+            break
+        sampled_pages.append(page_number)
+        events_scanned += len(events)
+        last_page_short = len(events) < MAX_LIST_PAGE
+        if page_number == 1:
+            linked_last_page = reported_last_page
+            if linked_last_page is not None and linked_last_page > 1:
+                # Read the latest page(s), not just old chronological history.
+                # GitHub-provided links are NOT followed; only numeric page
+                # indices are used on the same canonical endpoint.
+                pages_to_read = sorted(set((
+                    max(2, linked_last_page - 1), linked_last_page
+                )))
+            elif linked_last_page is None and not last_page_short:
+                pages_to_read = [2, 3]
+        for event in events:
+            if not isinstance(event, dict):
+                skipped += 1
+                continue
+            if event.get("event") != "cross-referenced":
+                continue
+            source = event.get("source")
+            source_issue = source.get("issue") if isinstance(source, dict) else None
+            if not isinstance(source_issue, dict):
+                skipped += 1
+                continue
+            pr = source_issue.get("pull_request")
+            link = pr.get("html_url") if isinstance(pr, dict) else None
+            match = REPO_URL.fullmatch(link) if isinstance(link, str) else None
+            if not match or match.group(1) + "/" + match.group(2) != full_name:
+                skipped += 1
+                continue
+            number = int(match.group(3))
+            if number in seen:
+                continue
+            seen.add(number)
+            candidates.append({
+                "number": number, "url": link,
+                "draft_at_source": None,
+                "relationship_at_source": "issue_timeline_cross_reference",
+                "candidate_origin": "github_issue_timeline_cross_reference",
+                "timeline_created_at": event.get("created_at")
+                    if isinstance(event.get("created_at"), str) else None,
+                "timeline_source_page": page_number,
+            })
+        if last_page_short and linked_last_page is None:
+            pages_to_read = []
+
+    # GitHub lists events chronologically. Most recent references should be
+    # considered before older hints, without treating either as permission.
+    candidates.reverse()
+    if linked_last_page is not None:
+        complete = (
+            set(sampled_pages) == set(range(1, linked_last_page + 1))
+            and source_error is None
+        )
+    else:
+        complete = (
+            last_page_short and source_error is None
+            and sampled_pages == list(range(1, len(sampled_pages) + 1))
+        )
+    return candidates[:MAX_DISCOVERY_HINTS], {
+        "performed": True, "pages_scanned": len(sampled_pages),
+        "sampled_page_numbers": sampled_pages,
+        "linked_last_page": linked_last_page,
+        "recent_tail_sampled": (
+            linked_last_page is not None
+            and linked_last_page in sampled_pages
+        ),
+        "get_attempts": gets_attempted,
+        "max_pages": MAX_TIMELINE_PAGES,
+        "events_scanned": events_scanned,
+        "candidate_count_in_window": len(candidates),
+        "candidate_count_retained": min(len(candidates), MAX_DISCOVERY_HINTS),
+        "candidate_hints_truncated": len(candidates) > MAX_DISCOVERY_HINTS,
+        "skipped_cross_references": skipped,
+        "pagination_window_full": not complete and source_error is None,
+        "partial_or_unknown": not complete,
+        "source_error": source_error,
+        "issue_pr_link_is_fix_proof": False,
+        "merge_or_owner_authorized": False,
+    }
+
+
+def observe_candidate_prs(issue, *, token=None, source_case=None,
+                          discover_unlinked=False, focus_pr_number=None,
+                          live_issue_only=False):
+    """Read exactly an admitted issue's referenced PRs; leave each result untrusted."""
+    candidates = issue.get("candidate_prs", [])
+    if not isinstance(candidates, list) or len(candidates) > MAX_CANDIDATES:
+        raise GitHubReadError("unbounded or absent candidate source")
+    if focus_pr_number is not None and (
+            type(focus_pr_number) is not int
+            or not 1 <= focus_pr_number <= 100000000):
+        raise GitHubReadError("focused PR must be a positive canonical number")
+    if not candidates and not discover_unlinked:
+        raise GitHubReadError(
+            "issue has no sampled PR; use explicit bounded discovery or refresh source"
+        )
+    if live_issue_only:
+        if source_case is not None or candidates or not discover_unlinked:
+            raise GitHubReadError(
+                "direct live issue inspection needs no saved case and bounded discovery"
+            )
+        provenance = {
+            "case_export_utc": None,
+            "issue_source_observed_utc": None,
+            "case_stale_at_import": None,
+            "issue_source_stale_at_import": None,
+            "issue_sample_truncated": None,
+            "historical_candidate_set_is_complete": False,
+            "current_issue_status_verified": False,
+            "current_issue_pr_link_verified": False,
+            "historical_case_provided": False,
+        }
+    else:
+        if (type(source_case) is not dict or source_case.get("policy") !=
+                "zsentinel-recovery-case-handoff-v1"):
+            raise GitHubReadError(
+                "original admitted recovery-case provenance required for live PR review"
+            )
+        provenance = {
+            "case_export_utc": source_case["source_generated_at_utc"],
+            "issue_source_observed_utc": source_case["source_issues_observed_at_utc"],
+            "case_stale_at_import": source_case["source_case_stale"],
+            "issue_source_stale_at_import": source_case["source_issues_stale"],
+            "issue_sample_truncated": source_case["source_issues_truncated"],
+            "historical_candidate_set_is_complete": False,
+            "current_issue_status_verified": False,
+            "current_issue_pr_link_verified": False,
+            "historical_case_provided": True,
+        }
+    # Validate source identity before indexing any untrusted saved
+    # recovery-case fields. Malformed input must fail as GitHubReadError.
+    source_urls = issue.get("source_urls")
+    if not isinstance(source_urls, list) or not source_urls:
+        raise GitHubReadError("issue has no canonical source URL")
+    source_url = source_urls[0]
+    if not isinstance(source_url, str) or ISSUE_URL.fullmatch(source_url) is None:
+        raise GitHubReadError("issue source URL is not canonical")
+    historical_candidates = len(candidates)
+    saved_candidates = candidates[:]
+    # Saved URLs may later be shown as navigation-only links during a
+    # focused review. Validate all of them, not just the live-read subset.
+    issue_repo_url = source_url.split("/issues/", 1)[0]
+    for row in saved_candidates:
+        if not isinstance(row, dict):
+            raise GitHubReadError("historical PR candidate must be an object")
+        url = row.get("url")
+        match = REPO_URL.fullmatch(url) if isinstance(url, str) else None
+        if (match is None or url.split("/pull/", 1)[0] != issue_repo_url
+                or type(row.get("number")) is not int
+                or row["number"] != int(match[3])):
+            raise GitHubReadError("historical PR navigation identity invalid")
+    # Historical candidates retain priority. Newly discovered hints fill
+    # only unused live-read slots; overflow is navigation-only with UNKNOWN
+    # live status, never an implicit claim or deliverable.
+    historical_urls = {row.get("url") for row in candidates if isinstance(row, dict)}
+    if len(historical_urls) != len(candidates):
+        raise GitHubReadError("duplicate or malformed historical PR candidate identity")
+    discovery = {
+        "performed": False,
+        "source_page_may_be_incomplete": True,
+        "existing_repair_absence_verified": False,
+        "issue_pr_relationship_verified": False,
+    }
+    extra_get_attempts = 0
+    new_references = []
+    timeline = {"performed": False, "source_error": None}
+    discovery_admission_paused = False
+    if discover_unlinked:
+        # GitHub's issue timeline can expose actual PR cross-references,
+        # including merged/closed repairs absent from the open-PR list.
+        # Timeline hints take precedence over title/body text matches, but
+        # cannot establish what fixes were delivered or ownership clearance.
+        timeline_hints, timeline = _discover_issue_timeline_prs(
+            source_url, token=token,
+        )
+        discovery_admission_paused = (
+            "authentication, quota or provider admission" in
+            (timeline.get("source_error") or "")
+        )
+        if discovery_admission_paused:
+            # Never consume additional provider quota or retry a denied
+            # identity in a second source after an explicit 401/403/429.
+            discovered = []
+            discovery["source_error"] = (
+                "Skipped open PR source: GitHub admission denied earlier"
+            )
+        else:
+            discovered, discovery = _discover_sampled_open_prs(
+                source_url, token=token,
+            )
+            discovery_admission_paused = (
+                "authentication, quota or provider admission" in
+                (discovery.get("source_error") or "")
+            )
+        extra_get_attempts = (
+            timeline["get_attempts"] + discovery.get("get_attempts", 0)
+        )
+        seen_refs = set(historical_urls)
+        deduplicated = 0
+        for row in timeline_hints + discovered:
+            if row["url"] in seen_refs:
+                deduplicated += 1
+                continue
+            seen_refs.add(row["url"])
+            new_references.append(row)
+        slots_remaining = MAX_CANDIDATES - len(candidates)
+        candidates = candidates + new_references[:slots_remaining]
+        discovery["historical_candidate_count"] = historical_candidates
+        discovery["previously_referenced_hints_deduplicated"] = deduplicated
+        discovery["new_live_candidates_selected"] = min(
+            slots_remaining, len(new_references)
+        )
+        discovery["navigation_only_count"] = len(
+            new_references[slots_remaining:]
+        )
+        discovery["navigation_only_hints"] = [
+            {
+                "number": row["number"],
+                "url": row["url"],
+                "source_relationship": row["relationship_at_source"],
+                "candidate_origin": row["candidate_origin"],
+                "live_read_performed": False,
+                "live_state": "UNKNOWN",
+                "merge_authorized": False,
+                "claim_authorized": False,
+            } for row in new_references[slots_remaining:]
+        ]
+        discovery["candidate_slot_limit_reached"] = (
+            len(candidates) == MAX_CANDIDATES and
+            bool(new_references[slots_remaining:])
+        )
+    # A focused review may select an explicit, source-linked PR even when
+    # the ordinary three slots were occupied by older historical repairs.
+    # It cannot inject a guessed PR number outside the observed source pool.
+    other_source_candidates = []
+    focused_source = None
+    if focus_pr_number is not None:
+        candidate_pool = saved_candidates + new_references
+        focused = [
+            row for row in candidate_pool
+            if isinstance(row, dict) and row.get("number") == focus_pr_number
+        ]
+        if len(focused) != 1:
+            raise GitHubReadError(
+                "focused PR is not uniquely present in saved or observed source"
+            )
+        selected = focused[0]
+        focused_source = (
+            "historical_case_issue_reference"
+            if selected["url"] in historical_urls else
+            "bounded_live_open_pr_text_hint"
+        )
+        for row in candidate_pool:
+            if row["number"] != focus_pr_number:
+                other_source_candidates.append({
+                    "number": row["number"], "url": row["url"],
+                    "live_read_performed": False,
+                    "live_status": "UNKNOWN",
+                    "source": (
+                        "historical_case_issue_reference"
+                        if row["url"] in historical_urls else
+                        "bounded_live_open_pr_text_hint"
+                    ),
+                })
+        candidates = [selected]
+        if discover_unlinked:
+            discovery["new_live_candidates_selected"] = int(
+                selected["url"] not in historical_urls
+            )
+            unobserved_new = [
+                row for row in new_references if row["number"] != focus_pr_number
+            ]
+            discovery["navigation_only_count"] = len(unobserved_new)
+            discovery["navigation_only_hints"] = [
+                {
+                    "number": row["number"], "url": row["url"],
+                    "source_relationship": row["relationship_at_source"],
+                    "candidate_origin": row["candidate_origin"],
+                    "live_read_performed": False, "live_state": "UNKNOWN",
+                    "merge_authorized": False, "claim_authorized": False,
+                } for row in unobserved_new
+            ]
+            discovery["candidate_slot_limit_reached"] = False
+    issue_match = ISSUE_URL.fullmatch(source_url)
+    if issue_match is None:
+        raise GitHubReadError("source issue is not a canonical repository issue")
+    expected_repo = source_url.rsplit("/issues/", 1)[0]
+    issue_repo_name = issue_match[1] + "/" + issue_match[2]
+    issue_api = (
+        "/repos/" + quote(issue_match[1], safe="") + "/" +
+        quote(issue_match[2], safe="") + "/issues/" + issue_match[3]
+    )
+    current_issue = {
+        "status": "UNKNOWN_PROVIDER",
+        "observed_state": "UNKNOWN",
+        "source_issue_still_open": "UNKNOWN",
+        "source_link_to_candidate_reverified": False,
+        "owner_claim_verified": False,
+        "issue_work_cleared": False,
+    }
+    observations = []
+    provider_paused = discovery_admission_paused
+    total_gets_attempted = extra_get_attempts
+    if provider_paused:
+        current_issue["reason"] = (
+            "Skipped issue GET: GitHub admission denied in discovery"
+        )
+    else:
+        try:
+            total_gets_attempted += 1
+            current_issue = _issue_summary(
+                _limited_json(issue_api, token=token),
+                issue_repo_name, int(issue_match[3]),
+            )
+            current_issue["status"] = "LIVE_ISSUE_READ"
+        except GitHubReadError as exc:
+            current_issue["reason"] = str(exc)
+            if "authentication, quota or provider admission" in str(exc):
+                provider_paused = True
+    for candidate in candidates:
+        url = candidate["url"]
+        match = REPO_URL.fullmatch(url)
+        if not match or "https://github.com/" + match[1] + "/" + match[2] != expected_repo:
+            raise GitHubReadError("candidate PR differs from original issue repository")
+        number = int(match[3])
+        full_name = match[1] + "/" + match[2]
+        api = "/repos/" + quote(match[1], safe="") + "/" + quote(match[2], safe="")
+        base = {
+            "url": url, "number": number,
+            "source_draft": candidate["draft_at_source"],
+            "source_relationship": candidate["relationship_at_source"],
+            "candidate_origin": candidate.get(
+                "candidate_origin", "historical_case_issue_reference"
+            ),
+            "advisory_only": True, "action_authorized": False,
+            "status": "UNKNOWN",
+            "ownership_verified": False, "merge_authorized": False,
+            "required_ci_verdict": "UNKNOWN",
+            "independent_review_verdict": "UNKNOWN",
+            "branch_protection_verdict": "UNKNOWN",
+        }
+        if provider_paused:
+            base["reason"] = (
+                "Skipped: GitHub provider admission unavailable earlier in this "
+                "same bounded observation; no new request attempted"
+            )
+            base["status"] = "UNKNOWN_PROVIDER"
+            base["next_human_step"] = "recheck_source_with_authorized_owner"
+            observations.append(base)
+            continue
+        try:
+            total_gets_attempted += 1
+            before_payload = _limited_json(
+                api + "/pulls/" + str(number), token=token,
+            )
+            before = _pr_summary(before_payload, full_name, number)
+            before_reference, before_body_digest = _body_issue_reference(
+                before_payload, full_name, int(issue_match[3]),
+            )
+            before_title_reference, before_title_digest = _title_issue_reference(
+                before_payload, full_name, int(issue_match[3]),
+            )
+            source_gaps = []
+            checks = None
+            reviews = None
+            # Check runs and reviews are independent read-only sources. An
+            # inaccessible secondary endpoint must not discard a stable PR
+            # HEAD that GitHub can still confirm with another PR GET.
+            try:
+                total_gets_attempted += 1
+                checks = _checks_summary(_limited_json(
+                    api + "/commits/" + before["exact_head_sha"] +
+                    "/check-runs?per_page=" + str(MAX_LIST_PAGE), token=token
+                ), before["exact_head_sha"], full_name)
+            except GitHubReadError as exc:
+                source_gaps.append("check-runs: " + str(exc))
+                if "authentication, quota or provider admission" in str(exc):
+                    provider_paused = True
+            if not provider_paused:
+                try:
+                    total_gets_attempted += 1
+                    reviews = _review_summary(_limited_json(
+                        api + "/pulls/" + str(number) +
+                        "/reviews?per_page=" + str(MAX_LIST_PAGE), token=token
+                    ), before["exact_head_sha"])
+                except GitHubReadError as exc:
+                    source_gaps.append("reviews: " + str(exc))
+                    if "authentication, quota or provider admission" in str(exc):
+                        provider_paused = True
+            if provider_paused:
+                raise GitHubReadError(
+                    "provider admission denied before PR HEAD could be rechecked"
+                )
+            total_gets_attempted += 1
+            after_payload = _limited_json(
+                api + "/pulls/" + str(number), token=token
+            )
+            after = _pr_summary(after_payload, full_name, number)
+            after_reference, after_body_digest = _body_issue_reference(
+                after_payload, full_name, int(issue_match[3]),
+            )
+            after_title_reference, after_title_digest = _title_issue_reference(
+                after_payload, full_name, int(issue_match[3]),
+            )
+            if (before_body_digest != after_body_digest
+                    or before_reference != after_reference
+                    or before_title_digest != after_title_digest
+                    or before_title_reference != after_title_reference):
+                raise GitHubReadError(
+                    "PR title or description changed during live read; text relation UNKNOWN"
+                )
+            if (before["exact_head_sha"] != after["exact_head_sha"] or
+                    before["head_repo_full_name"] != after["head_repo_full_name"] or
+                    before["head_ref"] != after["head_ref"] or
+                    before["base_repo_full_name"] != after["base_repo_full_name"] or
+                    before["observed_state"] != after["observed_state"] or
+                    before["reported_merged"] != after["reported_merged"] or
+                    before["observed_draft"] != after["observed_draft"] or
+                    before["target_branch"] != after["target_branch"] or
+                    before["base_sha"] != after["base_sha"]):
+                raise GitHubReadError(
+                    "PR source repository/ref, HEAD, base ref/commit or release state "
+                    "changed during live read; no stable source binding"
+                )
+            base.update(before)
+            base["observed_at_utc"] = utc()
+            base["status"] = "LIVE_PARTIAL_READ"
+            base["pr_body_issue_text_observation"] = before_reference
+            base["pr_title_issue_text_observation"] = before_title_reference
+            base["pr_body_text_does_not_verify_issue_link"] = True
+            base["pr_title_text_does_not_verify_issue_link"] = True
+            base["secondary_source_gaps"] = source_gaps
+            if checks is not None:
+                base["check_runs"] = checks
+            if reviews is not None:
+                base["reviews"] = reviews
+            if before["reported_merged"]:
+                owner_action = "verify_reported_merge_on_main_and_postmerge_health"
+                review_rank = 5
+            elif before["observed_state"] != "open":
+                owner_action = "locate_replacement_pr_for_closed_unmerged_source"
+                review_rank = 6
+            elif before["target_branch"] != "main":
+                owner_action = "check_target_branch_and_actual_release_intent"
+                review_rank = 4
+            elif before["observed_draft"]:
+                owner_action = "finish_existing_draft_with_authorized_owner"
+                review_rank = 3
+            elif (base["source_relationship"] !=
+                    "issue_timeline_cross_reference" and
+                    before_reference not in (
+                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    ) and before_title_reference not in (
+                    "ISSUE_TEXT_MENTION_OBSERVED", "CLOSING_KEYWORD_TEXT_OBSERVED"
+                    )):
+                owner_action = "recheck_historical_issue_to_pr_link_before_merge"
+                review_rank = 2
+            elif checks is not None and checks["sampled_blocking_checks"]:
+                owner_action = "inspect_sampled_failed_head_checks_before_merge"
+                review_rank = 0
+            elif checks is not None and checks["sampled_pending_checks"]:
+                owner_action = "inspect_sampled_pending_head_jobs_and_runner_admission"
+                review_rank = 1
+            elif checks is None:
+                owner_action = "recover_missing_check_source_before_merge_review"
+                review_rank = 2
+            else:
+                owner_action = "verify_required_ci_independent_review_protection_and_owner"
+                review_rank = 2
+            if (current_issue["status"] == "LIVE_ISSUE_READ"
+                    and current_issue["observed_state"] == "closed"
+                    and not before["reported_merged"]):
+                # The source issue has been closed since the historical
+                # import. Do not turn its old PR into an unsolicited fix.
+                owner_action = "verify_issue_closure_and_existing_repair_before_reopening"
+                review_rank = 5
+            base["next_human_step"] = owner_action
+            base["owner_review_priority"] = review_rank
+            base["release_gate_summary"] = {
+                "pr_head_reobserved": True,
+                "target_is_main": before["target_branch"] == "main",
+                "sampled_check_source_available": checks is not None,
+                "sampled_review_source_available": reviews is not None,
+                "required_ci_status": "UNKNOWN",
+                "independent_review_status": "UNKNOWN",
+                "active_owner_status": "UNKNOWN",
+                "safe_to_merge": False,
+            }
+        except GitHubReadError as exc:
+            base["status"] = "UNKNOWN_PROVIDER"
+            base["reason"] = str(exc)
+            if "authentication, quota or provider admission" in str(exc):
+                provider_paused = True
+            base["next_human_step"] = "recheck_source_with_authorized_owner"
+        observations.append(base)
+    return {
+        "schema_version": 1, "policy": "zsentinel-live-pr-candidate-readonly-v1",
+        "issue_project": issue["project_id"], "issue_id": issue["incident_id"],
+        "original_issue_url": source_url,
+        "observation_mode": (
+            "direct_live_issue_readonly" if live_issue_only
+            else "saved_case_plus_live_readonly"
+        ),
+        "current_issue": current_issue,
+        "historical_case_provenance": provenance,
+        "observed_at_utc": utc(),
+        "candidate_count": len(candidates),
+        "source_candidate_count": historical_candidates,
+        "live_discovered_count": sum(
+            row["url"] not in historical_urls for row in candidates
+        ),
+        "focused_pr_number": focus_pr_number,
+        "focused_source": focused_source,
+        "other_source_candidates_not_live_read": other_source_candidates,
+        "optional_unlinked_discovery": discovery,
+        "issue_timeline_cross_references": timeline,
+        "observations": observations, "sample_scope_only": True,
+        "suggested_owner_review_order": [
+            {"number": row["number"], "url": row["url"],
+             "next_human_step": row["next_human_step"],
+             "owner_review_priority": row.get("owner_review_priority", 7)}
+            for row in sorted(
+                observations, key=lambda item: (
+                    item.get("owner_review_priority", 7), item["number"]
+                )
+            )
+        ],
+        "provider_admission_paused": provider_paused,
+        "read_get_attempt_upper_bound": (
+            1 + (
+                MAX_DISCOVERY_PAGES + MAX_TIMELINE_PAGES
+                if discover_unlinked else 0
+            ) + 4 * len(candidates)
+        ),
+        "get_attempts": total_gets_attempted,
+        "live_observations": sum(row["status"] == "LIVE_PARTIAL_READ"
+                                 for row in observations),
+        "unknown_observations": sum(row["status"] != "LIVE_PARTIAL_READ"
+                                    for row in observations),
+        "issue_ownership_verified": False, "required_ci_verified": False,
+        "branch_protection_verified": False, "independent_review_verified": False,
+        "merge_authorized": False, "claim_authorized": False,
+        "action_executed": False,
+        "no_candidate_does_not_prove_no_existing_pr": True,
+    }
+
+
+def observe_live_issue(issue_url, *, token=None, focus_pr_number=None):
+    """Live issue PR desk without an invented historical case.
+
+    Strict Zennay issue identity, one GitHub issue GET and bounded discovery.
+    There is no Notion, queue, lease, claim, merge or deployment side effect.
+    """
+    if not isinstance(issue_url, str):
+        raise GitHubReadError("direct issue source must be a canonical URL")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if not match:
+        raise GitHubReadError("direct issue source must be a Zennay GitHub issue")
+    _, repo, number = match.groups()
+    issue = {
+        "project_id": repo,
+        "incident_id": "issue-" + number,
+        "source_urls": [issue_url],
+        "candidate_prs": [],
+    }
+    return observe_candidate_prs(
+        issue, token=token, source_case=None, discover_unlinked=True,
+        focus_pr_number=focus_pr_number, live_issue_only=True,
+    )
+
+
+
+def owner_html(report):
+    """Portable script-free owner view of one bounded live PR observation."""
+    esc = lambda v: html.escape(str(v), quote=True)
+    rows = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';\">",
+        "<title>zSentinel | Current PR candidate observation</title>",
+        "<style>body{max-width:960px;margin:auto;padding:2rem;"
+        "font:16px/1.5 system-ui,sans-serif;background:#f6f8fc;color:#132335}"
+        "section{background:white;padding:1.3rem;margin:1.3rem 0;"
+        "border:1px solid #b9cadc;border-left:5px solid #ad6413;"
+        "border-radius:.5rem;overflow-wrap:anywhere}"
+        "section.observed{border-left-color:#1d665c}h1{font-size:1.7rem}"
+        "h2{font-size:1.15rem}a{color:#07569e}a:focus-visible{outline:3px solid #07569e}"
+        "code{overflow-wrap:anywhere}small{color:#42586b}dl{display:grid;"
+        "grid-template-columns:max-content 1fr;gap:.3rem 1.3rem}"
+        "dt{font-weight:700}dd{margin:0}summary{cursor:pointer}</style></head><body>",
+        "<header><h1>zSentinel — live PR candidate desk</h1>",
+        "<p><strong>Read-only owner handoff.</strong> Live partial GitHub "
+        "observations never establish required CI, reviewer independence, "
+        "active owner, branch protection or merge entitlement.</p>",
+        "<p>Source: <a href='" + esc(report["original_issue_url"]) +
+        "' rel='noopener noreferrer'>" + esc(report["original_issue_url"]) +
+        "</a> · checked: <code>" + esc(report["observed_at_utc"]) + "</code></p>",
+        "<p><strong>Current issue GET:</strong> " +
+        esc(report["current_issue"]["status"]) +
+        " · state: " + esc(report["current_issue"]["observed_state"]) +
+        " · observed label priority: " +
+        esc(report["current_issue"].get(
+            "priority_from_explicit_labels", "UNKNOWN")) +
+        " · priority conflict: " +
+        esc(report["current_issue"].get("priority_label_conflict", "UNKNOWN")) +
+        " · GitHub issue assignees (not active claims): " +
+        esc(_assignee_display(report["current_issue"])) +
+        " · assignee metadata complete: " +
+        esc(report["current_issue"].get("github_assignees_source_complete", "UNKNOWN")) +
+        " · reason: " + esc(report["current_issue"].get(
+            "reported_state_reason", "UNKNOWN")) +
+        " · CLOSED never means a fix is merged or the worker claim released."
+        " This single issue read is not a continuous issue-state guarantee.</p>",
+        ("<p><strong>No historical dossier was supplied.</strong> "
+         "This direct live observation is one bounded GitHub snapshot, "
+         "not an exhaustive issue history or owner admission.</p>"
+         if report["observation_mode"] == "direct_live_issue_readonly"
+         else "<p><strong>Historical issue source (not reobserved):</strong> " +
+         esc(report["historical_case_provenance"]["issue_source_observed_utc"]
+             or "UNKNOWN") +
+         " · original case export: " +
+         esc(report["historical_case_provenance"]["case_export_utc"]) +
+         (" · ISSUE SOURCE STALE" if report["historical_case_provenance"][
+             "issue_source_stale_at_import"] else "") +
+         (" · PARTIAL issue sample" if report["historical_case_provenance"][
+             "issue_sample_truncated"] else "") +
+         ". Current PR observations do NOT refresh historical issue links.</p>"),
+        "<p>Observed " + str(report["live_observations"]) + " / " +
+        str(report["candidate_count"]) + " referenced candidates; " +
+        str(report["unknown_observations"]) + " UNKNOWN · GET attempts " +
+        str(report["get_attempts"]) +
+        (" · provider denied, remaining requests stopped"
+         if report["provider_admission_paused"] else "") +
+        "</p></header><main>",
+    ]
+    if report["focused_pr_number"] is not None:
+        rows.append(
+            "<section class='observed'><h2>Focused live PR review</h2>"
+            "<p>Selected source-linked PR #" +
+            esc(report["focused_pr_number"]) +
+            " from " + esc(report["focused_source"]) +
+            ". All other references remain UNREVIEWED here; this "
+            "selection grants no review, ownership, merge or deploy authority."
+            "</p></section>"
+        )
+        if report["other_source_candidates_not_live_read"]:
+            rows.append(
+                "<section><h2>Other known repair candidates · live UNKNOWN</h2><ul>"
+            )
+            for hint in report["other_source_candidates_not_live_read"]:
+                rows.append(
+                    "<li><a rel='noopener noreferrer' href='" +
+                    esc(hint["url"]) + "'>PR #" + esc(hint["number"]) +
+                    "</a> · " + esc(hint["source"]) +
+                    " · live HEAD/checks/reviews UNKNOWN</li>"
+                )
+            rows.append("</ul></section>")
+    timeline = report["issue_timeline_cross_references"]
+    if timeline["performed"]:
+        rows.append(
+            "<section><h2>Official issue timeline references</h2><p>"
+            "GitHub cross-references found: " +
+            esc(timeline["candidate_count_in_window"]) +
+            " · sampled events: " + esc(timeline["events_scanned"]) +
+            " · pages: " + esc(timeline["pages_scanned"]) +
+            "/" + esc(timeline["max_pages"]) +
+            " · sampled page numbers: " +
+            esc(", ".join(str(n) for n in timeline["sampled_page_numbers"])) +
+            " · newest reported page: " +
+            esc(timeline["linked_last_page"] or "UNKNOWN") +
+            " · recent tail observed: " +
+            esc(timeline["recent_tail_sampled"]) +
+            " · partial/unknown: " + esc(timeline["partial_or_unknown"]) +
+            (" · source unavailable: " + esc(timeline["source_error"])
+             if timeline["source_error"] else "") +
+            ". Links are evidence of GitHub references, NOT evidence "
+            "that an issue was fixed, owner accepted work, or PR merged "
+            "into the protected default branch.</p></section>"
+        )
+    discovery = report["optional_unlinked_discovery"]
+    if discovery["performed"]:
+        rows.append(
+            "<section><h2>Opt-in paginated open-PR discovery</h2><p>"
+            "This is a bounded text-reference search, NOT evidence "
+            "that no other repair PR exists.</p><p>Open PRs scanned: " +
+            str(discovery["open_pr_rows_scanned"]) + " across " +
+            str(discovery["pages_scanned"]) + "/" +
+            str(discovery["max_pages"]) + " pages" +
+            (" · last observed page was full (more PRs may exist)"
+             if discovery["pagination_window_full"] else
+             " · last observed page was short (snapshot may still drift)") +
+            " · text mentions found: " +
+            str(discovery["candidate_text_matches_in_page"]) +
+            " · navigation hints retained: " +
+            str(discovery["candidate_records_returned"]) +
+            " · historical candidates preserved: " +
+            str(discovery["historical_candidate_count"]) +
+            " · previously referenced hits deduplicated: " +
+            str(discovery["previously_referenced_hints_deduplicated"]) +
+            " · new candidates live-read: " +
+            str(discovery["new_live_candidates_selected"]) +
+            " · not live-read: " +
+            str(discovery["navigation_only_count"]) +
+            " · title-only matches: " +
+            str(discovery["title_only_matches_in_window"]) +
+            " · explicit closing keyword matches: " +
+            str(discovery["closing_keyword_matches_in_window"]) +
+            " · closing keyword candidates retained: " +
+            str(discovery["closing_keyword_candidates_retained"]) +
+            " · skipped invalid records: " +
+            str(discovery["skipped_or_malformed_rows_in_window"]) +
+            (" · source unavailable: " + esc(discovery["source_error"])
+             if discovery["source_error"] else "") +
+            (" · candidate sample truncated" if discovery[
+                "candidate_list_truncated"] else "") + ".</p></section>"
+        )
+        if discovery["navigation_only_hints"]:
+            rows.append(
+                "<section><h2>Further existing PR leads · NOT live-verified</h2>"
+                "<p>These links were observed only in the bounded PR-list "
+                "response. The three-slot live review cap remains in force; "
+                "they must not be treated as available ownership or merge "
+                "approval.</p><ol>"
+            )
+            for hint in discovery["navigation_only_hints"]:
+                rows.append(
+                    "<li><a rel='noopener noreferrer' href='" +
+                    esc(hint["url"]) + "'>PR #" + esc(hint["number"]) +
+                    "</a> · " + esc(hint["source_relationship"]) +
+                    " · live status UNKNOWN</li>"
+                )
+            rows.append("</ol></section>")
+    rows.extend([
+        "<nav aria-label='Owner next steps'>",
+        "<h2>Existing PRs to inspect first (advisory order)</h2>",
+        "<p>Sampled failing check and waiting-job signals are triage hints, "
+        "not mandatory-branch check proof. Always verify current claims and "
+        "protected-main gates before acting.</p><ol>",
+    ])
+    if not report["observations"]:
+        rows.append(
+            "<li>No matching live PR in this bounded sample. This is NOT proof "
+            "that the issue has no existing repair PR: expand source "
+            "discovery with an authorized owner before creating work.</li>"
+        )
+    for candidate in report["suggested_owner_review_order"]:
+        rows.append(
+            "<li><a href='" + esc(candidate["url"]) +
+            "' target='_blank' rel='noopener noreferrer'>PR #" +
+            str(candidate["number"]) + "</a>: " +
+            esc(candidate["next_human_step"]) + "</li>"
+        )
+    rows.append("</ol></nav>")
+    for row in report["observations"]:
+        observed = row["status"] == "LIVE_PARTIAL_READ"
+        rows.extend([
+            "<section" + (" class='observed'" if observed else "") + ">",
+            "<h2><a href='" + esc(row["url"]) +
+            "' target='_blank' rel='noopener noreferrer'>PR #" +
+            str(row["number"]) + "</a> — " + esc(row["status"]) + "</h2>",
+            "<dl><dt>Current HEAD</dt><dd><code>" +
+            esc(row.get("exact_head_sha", "UNKNOWN")) + "</code></dd>",
+            "<dt>PR state</dt><dd>" + esc(row.get("observed_state", "UNKNOWN")) +
+            " · draft: " + esc(row.get("observed_draft", "UNKNOWN")) +
+            " · reported merged: " + esc(row.get("reported_merged", "UNKNOWN")) +
+            " · target: " + esc(row.get("target_branch", "UNKNOWN")) +
+            "</dd>",
+            "<dt>Source repository/ref</dt><dd>" +
+            esc(row.get("head_repo_full_name", "UNKNOWN")) + "/" +
+            esc(row.get("head_ref", "UNKNOWN")) +
+            " · base repository: " + esc(row.get("base_repo_full_name", "UNKNOWN")) +
+            "</dd>",
+            "<dt>Reference origin</dt><dd>" +
+            esc(row["candidate_origin"]) + " · " +
+            esc(row["source_relationship"]) +
+            " · draft in corresponding sample: " +
+            esc(row["source_draft"] if row["source_draft"] is not None
+                else "UNKNOWN") +
+            "</dd>",
+            "<dt>Current PR description text</dt><dd>" +
+            esc(row.get("pr_body_issue_text_observation", "UNKNOWN")) +
+            " · textual signal only, not a verified GitHub issue relationship"
+            "</dd>",
+            "<dt>Current PR title text</dt><dd>" +
+            esc(row.get("pr_title_issue_text_observation", "UNKNOWN")) +
+            " · textual signal only; no PR title is exported</dd>",
+            "<dt>Required CI</dt><dd>UNKNOWN · sampled check runs are not "
+            "branch-protection rules</dd>",
+            "<dt>Independent review / active owner / deployment</dt>"
+            "<dd>UNKNOWN / UNKNOWN / NOT AUTHORIZED</dd>",
+            "<dt>Next human action</dt><dd>" + esc(row["next_human_step"]) +
+            "</dd></dl>",
+        ])
+        if observed:
+            rows.append(
+                "<p><a href='" + esc(row["exact_head_checks_url"]) +
+                "' target='_blank' rel='noopener noreferrer'>Inspect checks "
+                "for this observed exact HEAD</a> · <a href='" +
+                esc(row["pr_files_url"]) +
+                "' target='_blank' rel='noopener noreferrer'>Review PR changes"
+                "</a></p>"
+            )
+        checks = row.get("check_runs")
+        if checks:
+            rows.extend([
+                "<details><summary>Sampled exact-head check states</summary>",
+                "<p>Sampled " + str(checks["sampled_count"]) + " of " +
+                str(checks["provider_total_count"]) +
+                (" (PARTIAL)" if checks["sample_incomplete"] else "") +
+                " check runs; all required-check identities UNKNOWN.</p><ul>",
+            ])
+            for key, count in checks["sample_status_counts"].items():
+                rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
+            rows.append("</ul>")
+            if checks["sampled_blocking_checks"]:
+                rows.append("<p><strong>Observed failing HEAD checks — "
+                            "not necessarily branch-required:</strong></p><ul>")
+                for check in checks["sampled_blocking_checks"]:
+                    label = check["name"] + " (" + check["conclusion"] + ")"
+                    if check["url"] is not None:
+                        rows.append(
+                            "<li><a href='" + esc(check["url"]) +
+                            "' target='_blank' rel='noopener noreferrer'>" +
+                            esc(label) + "</a></li>"
+                        )
+                    else:
+                        rows.append("<li>" + esc(label) + "</li>")
+                rows.append("</ul>")
+            if checks["sampled_pending_checks"]:
+                rows.append("<p><strong>Observed waiting HEAD jobs — "
+                            "not necessarily branch-required:</strong></p><ul>")
+                for check in checks["sampled_pending_checks"]:
+                    label = check["name"] + " (" + check["status"] + ")"
+                    if check["url"] is not None:
+                        rows.append(
+                            "<li><a href='" + esc(check["url"]) +
+                            "' target='_blank' rel='noopener noreferrer'>" +
+                            esc(label) + "</a></li>"
+                        )
+                    else:
+                        rows.append("<li>" + esc(label) + "</li>")
+                rows.append("</ul>")
+            rows.append("</details>")
+        reviews = row.get("reviews")
+        if reviews:
+            rows.extend([
+                "<details><summary>Sampled review states</summary><p>" +
+                str(reviews["sampled_count"]) +
+                (" records (PARTIAL sample possible)." if reviews["may_be_truncated"]
+                 else " sampled records.") +
+                " Approval independence and current state UNKNOWN.</p><ul>",
+            ])
+            for key, count in reviews["observed_review_states"].items():
+                rows.append("<li>" + esc(key) + ": " + str(count) + "</li>")
+            rows.append("</ul><p>Review commit binding: " +
+                         esc(reviews.get("review_binding_sha") or "NOT REQUESTED") +
+                         " · exact HEAD: " +
+                         esc(reviews.get("exact_head_review_count", "UNKNOWN")) +
+                         " · other commits: " +
+                         esc(reviews.get("other_head_review_count", "UNKNOWN")) +
+                         " · unbound: " +
+                         esc(reviews.get("unbound_review_count", "UNKNOWN")) +
+                         " · unknown-state records: " +
+                         esc(reviews.get("unknown_review_state_count", "UNKNOWN")) +
+                         " · coverage: " +
+                         esc(reviews.get("exact_head_review_coverage", "UNKNOWN")) +
+                         ".</p><p>Exact-HEAD states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_exact_head"), sort_keys=True
+                         )) +
+                         " · other-head states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_other_heads"), sort_keys=True
+                         )) +
+                         " · unbound states: " +
+                         esc(json.dumps(
+                             reviews.get("observed_review_states_unbound"), sort_keys=True
+                         )) +
+                         ". Independent review verdict remains UNKNOWN.</p></details>")
+        if row.get("secondary_source_gaps"):
+            rows.extend([
+                "<details><summary>Unavailable secondary GitHub sources</summary>",
+                "<ul>",
+            ])
+            rows.extend("<li>" + esc(reason) + "</li>"
+                        for reason in row["secondary_source_gaps"])
+            rows.append("</ul></details>")
+        if "reason" in row:
+            rows.append("<p><strong>Provider source:</strong> " +
+                        esc(row["reason"]) + "</p>")
+        rows.append("</section>")
+    rows.extend([
+        "</main><footer><small>No write endpoints, workflow dispatch, "
+        "claim, merge, deployment or runner operation invoked. "
+        "Every current release gate remains independently authoritative."
+        "</small></footer></body></html>\\n",
+    ])
+    return "".join(rows)
+
+
+def markdown(report):
+    lines = [
+        "# zSentinel · live candidate PR snapshot (read-only)",
+        "",
+        "**Observed PR information only; NO CI, review, ownership or merge permission.**",
+        "",
+        "- Issue: " + report["original_issue_url"],
+        "- Current issue read: " + report["current_issue"]["status"],
+        "- Current issue state: " + report["current_issue"]["observed_state"],
+        "- Explicit GitHub issue-label priority: " +
+        report["current_issue"].get("priority_from_explicit_labels", "UNKNOWN"),
+        "- Priority labels conflicted: " +
+        str(report["current_issue"].get("priority_label_conflict", "UNKNOWN")),
+        "- GitHub issue assignees (not active claims): " +
+        _assignee_display(report["current_issue"]),
+        "- Assignee metadata complete: " +
+        str(report["current_issue"].get("github_assignees_source_complete", "UNKNOWN")),
+        "- Issue labels or assignees establish worker authority: NO",
+        "- Current issue source was reobserved once, not continuously",
+        "- Closed issue implies merged repair: NO",
+        "- Observed live PRs: " + report["observed_at_utc"],
+        "- Source mode: " + report["observation_mode"],
+        "- Historical case supplied: " +
+        str(report["historical_case_provenance"]["historical_case_provided"]),
+        "- Original case export: " +
+        (report["historical_case_provenance"]["case_export_utc"] or "NOT SUPPLIED"),
+        "- Historical issue observed: " +
+        (report["historical_case_provenance"]["issue_source_observed_utc"] or "NOT SUPPLIED"),
+        "- Historical issue source stale at import: " +
+        str(report["historical_case_provenance"]["issue_source_stale_at_import"]),
+        "- Historical issue sample truncated: " +
+        str(report["historical_case_provenance"]["issue_sample_truncated"]),
+        "- Current issue PR relationship reverified: NO",
+        "- Historical issue-PR candidates: " +
+        str(report["source_candidate_count"]),
+        "- Focused PR: " + (
+            str(report["focused_pr_number"]) +
+            " (" + report["focused_source"] + ")"
+            if report["focused_pr_number"] is not None else "none"
+        ),
+        "- Other source-linked PRs not live-read: " +
+        str(len(report["other_source_candidates_not_live_read"])),
+        "- Live partial reads: " + str(report["live_observations"]),
+        "- UNKNOWN candidates: " + str(report["unknown_observations"]),
+        "- GitHub requests attempted: " + str(report["get_attempts"]),
+        "- Provider admission paused: " + str(report["provider_admission_paused"]),
+        "",
+    ]
+    if report["focused_pr_number"] is not None and (
+            report["other_source_candidates_not_live_read"]):
+        lines.extend([
+            "### Other source-linked PRs (live status UNKNOWN)",
+            "",
+        ])
+        for hint in report["other_source_candidates_not_live_read"]:
+            lines.append(
+                "- [PR #" + str(hint["number"]) + "](" + hint["url"] +
+                ") · " + hint["source"] + " · no live-read attempted"
+            )
+        lines.append("")
+    timeline = report["issue_timeline_cross_references"]
+    if timeline["performed"]:
+        lines.extend([
+            "## Official GitHub issue cross-references",
+            "",
+            "- Timeline events sampled: " + str(timeline["events_scanned"]),
+            "- Cross-reference PRs in window: " +
+            str(timeline["candidate_count_in_window"]),
+            "- Pages scanned: " + str(timeline["pages_scanned"]) +
+            "/" + str(timeline["max_pages"]),
+            "- Sampled timeline page numbers: " +
+            ", ".join(str(n) for n in timeline["sampled_page_numbers"]),
+            "- Reported newest timeline page: " +
+            str(timeline["linked_last_page"] or "UNKNOWN"),
+            "- Recent timeline tail observed: " +
+            str(timeline["recent_tail_sampled"]),
+            "- Source partial/unknown: " + str(timeline["partial_or_unknown"]),
+            "- Source error: " + (timeline["source_error"] or "none"),
+            "- Reference implies fix, merge or owner permission: NO",
+            "",
+        ])
+    discovery = report["optional_unlinked_discovery"]
+    if discovery["performed"]:
+        lines.extend([
+            "## Opt-in bounded existing-PR discovery",
+            "",
+            "- Open PR records scanned: " + str(discovery["open_pr_rows_scanned"]) +
+            " (pages " + str(discovery["pages_scanned"]) + "/" +
+            str(discovery["max_pages"]) + ", max " +
+            str(discovery["first_page_limit"]) + " records/page)",
+            "- Pagination window full: " + str(discovery["pagination_window_full"]),
+            "- Source partial/unknown: " + str(discovery["partial_or_unknown"]),
+            "- Source error: " + (discovery["source_error"] or "none"),
+            "- Candidate text references found: " +
+            str(discovery["candidate_text_matches_in_page"]),
+            "- Text-linked navigation hints retained: " +
+            str(discovery["candidate_records_returned"]),
+            "- Historical references preserved: " +
+            str(discovery["historical_candidate_count"]),
+            "- Previously referenced hints deduplicated: " +
+            str(discovery["previously_referenced_hints_deduplicated"]),
+            "- New references selected for live double-read: " +
+            str(discovery["new_live_candidates_selected"]),
+            "- Unobserved navigation-only leads: " +
+            str(discovery["navigation_only_count"]),
+            "- Title-only issue references in window: " +
+            str(discovery["title_only_matches_in_window"]),
+            "- Closing-keyword matches in window: " +
+            str(discovery["closing_keyword_matches_in_window"]),
+            "- Closing-keyword candidates selected first: " +
+            str(discovery["closing_keyword_candidates_retained"]),
+            "- Skipped malformed rows: " +
+            str(discovery["skipped_or_malformed_rows_in_window"]),
+            "- Historical relation reverified: NO",
+            "- No matching PR in scanned pages proves absence: NO",
+            "",
+        ])
+        if discovery["navigation_only_hints"]:
+            lines.extend([
+                "### Additional existing PR hints (not live-verified)",
+                "",
+                "These URLs are bounded PR-list text observations only. "
+                "Current owner, head, checks, review and merge readiness: UNKNOWN.",
+                "",
+            ])
+            for hint in discovery["navigation_only_hints"]:
+                lines.append(
+                    "- [PR #" + str(hint["number"]) + "](" + hint["url"] +
+                    ") · " + hint["source_relationship"] + " · live UNKNOWN"
+                )
+            lines.append("")
+    lines.extend([
+        "## Suggested next existing PR reviews (non-authorizing)",
+        "",
+    ])
+    if not report["observations"]:
+        lines.append(
+            "- No referenced PR observed in this bounded sample. "
+            "An existing PR may still exist outside the sampled page."
+        )
+    for candidate in report["suggested_owner_review_order"]:
+        lines.append(
+            "- [PR #" + str(candidate["number"]) + "](" +
+            candidate["url"] + ") — " + candidate["next_human_step"]
+        )
+    lines.append("")
+    for row in report["observations"]:
+        lines.extend([
+            "## [PR #" + str(row["number"]) + "](" + row["url"] + ")",
+            "",
+            "- Live read: " + row["status"],
+            "- Observed HEAD: " + row.get("exact_head_sha", "UNKNOWN"),
+            "- Exact-HEAD checks: " + row.get("exact_head_checks_url", "UNKNOWN"),
+            "- PR changed files: " + row.get("pr_files_url", "UNKNOWN"),
+            "- Observed state: " + row.get("observed_state", "UNKNOWN"),
+            "- Observed target branch: " + row.get("target_branch", "UNKNOWN"),
+            "- Source repository/ref: " + row.get("head_repo_full_name", "UNKNOWN") +
+            "/" + row.get("head_ref", "UNKNOWN"),
+            "- Base repository: " + row.get("base_repo_full_name", "UNKNOWN"),
+            "- Candidate origin: " + row["candidate_origin"],
+            "- Source-observed relationship: " + row["source_relationship"],
+            "- Current PR body issue text: " +
+            row.get("pr_body_issue_text_observation", "UNKNOWN"),
+            "- Current PR title issue text: " +
+            row.get("pr_title_issue_text_observation", "UNKNOWN"),
+            "- Text mention proves current PR-issue link: NO",
+            "- Source snapshot draft: " + (
+                str(row["source_draft"]) if row["source_draft"] is not None
+                else "UNKNOWN"),
+            "- Live draft: " + str(row.get("observed_draft", "UNKNOWN")),
+            "- Required CI: UNKNOWN (sampled check runs are not branch rules)",
+            "- Independent review and active owner: UNKNOWN",
+            "- Next human action: " + row["next_human_step"],
+            "- Authority: claim=false, merge=false, deploy=false",
+            "",
+        ])
+        if "check_runs" in row:
+            checks = row["check_runs"]
+            lines.extend([
+                "- Check runs on observed SHA (sampled/total): " +
+                str(checks["sampled_count"]) + "/" + str(checks["provider_total_count"]),
+                "- Check states (sample only): " +
+                json.dumps(checks["sample_status_counts"], sort_keys=True),
+                "",
+            ])
+            for check in checks["sampled_blocking_checks"]:
+                lines.append(
+                    "- Sampled failing check: " + check["conclusion"] +
+                    " · " + (check["url"] or "URL UNKNOWN")
+                )
+            for check in checks["sampled_pending_checks"]:
+                lines.append(
+                    "- Sampled waiting check: " + check["status"] +
+                    " · " + (check["url"] or "URL UNKNOWN")
+                )
+            lines.append("")
+        if "reviews" in row:
+            reviews = row["reviews"]
+            lines.extend([
+                "- Review binding HEAD: " + str(reviews.get("review_binding_sha") or "NOT REQUESTED"),
+                "- Reviews bound to exact HEAD: " + str(reviews.get("exact_head_review_count", "UNKNOWN")),
+                "- Exact-HEAD review states: " +
+                json.dumps(reviews.get("observed_review_states_exact_head", "UNKNOWN"), sort_keys=True),
+                "- Reviews on other commits: " + str(reviews.get("other_head_review_count", "UNKNOWN")),
+                "- Reviews without valid commit binding: " + str(reviews.get("unbound_review_count", "UNKNOWN")),
+                "- Review records with unknown/missing state: " + str(reviews.get("unknown_review_state_count", "UNKNOWN")),
+                "- Exact-HEAD review coverage: " + str(reviews.get("exact_head_review_coverage", "UNKNOWN")),
+                "- Independent review verdict: UNKNOWN (sample counts are not approval authority)",
+                "",
+            ])
+        for reason in row.get("secondary_source_gaps", []):
+            lines.append("- Secondary source UNKNOWN: " + reason)
+        if "reason" in row:
+            lines.extend(["- Provider note: " + row["reason"], ""])
+    lines.append("A live read can identify the next person to ask; it never approves a protected-main merge.")
+    return "\n".join(lines) + "\n"

@@ -1,0 +1,2812 @@
+#!/usr/bin/env python3
+"""Explain whether one proposed recovery action is ready for human review.
+
+This is a local, advisory policy evaluator. It does not read live services,
+contact GitHub/Notion, acquire claims, retry CI, merge PRs, deploy or restart
+runners. Operator-supplied evidence is never treated as independently verified.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import html
+import io
+import json
+import os
+import re
+import stat
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlparse, urlunsplit
+
+MAX_INPUT_BYTES = 256 * 1024
+MAX_OUTPUT_BYTES = 128 * 1024
+MAX_BATCH_REQUESTS = 25
+UTC = timezone.utc
+SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+QUEUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+ACTIONS = frozenset({
+    "retry_ci", "route_root_fix", "assign_independent_work", "park_blocker",
+    "resume_blocked", "close_blocked", "escalate_human", "merge_pr", "deploy", "restart_runner",
+})
+ROOT_FIELDS = frozenset({
+    "schema_version", "action", "project_id", "incident_id",
+    "observed_at_utc", "source_url", "owner", "evidence",
+})
+EVIDENCE_FIELDS = frozenset({
+    "source_verified", "failure_kind", "attempts", "retry_budget",
+    "backoff_elapsed", "active_claim", "independent_task_ready",
+    "scope_disjoint", "dependency_kind", "dependency_scope",
+    "dependency_unchanged", "dependency_cleared", "blocked_task_id",
+    "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "blocked_source_guarded", "blocked_task_noneligible", "closure_reason",
+    "queue_lease_state", "task_claim_state", "task_claim_source_available",
+    "blocked_source_status",
+    "blocked_source_observed_at_utc", "queue_lease_observed_at_utc",
+    "task_claim_observed_at_utc",
+    "independent_task_id", "independent_task_project_id",
+    "independent_task_source_url", "independent_task_source_verified",
+    "independent_task_status", "independent_task_eligible",
+    "independent_task_source_guarded", "independent_task_version",
+    "independent_task_source_observed_at_utc",
+    "queue_lease_subject_task_id", "task_claim_subject_task_id",
+    "escalation_reason", "permission_required", "irreversible_risk",
+    "safe_routes_exhausted", "capacity", "exact_head",
+    "required_ci", "independent_review", "branch_protection",
+    "pr_state", "pr_target_branch", "pr_base_sync", "pr_history_sync", "pr_mergeable", "owner_authorized",
+    "root_cause_confirmed", "unresolved_review_threads", "merged_main",
+    "post_merge_health", "release_approval", "runtime_owner_authorized",
+    "runner_state", "running_jobs", "human_approval",
+})
+ENUMS = {
+    "failure_kind": {"transient", "deterministic", "unknown"},
+    "active_claim": {"none", "active", "unknown"},
+    "capacity": {"healthy", "pressured", "unavailable", "unknown"},
+    "exact_head": {"verified", "changed", "unknown"},
+    "required_ci": {"green", "red", "pending", "unknown"},
+    "independent_review": {"approved", "changes_requested", "missing", "unknown"},
+    "branch_protection": {"satisfied", "blocked", "unknown"},
+    "pr_state": {"open", "draft", "closed", "unknown"},
+    "pr_target_branch": {"main", "other", "unknown"},
+    "pr_base_sync": {"current", "stale", "unknown"},
+    "pr_history_sync": {"ahead", "diverged", "behind", "identical", "unknown"},
+    "pr_mergeable": {"yes", "no", "unknown"},
+    "merged_main": {"verified", "no", "unknown"},
+    "post_merge_health": {"healthy", "failed", "unknown"},
+    "runner_state": {"healthy", "unavailable", "unknown"},
+    "running_jobs": {"none", "active", "unknown"},
+    "dependency_kind": {"external", "internal", "unknown"},
+    "queue_lease_state": {"clear", "bound", "unknown"},
+    "blocked_source_status": {"blocked", "queued", "claimed", "running", "verifying", "dropped", "unknown"},
+    "independent_task_status": {"queued", "claimed", "running", "verifying", "blocked", "dropped", "done", "unknown"},
+    "task_claim_state": {"none", "active", "expired-record", "unknown"},
+    "dependency_scope": {"single_task", "project_wide", "unknown"},
+    "escalation_reason": {"permission_required", "irreversible_risk", "safe_routes_exhausted", "unknown"},
+}
+BOOL_FIELDS = {
+    "source_verified", "backoff_elapsed", "independent_task_ready",
+    "scope_disjoint", "dependency_unchanged", "dependency_cleared",
+    "blocked_task_preserved", "previous_blocker_preserved", "operator_attestation",
+    "blocked_source_guarded", "blocked_task_noneligible",
+    "task_claim_source_available", "independent_task_source_verified",
+    "independent_task_eligible", "independent_task_source_guarded",
+    "permission_required", "irreversible_risk", "safe_routes_exhausted",
+    "owner_authorized", "root_cause_confirmed", "release_approval",
+    "runtime_owner_authorized", "human_approval",
+}
+
+
+class PolicyInputError(ValueError):
+    """Input cannot be interpreted safely."""
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise PolicyInputError("duplicate JSON property")
+        result[key] = value
+    return result
+
+
+def _reject_constant(_value):
+    raise PolicyInputError("non-standard JSON numeric constant")
+
+
+def _read_input(path):
+    if path == "-":
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        if len(raw) > MAX_INPUT_BYTES:
+            raise PolicyInputError("input exceeds 256 KiB")
+        return raw
+    source = Path(path)
+    before = source.lstat()
+    if not stat.S_ISREG(before.st_mode) or source.is_symlink():
+        raise PolicyInputError("input must be a regular non-symlink file")
+    if before.st_size > MAX_INPUT_BYTES:
+        raise PolicyInputError("input exceeds 256 KiB")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise PolicyInputError("secure no-follow file opening is unavailable")
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or opened.st_size > MAX_INPUT_BYTES):
+            raise PolicyInputError("input identity changed before reading")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(MAX_INPUT_BYTES + 1)
+        after = os.fstat(fd)
+        if (len(raw) > MAX_INPUT_BYTES
+                or opened.st_size != after.st_size
+                or opened.st_mtime_ns != after.st_mtime_ns):
+            raise PolicyInputError("input changed or exceeded its bound")
+        return raw
+    finally:
+        os.close(fd)
+
+
+
+def _emit_output(content, destination, format_name):
+    """Emit to stdout or create one private, source-local operator artifact."""
+    if destination is None:
+        sys.stdout.write(content)
+        return
+    suffixes = {
+        "json": ".json", "markdown": ".md", "workorders": ".txt",
+        "html": ".html", "csv": ".csv",
+    }
+    if (not isinstance(destination, Path) or format_name not in suffixes
+            or destination.suffix != suffixes[format_name]):
+        raise PolicyInputError("private output extension must match the selected format")
+    try:
+        path = Path(os.path.abspath(destination))
+        data = content.encode("utf-8")
+        if not 1 <= len(data) <= MAX_OUTPUT_BYTES:
+            raise PolicyInputError("private output exceeds the 128 KiB output bound")
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+            raise PolicyInputError("secure private output is unavailable on this platform")
+        parent = path.parent
+        before = parent.lstat()
+        if (not stat.S_ISDIR(before.st_mode) or before.st_uid != os.geteuid()
+                or stat.S_IMODE(before.st_mode) & 0o022):
+            raise PolicyInputError(
+                "private output directory must be owned and not writable by others")
+        directory_fd = os.open(
+            parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+            getattr(os, "O_CLOEXEC", 0))
+        try:
+            actual = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(actual.st_mode)
+                    or (actual.st_dev, actual.st_ino) != (before.st_dev, before.st_ino)
+                    or actual.st_uid != os.geteuid()
+                    or stat.S_IMODE(actual.st_mode) & 0o022):
+                raise PolicyInputError("private output directory changed during creation")
+            fd = None
+            created_inode = None
+            try:
+                fd = os.open(
+                    path.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW |
+                    getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=directory_fd)
+                info = os.fstat(fd)
+                created_inode = (info.st_dev, info.st_ino)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise PolicyInputError("private output is not a regular file")
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "wb") as stream:
+                    fd = None
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fsync(directory_fd)
+            except BaseException:
+                if fd is not None:
+                    os.close(fd)
+                if created_inode is not None:
+                    try:
+                        current = os.stat(
+                            path.name, dir_fd=directory_fd, follow_symlinks=False)
+                        if (current.st_dev, current.st_ino) == created_inode:
+                            os.unlink(path.name, dir_fd=directory_fd)
+                    except OSError:
+                        pass
+                raise
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        # Avoid leaking private path names from OSError messages.
+        raise PolicyInputError("private output destination unavailable or unsafe") from exc
+    print("Created NEW private recovery-policy artifact (0600); no action executed.",
+          file=sys.stderr)
+
+def _timestamp(value):
+    if type(value) is not str or len(value) > 45:
+        raise PolicyInputError("observed_at_utc must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PolicyInputError("observed_at_utc is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PolicyInputError("observed_at_utc must include a timezone")
+    parsed = parsed.astimezone(UTC)
+    if parsed > datetime.now(UTC) + timedelta(minutes=2):
+        raise PolicyInputError("observed_at_utc is too far in the future")
+    return parsed
+
+
+def _source_url(value):
+    if type(value) is not str or len(value) > 500:
+        raise PolicyInputError("source_url must be a canonical HTTPS source link")
+    # Source links are repeated in Markdown handoffs. Raw control/whitespace
+    # characters can break the literal HTML-code line and inject new Markdown.
+    # Require a canonical, single-line URL before any renderer sees it.
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7f for char in value):
+        raise PolicyInputError("source_url must not contain whitespace or control characters")
+    try:
+        parsed = urlparse(value)
+    except ValueError as exc:
+        raise PolicyInputError("source_url is malformed") from exc
+    if (parsed.scheme != "https" or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or parsed.hostname.lower() not in {
+                "github.com", "app.notion.com", "www.notion.so", "notion.so",
+            } or parsed.netloc.lower() != parsed.hostname.lower()):
+        raise PolicyInputError("source_url must use an approved HTTPS host")
+    # Query strings and fragments are not part of the source identity. They may
+    # contain auth tokens or tracking data, so never echo them into receipts.
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
+
+
+def _validate(data):
+    if type(data) is not dict:
+        raise PolicyInputError("top-level JSON value must be an object")
+    extra = set(data) - ROOT_FIELDS
+    if extra:
+        raise PolicyInputError("unknown top-level properties: " + ", ".join(sorted(extra)))
+    missing = ROOT_FIELDS - set(data)
+    if missing:
+        raise PolicyInputError("missing top-level properties: " + ", ".join(sorted(missing)))
+    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
+        raise PolicyInputError("schema_version must be integer 1")
+    if type(data["action"]) is not str or data["action"] not in ACTIONS:
+        raise PolicyInputError("action must be one of: " + ", ".join(sorted(ACTIONS)))
+    for field in ("project_id", "incident_id"):
+        value = data[field]
+        if type(value) is not str or not SLUG.fullmatch(value):
+            raise PolicyInputError(field + " must be a bounded ASCII identifier")
+    owner = data["owner"]
+    if owner is not None and (type(owner) is not str or not SLUG.fullmatch(owner)):
+        raise PolicyInputError("owner must be null or a bounded ASCII identifier")
+    observed = _timestamp(data["observed_at_utc"])
+    source = _source_url(data["source_url"])
+    evidence = data["evidence"]
+    if type(evidence) is not dict:
+        raise PolicyInputError("evidence must be an object")
+    extra_evidence = set(evidence) - EVIDENCE_FIELDS
+    if extra_evidence:
+        raise PolicyInputError("unknown evidence properties: " + ", ".join(sorted(extra_evidence)))
+    for field in BOOL_FIELDS:
+        if field in evidence and evidence[field] is not None and type(evidence[field]) is not bool:
+            raise PolicyInputError(field + " must be true, false or null")
+    for field, allowed in ENUMS.items():
+        if field in evidence and evidence[field] is not None and (
+            type(evidence[field]) is not str or evidence[field] not in allowed
+        ):
+            raise PolicyInputError(field + " has an unsupported value")
+    blocked_task_id = evidence.get("blocked_task_id")
+    if blocked_task_id is not None and (
+        type(blocked_task_id) is not str or not QUEUE_ID.fullmatch(blocked_task_id)
+    ):
+        raise PolicyInputError("blocked_task_id must be a bounded canonical queue identifier")
+    for field in ("independent_task_id", "queue_lease_subject_task_id",
+                  "task_claim_subject_task_id"):
+        value = evidence.get(field)
+        if value is not None and (
+            type(value) is not str or not QUEUE_ID.fullmatch(value)
+        ):
+            raise PolicyInputError(field + " must be a bounded canonical queue identifier")
+    candidate_project = evidence.get("independent_task_project_id")
+    if candidate_project is not None and (
+        type(candidate_project) is not str or not SLUG.fullmatch(candidate_project)
+    ):
+        raise PolicyInputError("independent_task_project_id must be a bounded ASCII identifier")
+    candidate_url = evidence.get("independent_task_source_url")
+    if candidate_url is not None:
+        _source_url(candidate_url)
+    candidate_version = evidence.get("independent_task_version")
+    if candidate_version is not None and (
+        type(candidate_version) is not int or not 0 <= candidate_version <= 10000
+    ):
+        raise PolicyInputError("independent_task_version must be an integer from 0 to 10000")
+    reason = evidence.get("closure_reason")
+    if reason is not None and (
+        type(reason) is not str or not 12 <= len(reason) <= 1200
+        or reason != reason.strip()
+        or any(ord(char) < 0x20 or ord(char) == 0x7f for char in reason)
+    ):
+        raise PolicyInputError("closure_reason must contain 12–1200 printable characters")
+    # Malformed provided source clocks fail closed at input admission; missing
+    # clocks are policy HOLDs, surfaced as exact owner-readable gaps.
+    for field in ("blocked_source_observed_at_utc",
+                  "queue_lease_observed_at_utc", "task_claim_observed_at_utc",
+                  "independent_task_source_observed_at_utc"):
+        if evidence.get(field) is not None:
+            _timestamp(evidence[field])
+    for field in ("attempts", "retry_budget", "unresolved_review_threads"):
+        value = evidence.get(field)
+        if value is not None and (
+            type(value) is not int or value < 0 or value > 10000
+        ):
+            raise PolicyInputError(field + " must be an integer from 0 to 10000")
+    return observed, source, evidence
+
+
+def recommended_next_step_code(action, blockers):
+    """Stable machine-readable routing hint, not permission to execute the route."""
+    codes = {item["code"] for item in blockers}
+    if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
+        code.endswith(("_missing", "_after_receipt", "_stale"))
+        and code.startswith(("blocked_source_observed_at_utc",
+                             "independent_task_source_observed_at_utc",
+                             "queue_lease_observed_at_utc",
+                             "task_claim_observed_at_utc"))
+        for code in codes
+    ):
+        return "refresh_source"
+    if codes & {"independent_task_id_missing", "independent_task_project_missing",
+                "independent_task_source_url_missing", "independent_task_source_unverified",
+                "independent_task_source_not_guarded", "independent_task_version_unknown",
+                "queue_lease_subject_mismatch", "task_claim_subject_mismatch"}:
+        return "bind_exact_independent_task_identity"
+    if codes & {"independent_task_not_queued", "independent_task_not_eligible"}:
+        return "select_queued_eligible_independent_task"
+    if "task_claim_expired_record" in codes:
+        return "reconcile_expired_task_claim_with_owner"
+    if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
+        if codes & {"owner_missing", "human_owner_missing"}:
+            return "identify_claim_owner"
+        return "resolve_claim_with_owner"
+    if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
+        return "choose_one_incident_route"
+    if "pr_base_stale" in codes:
+        return "reconcile_pr_base_with_current_main"
+    if "pr_base_sync_unknown" in codes:
+        return "refresh_exact_pr_state_and_base"
+    if codes & {"pr_history_diverged", "pr_history_behind", "pr_history_no_unique_commits"}:
+        return "reconcile_pr_history_with_current_base"
+    if "pr_history_sync_unknown" in codes:
+        return "refresh_exact_pr_history"
+    if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
+        return "refresh_exact_pr_state_and_base"
+    if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
+                "main_state_not_open", "main_merge_unverified",
+                "branch_protection_not_satisfied", "independent_review_missing",
+                "review_threads_open_or_unknown"}:
+        return "refresh_exact_head_gates"
+    if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
+                "runner_unavailability_unproven"}:
+        return "wait_for_capacity_and_runtime_evidence"
+    if "blocked_task_id_missing" in codes:
+        return "identify_exact_blocked_task"
+    if "terminal_reason_missing" in codes:
+        return "obtain_concrete_terminal_reason"
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked", "park_source_not_queued"}:
+        return "refresh_exact_blocked_source"
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
+        return "resolve_claim_with_owner"
+    if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
+                "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
+        return "confirm_escalation_basis"
+    if "main_health_unverified" in codes:
+        return "verify_post_merge_health"
+    if codes & {"human_owner_missing", "owner_missing"}:
+        return "identify_authorized_owner"
+    if "operator_attestation_missing" in codes:
+        return "request_operator_attestation"
+    if codes & {"owner_authorization_missing", "runtime_owner_missing",
+                "human_approval_missing", "release_approval_missing"}:
+        return "request_authorized_owner_approval"
+    if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
+        return "confirm_bounded_retry_budget"
+    if codes & {"failure_not_deterministic", "root_cause_unconfirmed", "not_transient"}:
+        return "confirm_failure_classification"
+    if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
+                "blocked_task_not_preserved", "previous_blocker_evidence_missing",
+                "dependency_not_external", "dependency_kind_unknown",
+                "dependency_scope_too_broad"}:
+        return "refresh_exact_dependency_evidence"
+    if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
+        return "verify_disjoint_scope_and_task_readiness"
+    if blockers:
+        return "resolve_policy_hold"
+    return {
+        "retry_ci": "review_bounded_retry",
+        "route_root_fix": "route_root_cause_to_owner",
+        "assign_independent_work": "review_independent_task_admission",
+        "park_blocker": "review_single_task_parking",
+        "resume_blocked": "review_exact_task_resumption",
+        "close_blocked": "review_guarded_terminal_closure",
+        "escalate_human": "escalate_to_named_owner",
+        "merge_pr": "review_exact_head_merge_gates",
+        "deploy": "review_release_gates",
+        "restart_runner": "review_runner_recovery_gates",
+    }[action]
+
+
+def recommended_next_step(action, blockers, required_evidence):
+    """Give a deterministic safe handoff; never turn policy output into execution."""
+    codes = {item["code"] for item in blockers}
+    if action == "assign_independent_work" and (
+        codes & {"source_stale", "source_not_verified", "source_future_dated",
+                 "task_claim_source_unknown"}
+        or any(
+            code.endswith(("_missing", "_after_receipt", "_stale"))
+            and code.startswith(("independent_task_source_observed_at_utc",
+                                 "queue_lease_observed_at_utc",
+                                 "task_claim_observed_at_utc"))
+            for code in codes
+        )
+    ):
+        return "Re-read the exact candidate queue row, queue lease and separate task-claim source at current source time; bind all three to the same candidate task ID before considering admission."
+    if action == "assign_independent_work" and codes & {
+        "independent_task_id_missing", "independent_task_project_missing",
+        "independent_task_source_url_missing", "independent_task_source_unverified",
+        "independent_task_source_not_guarded", "independent_task_version_unknown",
+        "queue_lease_subject_mismatch", "task_claim_subject_mismatch",
+    }:
+        return "Re-read the exact candidate queue row and bind its ID, project, version, status and eligibility to both the queue-lease and separate task-claim observations before considering admission."
+    if action == "assign_independent_work" and codes & {
+        "independent_task_not_queued", "independent_task_not_eligible",
+    }:
+        return "Select a currently queued, explicitly eligible task; do not admit a claimed, running, verifying, blocked, dropped or unknown row."
+    if codes & {"source_stale", "source_not_verified", "source_future_dated", "task_claim_source_unknown"} or any(
+        code.endswith(("_missing", "_after_receipt", "_stale"))
+        and code.startswith(("blocked_source_observed_at_utc",
+                             "independent_task_source_observed_at_utc",
+                             "queue_lease_observed_at_utc",
+                             "task_claim_observed_at_utc"))
+        for code in codes
+    ):
+        return "Reobserve the exact blocked row, queue lease and separate task claims at current source time; a fresh wrapper receipt cannot refresh older evidence."
+    if "task_claim_expired_record" in codes:
+        return "Ask the current owner to reconcile the expired task-claim record from a fresh source observation; expiry alone is not proof of release. Do not admit, park, resume or retire the task while the record remains."
+    if codes & {"claim_not_clear", "claim_state_unknown", "queue_lease_not_clear", "task_claim_not_clear"}:
+        if codes & {"owner_missing", "human_owner_missing"}:
+            return "Identify the current claim owner from live source evidence; do not preempt, reassign, or mutate the queue."
+        return "Ask the current owner to confirm or release the exact claim; do not preempt, reassign, or mutate the queue."
+    if codes & {"competing_incident_routes", "competing_incident_actions", "competing_blocked_task_routes"}:
+        return "Ask the authorized owner to choose one recovery route for this incident before reviewing route-specific gates."
+    if "pr_base_stale" in codes:
+        return "Reconcile the PR base with the current main commit without force-push or bypass, then refresh the exact HEAD, required CI, review and branch-protection evidence before reconsidering merge."
+    if "pr_base_sync_unknown" in codes:
+        return "Fetch the current default-branch HEAD and the PR base SHA from the same live GitHub source window; until they match, keep merge on HOLD."
+    if codes & {"pr_history_diverged", "pr_history_behind", "pr_history_no_unique_commits"}:
+        return "Reconcile the existing PR history with its exact current base through the branch owner, without force-push or gate bypass. Then refresh the exact comparison, head, required CI, review and branch-protection evidence."
+    if "pr_history_sync_unknown" in codes:
+        return "Refresh the exact base/head compare from stable GitHub SHAs; until ahead/behind history is known, keep merge on HOLD."
+    if codes & {"pr_not_open", "pr_not_main", "pr_mergeability_not_confirmed"}:
+        return "Read the current GitHub PR state, default-branch target and mergeability for the exact HEAD; closed, draft, non-main or unknown PRs cannot be proposed for normal merge."
+    if codes & {"required_ci_not_green", "ci_not_terminal_red", "head_not_verified",
+                "main_state_not_open", "main_merge_unverified",
+                "branch_protection_not_satisfied", "independent_review_missing",
+                "review_threads_open_or_unknown"}:
+        return "Refresh the exact-head GitHub gate state and wait for required CI/review; never bypass branch protection."
+    if codes & {"capacity_not_healthy", "running_jobs_unknown_or_active",
+                "runner_unavailability_unproven"}:
+        return "Wait for current capacity and runner/job evidence; do not launch or restart workers from this report."
+    if "blocked_task_id_missing" in codes:
+        return "Identify the exact blocked queue item from current source evidence; do not change an entire project lane."
+    if "terminal_reason_missing" in codes:
+        return "Explain why the exact task is permanently obsolete; an unresolved dependency alone is not a closure reason."
+    if codes & {"source_guard_missing", "blocked_task_eligible", "blocked_source_not_parked", "park_source_not_queued"}:
+        return "Re-read the exact blocked row, including eligible/status/version and original evidence, before resume or terminal review."
+    if codes & {"queue_lease_not_clear", "task_claim_not_clear", "task_claim_source_unknown"}:
+        return "Have the current owner reconcile both queue leases and separate task claims; never resume or retire an active or unknown claim."
+    if codes & {"escalation_reason_missing", "permission_gate_unconfirmed",
+                "irreversible_risk_unconfirmed", "safe_routes_not_exhausted"}:
+        return "Confirm the specific permission/risk reason and whether safe routes are exhausted before escalating."
+    if "main_health_unverified" in codes:
+        return "Verify health of the exact merged main commit before considering deployment."
+    if codes & {"human_owner_missing", "owner_missing"}:
+        return "Identify the responsible owner from current source evidence; do not invent ownership, and obtain explicit authorization before any action."
+    if "operator_attestation_missing" in codes:
+        return "Obtain explicit attestation from the authorized operator that this dependency is cleared; do not resume on inference."
+    if codes & {"owner_authorization_missing", "runtime_owner_missing",
+                "human_approval_missing", "release_approval_missing"}:
+        return "Route the scoped request to the authorized owner and obtain explicit approval before any change."
+    if codes & {"retry_budget_exhausted_or_unknown", "backoff_not_elapsed"}:
+        return "Do not retry now; confirm the bounded retry budget and backoff or choose an independently safe route."
+    if codes & {"failure_not_deterministic", "root_cause_unconfirmed", "not_transient"}:
+        return "Collect the missing failure classification and root-cause evidence before routing a repair or retry."
+    if codes & {"dependency_not_reconfirmed", "dependency_not_confirmed_cleared",
+                "blocked_task_not_preserved", "previous_blocker_evidence_missing",
+                "dependency_not_external", "dependency_kind_unknown",
+                "dependency_scope_too_broad"}:
+        return "Refresh evidence for the exact dependent queue item and preserve its blocker history; do not change the queue yet."
+    if codes & {"scope_overlap_unknown", "task_not_ready", "independent_work_not_ready"}:
+        return "Identify a ready task and positively establish disjoint scope from every active claim before admission."
+    if blockers:
+        code = blockers[0]["code"]
+        fields = ", ".join(required_evidence[:4]) or "fresh source evidence"
+        return "Resolve HOLD " + code + " using current evidence (" + fields + "); do not bypass required gates."
+    return {
+        "retry_ci": "An authorized owner may review one bounded retry against the current exact head; this report does not dispatch it.",
+        "route_root_fix": "Hand the confirmed root cause and narrow scope to the named owner; implementation remains a separate authorized action.",
+        "assign_independent_work": "Have the owner recheck live claims, disjoint scope and capacity before admitting the independent task.",
+        "park_blocker": "Have the owner recheck the exact queued task, both claim sources and unrelated ready work before guarded parking; no queue mutation is performed here.",
+        "resume_blocked": "Have the owner recheck the exact blocked, non-eligible row, clear queue lease and separate task claim, and cleared dependency before explicitly resuming it.",
+        "close_blocked": "Have the authorized operator re-read the parked task, confirm no claims, and explicitly confirm the terminal decision twice.",
+        "escalate_human": "Route the specific permission or risk decision to the named human owner; preserve all existing claims.",
+        "merge_pr": "Have the authorized owner recheck exact-head CI, review threads and branch protection before a normal GitHub merge.",
+        "deploy": "Have the runtime owner verify the exact merged commit, post-merge health and release approval before deployment.",
+        "restart_runner": "Have the runtime owner verify zero running jobs and claims, confirm the failure cause, and approve recovery explicitly.",
+    }[action]
+
+
+def evaluate(data, max_age_minutes, *, now=None):
+    if type(max_age_minutes) is not int or not 1 <= max_age_minutes <= 1440:
+        raise PolicyInputError("max_age_minutes must be an integer from 1 to 1440")
+    observed, source, evidence = _validate(data)
+    now = datetime.now(UTC) if now is None else now
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise PolicyInputError("evaluation clock must be timezone-aware")
+    now = now.astimezone(UTC)
+    age = now - observed
+    blockers = []
+    requirements = []
+
+    def require(condition, code, message, fields=()):
+        if condition is True:
+            return
+        blockers.append({"code": code, "message": message})
+        requirements.extend(field for field in fields if field not in requirements)
+
+    def value(name):
+        return evidence.get(name)
+
+    def require_task_claim_clear(message):
+        # An expired lease can still leave an independently persisted claim row.
+        # Never normalize that state to "none": the current owner must reconcile it.
+        if value("task_claim_state") == "expired-record":
+            require(
+                False,
+                "task_claim_expired_record",
+                "An expired separate task-claim record remains. Lease expiry alone is not proof that the owner reconciled or released it.",
+                ("evidence.task_claim_state",),
+            )
+            return
+        require(value("task_claim_state") == "none",
+                "task_claim_not_clear", message,
+                ("evidence.task_claim_state",))
+
+    require(age <= timedelta(minutes=max_age_minutes),
+            "source_stale", "Source observation is older than the configured freshness window.",
+            ("observed_at_utc",))
+    require(observed <= now + timedelta(minutes=2),
+            "source_future_dated",
+            "Source observation timestamp is more than two minutes in the future.",
+            ("observed_at_utc",))
+    require(value("source_verified") is True,
+            "source_not_verified", "The supplied source receipt is not marked verified.",
+            ("evidence.source_verified",))
+    action = data["action"]
+    source_clocks = {}
+    # A fresh wrapper receipt does not refresh the distinct source reads
+    # used to justify an ownership-changing route. A missing/old/future-
+    # relative source clock is a HOLD; these remain supplied observations,
+    # not independent proof and never authorize a queue action.
+    snapshot_sources = ()
+    if action == "assign_independent_work":
+        snapshot_sources = (
+            ("independent_task_source_observed_at_utc", "candidate queue task"),
+            ("queue_lease_observed_at_utc", "queue lease"),
+            ("task_claim_observed_at_utc", "separate task claim"),
+        )
+    elif action in {"park_blocker", "resume_blocked", "close_blocked"}:
+        snapshot_sources = (
+            ("blocked_source_observed_at_utc", "blocked row"),
+            ("queue_lease_observed_at_utc", "queue lease"),
+            ("task_claim_observed_at_utc", "separate task claim"),
+        )
+    for field, label in snapshot_sources:
+        supplied = value(field)
+        if supplied is None:
+            source_clocks[field] = {"status": "missing", "age_seconds": None}
+            require(False, field + "_missing",
+                    "Current " + label + " source observation clock is missing.",
+                    ("evidence." + field,))
+            continue
+        snapshot_at = _timestamp(supplied)
+        clock_age_seconds = max(0, int((now - snapshot_at).total_seconds()))
+        clock_status = ("after_receipt" if snapshot_at > observed + timedelta(minutes=2)
+                        else "stale" if now - snapshot_at > timedelta(minutes=max_age_minutes)
+                        else "within_configured_window")
+        source_clocks[field] = {
+            "status": clock_status, "age_seconds": clock_age_seconds,
+        }
+        require(snapshot_at <= observed + timedelta(minutes=2),
+                field + "_after_receipt",
+                "The " + label + " observation postdates the reported source receipt.",
+                ("evidence." + field, "observed_at_utc"))
+        require(now - snapshot_at <= timedelta(minutes=max_age_minutes),
+                field + "_stale",
+                "The " + label + " observation exceeds the configured source freshness window.",
+                ("evidence." + field,))
+    # Approval booleans alone cannot identify the person accountable for an
+    # execution-impacting recommendation. A missing named owner is always HOLD.
+    if action in {
+        "retry_ci", "assign_independent_work", "park_blocker",
+        "merge_pr", "deploy", "restart_runner",
+    }:
+        require(data["owner"] is not None,
+                "owner_missing", "A named accountable owner is required.",
+                ("owner",))
+
+    if action == "retry_ci":
+        require(value("failure_kind") == "transient",
+                "not_transient", "Only a classified transient failure is eligible for bounded retry.",
+                ("evidence.failure_kind",))
+        require(value("required_ci") == "red",
+                "ci_not_terminal_red", "A retry needs a terminal failing CI result, not green or pending CI.",
+                ("evidence.required_ci",))
+        require(value("exact_head") == "verified",
+                "head_not_verified", "The failure must belong to the verified exact PR head.",
+                ("evidence.exact_head",))
+        attempts, budget = value("attempts"), value("retry_budget")
+        require(type(attempts) is int and type(budget) is int and attempts < budget,
+                "retry_budget_exhausted_or_unknown",
+                "A numeric remaining retry budget is required; exhausted budgets cannot be retried.",
+                ("evidence.attempts", "evidence.retry_budget"))
+        require(value("backoff_elapsed") is True,
+                "backoff_not_elapsed", "The bounded retry backoff must have elapsed.",
+                ("evidence.backoff_elapsed",))
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not retry through an active or unknown work claim.",
+                ("evidence.active_claim",))
+        require(value("capacity") == "healthy",
+                "capacity_not_healthy", "Runner capacity must be observed healthy before a retry is considered.",
+                ("evidence.capacity",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "An authorized owner must approve the recovery route.",
+                ("evidence.owner_authorized",))
+
+    elif action == "route_root_fix":
+        require(value("failure_kind") == "deterministic",
+                "failure_not_deterministic", "Root-fix routing requires a deterministic failure classification.",
+                ("evidence.failure_kind",))
+        require(value("root_cause_confirmed") is True,
+                "root_cause_unconfirmed", "A concrete root cause must be confirmed before routing a fix.",
+                ("evidence.root_cause_confirmed",))
+        require(data["owner"] is not None,
+                "owner_missing", "A concrete responsible owner is required; do not invent ownership.",
+                ("owner",))
+        require(value("active_claim") == "none",
+                "claim_not_clear", "An active or unknown claim must not be displaced.",
+                ("evidence.active_claim",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "The destination owner must be authorized for this scope.",
+                ("evidence.owner_authorized",))
+
+    elif action == "assign_independent_work":
+        candidate_id = value("independent_task_id")
+        candidate_id_valid = (
+            type(candidate_id) is str and QUEUE_ID.fullmatch(candidate_id) is not None
+        )
+        require(candidate_id_valid,
+                "independent_task_id_missing",
+                "Independent admission must identify one exact canonical queue task.",
+                ("evidence.independent_task_id",))
+        require(type(value("independent_task_project_id")) is str
+                and SLUG.fullmatch(value("independent_task_project_id")) is not None,
+                "independent_task_project_missing",
+                "The candidate queue task must be bound to its canonical project ID.",
+                ("evidence.independent_task_project_id",))
+        require(type(value("independent_task_source_url")) is str,
+                "independent_task_source_url_missing",
+                "A source URL for the candidate queue row is required.",
+                ("evidence.independent_task_source_url",))
+        require(value("independent_task_source_verified") is True,
+                "independent_task_source_unverified",
+                "The candidate queue row must be observed from its canonical source.",
+                ("evidence.independent_task_source_verified",))
+        require(value("independent_task_status") == "queued",
+                "independent_task_not_queued",
+                "Only a currently queued candidate may be admitted as independent work.",
+                ("evidence.independent_task_status",))
+        require(value("independent_task_eligible") is True,
+                "independent_task_not_eligible",
+                "The candidate queue row must be explicitly eligible.",
+                ("evidence.independent_task_eligible",))
+        require(value("independent_task_source_guarded") is True,
+                "independent_task_source_not_guarded",
+                "Candidate ID, project, status, version and eligibility must match the stable source row.",
+                ("evidence.independent_task_source_guarded",))
+        require(type(value("independent_task_version")) is int
+                and 0 <= value("independent_task_version") <= 10000,
+                "independent_task_version_unknown",
+                "The candidate queue row must have an observed bounded version.",
+                ("evidence.independent_task_version",))
+        require(candidate_id_valid
+                and value("queue_lease_subject_task_id") == candidate_id,
+                "queue_lease_subject_mismatch",
+                "The queue-lease observation must refer to the exact candidate task ID.",
+                ("evidence.queue_lease_subject_task_id", "evidence.independent_task_id"))
+        require(candidate_id_valid
+                and value("task_claim_subject_task_id") == candidate_id,
+                "task_claim_subject_mismatch",
+                "The separate task-claim observation must refer to the exact candidate task ID.",
+                ("evidence.task_claim_subject_task_id", "evidence.independent_task_id"))
+        require(value("independent_task_ready") is True,
+                "task_not_ready", "Independent work must be explicitly identified as ready.",
+                ("evidence.independent_task_ready",))
+        require(value("scope_disjoint") is True,
+                "scope_overlap_unknown", "Disjointness from active work must be positively established.",
+                ("evidence.scope_disjoint",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "The independent task's queue slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be readable before admitting independent work.",
+                ("evidence.task_claim_source_available",))
+        require_task_claim_clear("The separate task-claim source must explicitly show no owner.")
+        require(value("active_claim") == "none",
+                "claim_not_clear", "An active or unknown claim must not be displaced.",
+                ("evidence.active_claim",))
+        require(value("capacity") == "healthy",
+                "capacity_not_healthy", "Worker capacity must be observed healthy before admission.",
+                ("evidence.capacity",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "An authorized owner must approve task admission.",
+                ("evidence.owner_authorized",))
+
+    elif action == "park_blocker":
+        # A scope label cannot identify the queued row. Review only a
+        # source-bound dependent item with both ownership channels clear.
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Parking requires the exact canonical dependent queue item.",
+                ("evidence.blocked_task_id",))
+        require(value("blocked_source_status") == "queued",
+                "park_source_not_queued",
+                "Only an explicitly queued item may enter this parking route.",
+                ("evidence.blocked_source_status",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "The current queue ID, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "The queue slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "Parking requires a readable separate task-claim source.",
+                ("evidence.task_claim_source_available",))
+        require_task_claim_clear("The separate task-claim source must show no owner.")
+        require(value("dependency_kind") == "external",
+                "dependency_not_external", "Only an external dependency may be parked by this action.",
+                ("evidence.dependency_kind",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad", "Park only the dependent task, never an entire project lane.",
+                ("evidence.dependency_scope",))
+        require(value("dependency_unchanged") is True,
+                "dependency_not_reconfirmed", "The specific external blocker must be confirmed unchanged.",
+                ("evidence.dependency_unchanged",))
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not alter an active or unknown work claim.",
+                ("evidence.active_claim",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "An authorized owner must approve parking the dependent task.",
+                ("evidence.owner_authorized",))
+        require(value("independent_task_ready") is True,
+                "independent_work_not_ready", "Identify unrelated ready work before parking the dependency.",
+                ("evidence.independent_task_ready",))
+        require(value("scope_disjoint") is True,
+                "scope_overlap_unknown", "The continuing work must be positively disjoint from the blocked task.",
+                ("evidence.scope_disjoint",))
+        require(value("capacity") == "healthy",
+                "capacity_not_healthy", "Healthy capacity is required to continue independent work.",
+                ("evidence.capacity",))
+
+    elif action == "resume_blocked":
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Resume must identify one exact bounded blocked queue item.",
+                ("evidence.blocked_task_id",))
+        require(value("dependency_kind") in {"external", "internal"},
+                "dependency_kind_unknown",
+                "The dependency type must be known before resumption.",
+                ("evidence.dependency_kind",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad",
+                "Resume may only affect the exact dependent task, not a project lane.",
+                ("evidence.dependency_scope",))
+        require(value("dependency_cleared") is True
+                and value("dependency_unchanged") is False,
+                "dependency_not_confirmed_cleared",
+                "A fresh source must explicitly confirm the dependency cleared.",
+                ("evidence.dependency_cleared", "evidence.dependency_unchanged"))
+        require(value("blocked_task_preserved") is True,
+                "blocked_task_not_preserved",
+                "The original queue item must still exist in the blocked state.",
+                ("evidence.blocked_task_preserved",))
+        require(value("previous_blocker_preserved") is True,
+                "previous_blocker_evidence_missing",
+                "The original blocker and its evidence must be retained in the resume receipt.",
+                ("evidence.previous_blocker_preserved",))
+        # A generic active_claim=none can miss a separate task claim or an
+        # already resumed queue row. Require the same exact-row read boundary
+        # used by guarded terminal closure, before recommending any resume.
+        require(value("blocked_source_status") == "blocked",
+                "blocked_source_not_parked",
+                "The exact queue item must still be in blocked status.",
+                ("evidence.blocked_source_status",))
+        require(value("blocked_task_noneligible") is True,
+                "blocked_task_eligible",
+                "The parked queue item must still be eligible=0.",
+                ("evidence.blocked_task_noneligible",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "The observed queue ID, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "Worker slot, claim timestamp and queue lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be readable for this item.",
+                ("evidence.task_claim_source_available",))
+        require_task_claim_clear("The separate task-claim source must explicitly show no claim.")
+        require(value("operator_attestation") is True,
+                "operator_attestation_missing",
+                "An explicit operator must attest that the dependency is cleared.",
+                ("evidence.operator_attestation",))
+        require(value("active_claim") == "none",
+                "claim_not_clear",
+                "A blocked task can only resume when no active or unknown claim exists.",
+                ("evidence.active_claim",))
+        require(data["owner"] is not None,
+                "owner_missing",
+                "A named authorized operator is required for a resume request.",
+                ("owner",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing",
+                "The operator must be authorized to resume this queue item.",
+                ("evidence.owner_authorized",))
+
+    elif action == "close_blocked":
+        # Advisory match for the existing runtime action='drop' guarded closure.
+        # Even READY_FOR_HUMAN_REVIEW never sends an HTTP request or queue write.
+        require(type(value("blocked_task_id")) is str
+                and bool(QUEUE_ID.fullmatch(value("blocked_task_id"))),
+                "blocked_task_id_missing",
+                "Terminal close requires one exact canonical blocked queue ID.",
+                ("evidence.blocked_task_id",))
+        require(value("dependency_scope") == "single_task",
+                "dependency_scope_too_broad",
+                "Only the exact parked task may be retired, not an entire project lane.",
+                ("evidence.dependency_scope",))
+        require(value("blocked_task_preserved") is True,
+                "blocked_task_not_preserved", "The parked task must still exist.",
+                ("evidence.blocked_task_preserved",))
+        require(value("blocked_task_noneligible") is True,
+                "blocked_task_eligible", "The blocked row must be eligible=0.",
+                ("evidence.blocked_task_noneligible",))
+        require(value("blocked_source_status") == "blocked",
+                "blocked_source_not_parked", "The observed queue status must be blocked.",
+                ("evidence.blocked_source_status",))
+        require(value("blocked_source_guarded") is True,
+                "source_guard_missing",
+                "Fresh full identity, status, version, blocker and evidence must match.",
+                ("evidence.blocked_source_guarded",))
+        require(value("previous_blocker_preserved") is True,
+                "previous_blocker_evidence_missing",
+                "Original blocker/evidence must be retained in the terminal receipt.",
+                ("evidence.previous_blocker_preserved",))
+        require(type(value("closure_reason")) is str
+                and len(value("closure_reason")) >= 12,
+                "terminal_reason_missing",
+                "Explain why the work is obsolete, not merely blocked.",
+                ("evidence.closure_reason",))
+        require(value("operator_attestation") is True,
+                "operator_attestation_missing",
+                "A deliberate second operator confirmation is required.",
+                ("evidence.operator_attestation",))
+        require(value("queue_lease_state") == "clear",
+                "queue_lease_not_clear",
+                "Worker slot, claim timestamp and lease must all be clear.",
+                ("evidence.queue_lease_state",))
+        require(value("task_claim_source_available") is True,
+                "task_claim_source_unknown",
+                "The separate task-claim source must be available.",
+                ("evidence.task_claim_source_available",))
+        require_task_claim_clear("Separate task-claim source must explicitly show none.")
+        require(value("active_claim") == "none",
+                "claim_not_clear",
+                "Never retire an actively owned or unknown work item.",
+                ("evidence.active_claim",))
+        require(data["owner"] is not None,
+                "owner_missing", "A named operator is required.", ("owner",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing",
+                "Only the authorized operator may make the terminal decision.",
+                ("evidence.owner_authorized",))
+
+    elif action == "escalate_human":
+        reason = value("escalation_reason")
+        require(reason in {"permission_required", "irreversible_risk", "safe_routes_exhausted"},
+                "escalation_reason_missing",
+                "Escalation is limited to a permission gate, irreversible/high-risk decision, or exhausted safe routes.",
+                ("evidence.escalation_reason",))
+        if reason == "permission_required":
+            require(value("permission_required") is True,
+                    "permission_gate_unconfirmed", "The specific required permission must be identified.",
+                    ("evidence.permission_required",))
+        elif reason == "irreversible_risk":
+            require(value("irreversible_risk") is True,
+                    "irreversible_risk_unconfirmed", "The irreversible or high-risk decision must be explicit.",
+                    ("evidence.irreversible_risk",))
+        elif reason == "safe_routes_exhausted":
+            require(value("safe_routes_exhausted") is True,
+                    "safe_routes_not_exhausted", "Escalate only after safe recovery routes are exhausted.",
+                    ("evidence.safe_routes_exhausted",))
+        require(data["owner"] is not None,
+                "human_owner_missing", "Name the authorized human or owner for escalation.",
+                ("owner",))
+        require(value("active_claim") in {"none", "active"},
+                "claim_state_unknown", "Resolve claim state before routing escalation; do not take over unknown work.",
+                ("evidence.active_claim",))
+
+    elif action == "merge_pr":
+        # Exact-head checks do not establish that the PR still exists as a
+        # review-ready open main-target change. GitHub's mergeable hint is
+        # advisory only and never overrides branch/review/CI protection.
+        require(value("pr_state") == "open",
+                "pr_not_open", "Only an open non-draft PR is eligible for merge review.",
+                ("evidence.pr_state",))
+        require(value("pr_target_branch") == "main",
+                "pr_not_main", "The PR must target protected main.",
+                ("evidence.pr_target_branch",))
+        base_sync = value("pr_base_sync")
+        require(base_sync == "current",
+                "pr_base_stale" if base_sync == "stale" else "pr_base_sync_unknown",
+                "The PR base SHA must match the current default-branch HEAD; stale or unknown base history is a merge HOLD.",
+                ("evidence.pr_base_sync",))
+        history_sync = value("pr_history_sync")
+        require(history_sync == "ahead",
+                ("pr_history_diverged" if history_sync == "diverged" else
+                 "pr_history_behind" if history_sync == "behind" else
+                 "pr_history_no_unique_commits" if history_sync == "identical" else
+                 "pr_history_sync_unknown"),
+                "The exact PR head must be ahead of its current base with no commits missing from the head; diverged, behind, identical or unknown history is a merge HOLD.",
+                ("evidence.pr_history_sync",))
+        require(value("pr_mergeable") == "yes",
+                "pr_mergeability_not_confirmed",
+                "Exact-head GitHub mergeability must be affirmative, not stale or unknown.",
+                ("evidence.pr_mergeable",))
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not merge while any active or unknown worker claim remains.",
+                ("evidence.active_claim",))
+        require(value("exact_head") == "verified",
+                "head_not_verified", "Required gates must be bound to the current exact PR head.",
+                ("evidence.exact_head",))
+        require(value("required_ci") == "green",
+                "required_ci_not_green", "Every required check must be green on the exact head.",
+                ("evidence.required_ci",))
+        require(value("independent_review") == "approved",
+                "independent_review_missing", "An independent approving review is required.",
+                ("evidence.independent_review",))
+        require(value("branch_protection") == "satisfied",
+                "branch_protection_not_satisfied", "GitHub branch protection must be satisfied normally.",
+                ("evidence.branch_protection",))
+        require(value("unresolved_review_threads") == 0,
+                "review_threads_open_or_unknown", "No unresolved review threads may remain.",
+                ("evidence.unresolved_review_threads",))
+        require(value("merged_main") == "no",
+                "main_state_not_open", "The source must be verified as not already merged.",
+                ("evidence.merged_main",))
+        require(value("owner_authorized") is True,
+                "owner_authorization_missing", "The authorized PR owner must approve integration.",
+                ("evidence.owner_authorized",))
+
+    elif action == "deploy":
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not deploy while any active or unknown worker claim remains.",
+                ("evidence.active_claim",))
+        require(value("exact_head") == "verified",
+                "head_not_verified", "Release evidence must be bound to an exact source head.",
+                ("evidence.exact_head",))
+        require(value("required_ci") == "green",
+                "required_ci_not_green", "All required CI must be green on the exact release source.",
+                ("evidence.required_ci",))
+        require(value("independent_review") == "approved",
+                "independent_review_missing", "An independent approving review is required.",
+                ("evidence.independent_review",))
+        require(value("branch_protection") == "satisfied",
+                "branch_protection_not_satisfied", "Normal branch protection must be satisfied.",
+                ("evidence.branch_protection",))
+        require(value("merged_main") == "verified",
+                "main_merge_unverified", "Deployment requires proof of the exact source on main.",
+                ("evidence.merged_main",))
+        require(value("post_merge_health") == "healthy",
+                "main_health_unverified", "Current-main health must be observed healthy after merge.",
+                ("evidence.post_merge_health",))
+        require(value("release_approval") is True,
+                "release_approval_missing", "A release owner must explicitly approve deployment.",
+                ("evidence.release_approval",))
+        require(value("runtime_owner_authorized") is True,
+                "runtime_owner_missing", "Runtime-owner authorization is required for deployment.",
+                ("evidence.runtime_owner_authorized",))
+        require(value("capacity") == "healthy",
+                "capacity_not_healthy", "Runtime capacity must be observed healthy before release.",
+                ("evidence.capacity",))
+
+    elif action == "restart_runner":
+        require(value("active_claim") == "none",
+                "claim_not_clear", "Do not restart a runner while any active or unknown work claim remains.",
+                ("evidence.active_claim",))
+        require(value("runner_state") == "unavailable",
+                "runner_unavailability_unproven", "Restart consideration requires an observed unavailable runner.",
+                ("evidence.runner_state",))
+        require(value("running_jobs") == "none",
+                "running_jobs_unknown_or_active", "Running jobs must be positively observed absent.",
+                ("evidence.running_jobs",))
+        require(value("root_cause_confirmed") is True,
+                "root_cause_unconfirmed", "The listener failure cause must be confirmed.",
+                ("evidence.root_cause_confirmed",))
+        require(value("runtime_owner_authorized") is True,
+                "runtime_owner_missing", "Only an authorized runtime owner may approve runner recovery.",
+                ("evidence.runtime_owner_authorized",))
+        require(value("human_approval") is True,
+                "human_approval_missing", "Runner restart requires explicit human approval.",
+                ("evidence.human_approval",))
+
+    decision = "READY_FOR_HUMAN_REVIEW" if not blockers else "HOLD"
+    return {
+        "schema_version": 1,
+        "policy": "zsentinel-recovery-policy-v1",
+        "project_id": data["project_id"],
+        "incident_id": data["incident_id"],
+        "action": action,
+        "decision": decision,
+        "observed_at_utc": observed.isoformat().replace("+00:00", "Z"),
+        "source_url": source,
+        "source_age_seconds": max(0, int(age.total_seconds())),
+        "source_freshness_window_minutes": max_age_minutes,
+        "source_clock_observations_unverified": source_clocks,
+        "owner": data["owner"],
+        "blockers": blockers,
+        "required_evidence": requirements,
+        "recommended_next_step": recommended_next_step(action, blockers, requirements),
+        "recommended_next_step_code": recommended_next_step_code(action, blockers),
+        "advisory_only": True,
+        "evidence_independently_verified": False,
+        "actions_executed": False,
+        "authority": {
+            "claim_acquired": False,
+            "ci_retried": False,
+            "merge_executed": False,
+            "deployment_executed": False,
+            "runner_restarted": False,
+            "queue_resumed": False,
+            "queue_closed": False,
+        },
+    }
+
+
+# Human-review ordering only; never infer incident severity or live authority.
+WORKORDER_ORDER = {
+    "merge_pr": 0, "restart_runner": 1, "resume_blocked": 2,
+    "close_blocked": 3, "route_root_fix": 4, "retry_ci": 5, "deploy": 6,
+    "escalate_human": 7, "park_blocker": 8, "assign_independent_work": 9,
+}
+
+
+def _batch_workorders(results):
+    """One bounded non-authorizing handoff per incident, with collision HOLDs."""
+    groups = {}
+    for item in results:
+        report = item["report"]
+        key = (report["project_id"], report["incident_id"])
+        groups.setdefault(key, []).append(item)
+
+    workorders = []
+    for (project, incident), items in groups.items():
+        actions = sorted((item["report"]["action"] for item in items),
+                         key=lambda action: (WORKORDER_ORDER[action], action))
+        conflict = len(actions) > 1
+        if conflict:
+            for item in items:
+                report = item["report"]
+                report["decision"] = "HOLD"
+                report["blockers"].append({
+                    "code": "competing_incident_actions",
+                    "message": "Multiple recovery actions target one incident; "
+                               "an authorized owner must select one route.",
+                })
+                if "owner_route_selection" not in report["required_evidence"]:
+                    report["required_evidence"].append("owner_route_selection")
+        reports = [item["report"] for item in items]
+        blockers = sorted({hold["code"] for report in reports
+                           for hold in report["blockers"]})
+        owners = {report["owner"] for report in reports}
+        needed = sorted({field for report in reports
+                         for field in report["required_evidence"]})
+        workorders.append({
+            "project_id": project,
+            "incident_id": incident,
+            "input_indexes": [item["index"] for item in items],
+            "proposed_actions": actions,
+            "owner": next(iter(owners)) if len(owners) == 1 else None,
+            "decision": "HOLD" if blockers else "READY_FOR_HUMAN_REVIEW",
+            "problem_codes": blockers,
+            "required_evidence": needed,
+            "source_urls": sorted({report["source_url"] for report in reports}),
+            "next_step": ("select_one_authorized_action" if conflict else
+                          "reconcile_same_blocked_task_across_incident_aliases"
+                          if "competing_blocked_task_routes" in blockers else
+                          "resolve_evidence_holds" if blockers else
+                          "verify_live_gates_and_obtain_owner_approval"),
+            "human_review_required": True,
+            "actions_executed": False,
+        })
+    return sorted(workorders, key=lambda item: (
+        min(WORKORDER_ORDER[action] for action in item["proposed_actions"]),
+        item["project_id"], item["incident_id"],
+    ))
+
+
+def _observation_disclosure(batch):
+    """Distinguish a historical case export from the local policy clock."""
+    evaluated = batch["evaluated_at_utc"]
+    generated = batch.get("source_generated_at_utc")
+    if generated is None:
+        return "Policy evaluated locally: " + evaluated + " (supplied evidence unverified)"
+    state = "STALE" if batch["source_case_stale"] else "HISTORICAL"
+    queue = batch.get("source_queue_observed_at_utc")
+    queue_status = batch.get("source_queue_stale")
+    issue = batch.get("source_issues_observed_at_utc")
+    issue_status = batch.get("source_issues_stale")
+    issue_truncated = batch.get("source_issues_truncated")
+    queue_complete = batch.get("source_queue_complete")
+    queue_truncated = batch.get("source_queue_truncated")
+    return (
+        "Source case exported: " + generated + " [" + state + "]"
+        + (" | Issues observed: " + issue
+           + (" [STALE]" if issue_status else " [sampled]")
+           + (" [PARTIAL]" if issue_truncated else "")
+           if issue is not None else " | Issue observation: UNKNOWN")
+        + (" | Queue observed: " + queue
+           + (" [STALE]" if queue_status else " [sampled]")
+           + (" [PARTIAL]" if queue_complete is False or queue_truncated else "")
+           if queue is not None else " | Queue observation: UNKNOWN")
+        + " | Policy evaluated locally: " + evaluated
+        + " | No live source verification"
+    )
+
+
+def workorders_text(batch):
+    """Compact three-line per-incident owner handoff, not a job dispatcher."""
+    lines = [
+        "zSentinel | advisory incident workorders",
+        _observation_disclosure(batch) +
+        " | Incident groups: " + str(batch["incident_count"]) +
+        " | No independent source verification or execution.",
+        ("Focused source-only view: " +
+         batch["source_case_view"]["selected_project"] +
+         ("/issue-" + str(batch["source_case_view"]["selected_issue_number"])
+          if batch["source_case_view"]["selected_issue_number"] is not None else "") +
+         " through " + batch["source_case_view"]["through_priority"] +
+         " | hidden historic entries: " +
+         str(batch["source_case_view"]["hidden_by_view"]) +
+         " | never a live backlog-clear verdict"
+         if "source_case_view" in batch else ""),
+        "",
+    ]
+    for order in batch["owner_workorders"]:
+        issues = ", ".join(order["problem_codes"][:4]) or "no local policy holds"
+        if len(order["problem_codes"]) > 4:
+            issues += ", ..."
+        needed = ", ".join(order["required_evidence"][:4]) or "live authorization"
+        if len(order["required_evidence"]) > 4:
+            needed += ", ..."
+        is_case = "priority" in order
+        # Case links were admitted against canonical same-repository issue/PR
+        # identities; these are candidate references, not current PR state.
+        urls = order["source_urls"]
+        source_note = (
+            " | issue: " + urls[0] +
+            "".join(
+                " | PR #" + str(pr["number"]) +
+                (" [DRAFT AT SOURCE]" if pr["draft_at_source"]
+                 else " [NON-DRAFT AT SOURCE]") +
+                " (" + pr["relationship_at_source"] + "): " + pr["url"]
+                for pr in order.get("candidate_prs", [])
+            ) if is_case and urls else ""
+        )
+        lines.extend([
+            "Problem [" + (order["priority"] + " " if is_case else "") +
+            order["project_id"] + "/" + order["incident_id"] + "]: " + issues,
+            "Action: " + order["next_step"] + " | required: " + needed +
+            " | owner: " + (order["owner"] or "UNKNOWN") + source_note,
+            "Status: " + order["decision"] +
+            " | human approval required; no claim/retry/merge/deploy performed.",
+            "",
+        ])
+    return "\n".join(lines)
+
+
+def evaluate_batch(data, max_age_minutes):
+    """Evaluate a bounded set of proposals against one shared clock snapshot."""
+    if type(data) is not list or not 1 <= len(data) <= MAX_BATCH_REQUESTS:
+        raise PolicyInputError("batch input must be a JSON array of 1 to 25 requests")
+
+    evaluated_at = datetime.now(UTC)
+    results = []
+    seen = set()
+    for index, item in enumerate(data):
+        report = evaluate(item, max_age_minutes, now=evaluated_at)
+        identity = (report["project_id"], report["incident_id"], report["action"])
+        if identity in seen:
+            raise PolicyInputError(
+                "batch contains duplicate project/incident/action entries"
+            )
+        seen.add(identity)
+        results.append({"index": index, "report": report})
+
+    # Multiple possible actions for the same incident are alternatives,
+    # not independent authorizations. Never publish simultaneous READY
+    # decisions for one unresolved incident (e.g. retry and root-fix).
+    by_incident = {}
+    for item in results:
+        report = item["report"]
+        by_incident.setdefault((report["project_id"], report["incident_id"]), []).append(item)
+    for proposals in by_incident.values():
+        if len(proposals) <= 1:
+            continue
+        actions = sorted(item["report"]["action"] for item in proposals)
+        for item in proposals:
+            report = item["report"]
+            report["blockers"].append({
+                "code": "competing_incident_routes",
+                "message": "Multiple proposed routes for this incident need one owner decision: "
+                           + ", ".join(actions) + ".",
+            })
+            if "incident_route_selection" not in report["required_evidence"]:
+                report["required_evidence"].append("incident_route_selection")
+            report["decision"] = "HOLD"
+            report["recommended_next_step"] = recommended_next_step(
+                report["action"], report["blockers"], report["required_evidence"]
+            )
+            report["recommended_next_step_code"] = recommended_next_step_code(
+                report["action"], report["blockers"]
+            )
+
+    # Incident labels are supplied by the caller. Two distinct incident IDs
+    # can still name the very same parked queue row; a resume and a terminal
+    # closure must not both look review-ready merely because aliases differ.
+    # Group by canonical queue identity, without exporting raw queue IDs.
+    blocked_routes = {}
+    for item in results:
+        report = item["report"]
+        if report["action"] not in {"park_blocker", "resume_blocked", "close_blocked"}:
+            continue
+        queue_id = data[item["index"]]["evidence"].get("blocked_task_id")
+        if queue_id is not None:
+            blocked_routes.setdefault((report["project_id"], queue_id), []).append(item)
+    for proposals in blocked_routes.values():
+        distinct_incidents = {
+            item["report"]["incident_id"] for item in proposals
+        }
+        if len(distinct_incidents) < 2:
+            continue
+        for item in proposals:
+            report = item["report"]
+            report["blockers"].append({
+                "code": "competing_blocked_task_routes",
+                "message": "Different incident labels target the same blocked queue item; "
+                           "one authorized owner must reconcile the exact task first.",
+            })
+            if "blocked_task_route_selection" not in report["required_evidence"]:
+                report["required_evidence"].append("blocked_task_route_selection")
+            report["decision"] = "HOLD"
+            report["recommended_next_step"] = recommended_next_step(
+                report["action"], report["blockers"], report["required_evidence"]
+            )
+            report["recommended_next_step_code"] = recommended_next_step_code(
+                report["action"], report["blockers"]
+            )
+
+    workorders = _batch_workorders(results)
+    collision_groups = sum(
+        len({item["report"]["incident_id"] for item in proposals}) > 1
+        for proposals in blocked_routes.values()
+    )
+    # The incident desk is source-bound to this exact batch. It is a
+    # human worklist, not a live queue and not permission to claim work.
+    incident_triage = []
+    for (project_id, incident_id), proposals in by_incident.items():
+        reports = [item["report"] for item in proposals]
+        owners = {report["owner"] for report in reports}
+        shared_owner = next(iter(owners)) if len(owners) == 1 else None
+        holds = sorted({blocker["code"] for report in reports
+                        for blocker in report["blockers"]})
+        requested = sorted({field for report in reports
+                            for field in report["required_evidence"]})
+        if len(reports) > 1:
+            next_step = "choose_one_incident_route_with_authorized_owner"
+        elif "competing_blocked_task_routes" in holds:
+            next_step = "reconcile_same_blocked_task_across_incident_aliases"
+        elif holds:
+            next_step = "resolve_observed_holds_and_refresh_source"
+        else:
+            next_step = "independent_owner_gate_review_required"
+        incident_triage.append({
+            "project_id": project_id,
+            "incident_id": incident_id,
+            "proposed_actions": sorted(report["action"] for report in reports),
+            "request_indices": sorted(item["index"] for item in proposals),
+            "decision": "HOLD" if holds else "READY_FOR_HUMAN_REVIEW",
+            "blocker_codes": holds,
+            "required_evidence": requested,
+            "operator_owner_hint": shared_owner,
+            "owner_hint_independently_verified": False,
+            "owner_hints_conflict": len(owners) > 1,
+            "source_urls": sorted({report["source_url"] for report in reports}),
+            "next_step": next_step,
+            "claim_authorized": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+        })
+    incident_triage.sort(key=lambda row: (
+        row["decision"] != "HOLD", row["project_id"], row["incident_id"]
+    ))
+
+    decisions = [item["report"]["decision"] for item in results]
+    return {
+        "schema_version": 1,
+        "policy": "zsentinel-recovery-policy-batch-v1",
+        "evaluated_at_utc": evaluated_at.isoformat().replace("+00:00", "Z"),
+        "request_count": len(results),
+        "incident_count": len(workorders),
+        "blocked_task_collision_group_count": collision_groups,
+        "owner_workorders": workorders,
+        "decision_counts": {
+            "HOLD": decisions.count("HOLD"),
+            "READY_FOR_HUMAN_REVIEW": decisions.count("READY_FOR_HUMAN_REVIEW"),
+        },
+        "results": results,
+        "incident_count": len(incident_triage),
+        "incident_triage": incident_triage,
+        "advisory_only": True,
+        "evidence_independently_verified": False,
+        "actions_executed": False,
+        "authority": {
+            "claim_acquired": False,
+            "ci_retried": False,
+            "merge_executed": False,
+            "deployment_executed": False,
+            "runner_restarted": False,
+            "queue_resumed": False,
+        },
+    }
+
+
+def workorders_csv(batch):
+    """One bounded private CSV row per incident, not an action or dispatch queue."""
+    out = io.StringIO(newline="")
+    writer = csv.writer(out, lineterminator=chr(10))
+    writer.writerow([
+        "priority", "project", "incident", "decision", "human_next_step",
+        "owner_hint_unverified", "issue_url", "candidate_pr_urls_unverified",
+        "source_receipts_unverified", "sampled_pr_triage", "pr_draft_state_at_source",
+        "pr_link_relationships_at_source", "problem_codes", "required_evidence",
+        "proposed_actions", "proposal_recommendations_json",
+        "case_export_utc", "policy_evaluated_utc", "case_project_scope",
+        "issues_observed_utc", "queue_observed_utc",
+        "issue_source_stale", "queue_source_stale", "issue_sample_partial",
+        "queue_sample_partial", "independently_verified",
+        "claim_authorized", "merge_authorized", "deploy_authorized",
+        "focused_view_project", "focused_view_through_priority",
+        "focused_issue_number", "hidden_historical_incidents",
+    ])
+    for item in batch["owner_workorders"]:
+        urls = item["source_urls"]
+        issue = "priority" in item and item["incident_id"].startswith("issue-")
+        writer.writerow([
+            item.get("priority", "UNKNOWN"), item["project_id"],
+            item["incident_id"], item["decision"], item["next_step"],
+            item["owner"] or "UNKNOWN", urls[0] if issue and urls else "",
+            "; ".join(urls[1:]) if issue else "",
+            "; ".join(urls),
+            item.get("pr_source_triage", "UNKNOWN"),
+            "; ".join("PR #" + str(pr["number"]) + ": " +
+                      ("draft" if pr["draft_at_source"] else "non-draft")
+                      for pr in item.get("candidate_prs", [])),
+            "; ".join(pr["relationship_at_source"]
+                      for pr in item.get("candidate_prs", [])),
+            "; ".join(item["problem_codes"]),
+            "; ".join(item["required_evidence"]),
+            "; ".join(item["proposed_actions"]),
+            json.dumps([
+                {
+                    "action": result["report"]["action"],
+                    "decision": result["report"]["decision"],
+                    "recommended_next_step": result["report"]["recommended_next_step"],
+                    "recommended_next_step_code": result["report"]["recommended_next_step_code"],
+                    "blocker_codes": [blocker["code"] for blocker in result["report"]["blockers"]],
+                    "required_evidence": result["report"]["required_evidence"],
+                    "source_clock_observations_unverified":
+                        result["report"].get("source_clock_observations_unverified", {}),
+                }
+                for result in batch.get("results", [])
+                if result["report"]["project_id"] == item["project_id"]
+                and result["report"]["incident_id"] == item["incident_id"]
+            ], ensure_ascii=False, separators=(",", ":")),
+            batch.get("source_generated_at_utc") or "",
+            batch["evaluated_at_utc"],
+            batch.get("source_project_scope") or "UNKNOWN",
+            batch.get("source_issues_observed_at_utc") or "",
+            batch.get("source_queue_observed_at_utc") or "",
+            batch.get("source_issues_stale", ""),
+            batch.get("source_queue_stale", ""),
+            batch.get("source_issues_truncated", ""),
+            (batch.get("source_queue_complete") is False
+             or batch.get("source_queue_truncated") is True),
+            False, False, False, False,
+            batch.get("source_case_view", {}).get("selected_project", ""),
+            batch.get("source_case_view", {}).get("through_priority", ""),
+            batch.get("source_case_view", {}).get("selected_issue_number") or "",
+            batch.get("source_case_view", {}).get("hidden_by_view", ""),
+        ])
+    # No row represents authorization or current ownership. The caller applies
+    # the same 128 KiB UTF-8 output ceiling before any bytes are published.
+    return out.getvalue()
+
+
+def case_markdown(batch):
+    """Three-line P0-first human handoff with canonical, source-only links.
+
+    This is a historical local case, never a current GitHub/Notion/worker
+    status or permission to merge. The imported case schema already admits
+    only bounded issue/PR URLs from a single repository.
+    """
+    lines = [
+        "# zSentinel — private recovery-case owner handoff", "",
+        "**Historical HOLD-only evidence; no live source verification or action.**",
+        "",
+        "- Case exported (UTC): " + batch["source_generated_at_utc"],
+        "- Issue source (UTC): " +
+        (batch["source_issues_observed_at_utc"] or "UNKNOWN"),
+        "- Queue source (UTC): " +
+        (batch["source_queue_observed_at_utc"] or "UNKNOWN"),
+        "- Policy evaluated (UTC): " + batch["evaluated_at_utc"],
+        "- Source scope: " + batch["source_project_scope"],
+    ]
+    if "source_case_view" in batch:
+        view = batch["source_case_view"]
+        lines.append(
+            "- Focused historical view: " + view["selected_project"] +
+            ("/issue-" + str(view["selected_issue_number"])
+             if view["selected_issue_number"] is not None else "") +
+            " through " + view["through_priority"] +
+            " (hidden source entries: " + str(view["hidden_by_view"]) +
+            "; does NOT clear a live backlog)"
+        )
+    lines.append("")
+    for row in batch["owner_workorders"]:
+        urls = row["source_urls"]
+        links = (
+            "[original issue](" + urls[0] + ")" +
+            "".join(
+                " · [PR #" + str(pr["number"]) +
+                (" · DRAFT at source" if pr["draft_at_source"]
+                 else " · non-draft at source") +
+                " · " + pr["relationship_at_source"] +
+                " · unverified](" + pr["url"] + ")"
+                for pr in row.get("candidate_prs", [])
+            ) if row["incident_id"].startswith("issue-") and urls else
+            "No shareable issue/PR source receipt; verify private queue ownership"
+        )
+        lines.extend([
+            "## " + row["priority"] + " · " + row["project_id"] +
+            " / " + row["incident_id"],
+            "",
+            "- **Problem:** " + ", ".join(row["problem_codes"]) + " · " + links,
+            "- **Action:** " + row["next_step"] +
+            " · owner: UNKNOWN · required: " +
+            ", ".join(row["required_evidence"]),
+            "- **Status:** HOLD · unverified historical evidence; "
+            "no claim, retry, merge, deploy or runner restart authorized.",
+            "",
+        ])
+    return chr(10).join(lines)
+
+
+def workorders_html(batch):
+    """Static, offline, script-free owner cockpit for a validated batch."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    counts = batch["decision_counts"]
+    parts = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';\">",
+        "<title>zSentinel | incident workorders</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1000px;"
+        "padding:1.5rem;margin:auto;background:#f8fafc;color:#172538}"
+        "header{border-bottom:2px solid #29374d;padding-bottom:1rem}"
+        "section{background:white;border:1px solid #ccd5e0;"
+        "border-left:5px solid #a75a14;border-radius:.6rem;"
+        "padding:1rem;margin:1rem 0;overflow-wrap:anywhere}"
+        "section.ready{border-left-color:#286454}"
+        "h1{font-size:1.7rem}h2{font-size:1.12rem;margin:.3rem 0}"
+        "p{margin:.4rem 0}strong{font-weight:700}"
+        "summary{cursor:pointer;font-weight:600;padding:.3rem 0}"
+        "a{color:#1458a1}a:focus-visible,summary:focus-visible{outline:3px solid #1458a1}"
+        ".muted{color:#4a596f}.status{font-weight:700}"
+        "ul{padding-left:1.4rem}code{word-break:break-word}.proposal{border-top:1px solid #d8e0ea;padding:.7rem 0}.proposal h3{font-size:1rem;margin:.25rem 0}</style>",
+        "</head><body><header><h1>zSentinel incident workorders</h1>",
+        "<p><strong>Advisory only.</strong> This is supplied policy evidence, "
+        "not live GitHub/Notion verification, claim admission or release approval.</p>",
+        "<p>" + esc(_observation_disclosure(batch)) +
+        " · incidents: " + str(batch["incident_count"]) +
+        " · HOLD proposals: " + str(counts["HOLD"]) +
+        " · policy-ready proposals: " + str(counts["READY_FOR_HUMAN_REVIEW"]) +
+        "</p></header><main>",
+    ]
+    if "source_case_view" in batch:
+        view = batch["source_case_view"]
+        parts.append("<p><strong>Historical slice only:</strong> " +
+                     esc(view["selected_project"]) +
+                     ("/issue-" + str(view["selected_issue_number"])
+                      if view["selected_issue_number"] is not None else "") +
+                     " through " + esc(view["through_priority"]) +
+                     " · hidden entries: " +
+                     str(view["hidden_by_view"]) +
+                     " · not a verified empty backlog.</p>")
+    for item in batch["owner_workorders"]:
+        held = item["decision"] == "HOLD"
+        codes = ", ".join(item["problem_codes"]) if item["problem_codes"] else (
+            "No supplied-policy HOLD; live checks remain mandatory"
+        )
+        parts.extend([
+            "<section" + ("" if held else " class='ready'") + " aria-label='Incident'>",
+            "<h2>" + (esc(item["priority"]) + " · " if "priority" in item else "") +
+            esc(item["project_id"]) + " / " + esc(item["incident_id"]) + "</h2>",
+            "<p><strong>Problem:</strong> " + esc(codes) + "</p>",
+            "<p><strong>Action:</strong> " + esc(item["next_step"]) +
+            " · proposals: " + esc(", ".join(item["proposed_actions"])) +
+            " · owner: " + esc(item["owner"] or "UNKNOWN") + "</p>",
+            "<p class='status'><strong>Status:</strong> " + esc(item["decision"]) + "</p>",
+            "<details><summary>Required evidence, source receipts and boundaries</summary>",
+            "<p><strong>Required:</strong> " +
+            esc(", ".join(item["required_evidence"]) or "live authorization") + "</p>",
+            "<p class='muted'>Locally supplied, not independently verified. "
+            "Human review required; no retry, claim, merge, deploy or restart.</p>",
+            "<ul>",
+        ])
+        for index, url in enumerate(item["source_urls"]):
+            candidate = (
+                item.get("candidate_prs", [])[index - 1]
+                if index and len(item.get("candidate_prs", [])) >= index else None
+            )
+            source_label = (
+                "Issue" if index == 0 else
+                "PR #" + str(candidate["number"]) +
+                (" · DRAFT at source" if candidate["draft_at_source"]
+                 else " · NON-DRAFT at source") +
+                " · " + candidate["relationship_at_source"] +
+                " — recheck live ownership/CI/reviews"
+                if candidate is not None else "Candidate repair PR — verify live"
+            ) if "priority" in item else "Evidence"
+            parts.append("<li><strong>" + esc(source_label) + ":</strong> <a href='" + esc(url) +
+                         "' target='_blank' rel='noopener noreferrer'>" +
+                         esc(url) + "</a></li>")
+        parts.append("</ul></details>")
+        # Batch inputs may propose more than one recovery action for one
+        # incident. Keep the grouped owner workorder, but expose each route's
+        # HOLD reasons and safe next step so the owner can choose deliberately.
+        proposals = [
+            row["report"] for row in batch.get("results", [])
+            if row["report"]["project_id"] == item["project_id"]
+            and row["report"]["incident_id"] == item["incident_id"]
+        ]
+        if proposals:
+            parts.append("<details><summary>Per-proposal recovery guidance</summary>")
+            for proposal in proposals:
+                parts.append(
+                    "<div class='proposal'><h3>" + esc(proposal["action"]) +
+                    " · " + esc(proposal["decision"]) + "</h3>" +
+                    "<p><strong>Recommended next step:</strong> " +
+                    esc(proposal["recommended_next_step"]) + "</p>" +
+                    "<p><strong>Recommendation code:</strong> <code>" +
+                    esc(proposal["recommended_next_step_code"]) + "</code></p>" +
+                    "<p><strong>Source:</strong> <a href='" +
+                    esc(proposal["source_url"]) +
+                    "' target='_blank' rel='noopener noreferrer'>" +
+                    esc(proposal["source_url"]) + "</a></p>"
+                )
+                if proposal.get("source_clock_observations_unverified"):
+                    parts.append("<p><strong>Queue/claim source clocks (unverified)</strong></p><ul>")
+                    for name, clock in sorted(proposal["source_clock_observations_unverified"].items()):
+                        duration = ("unknown" if clock["age_seconds"] is None
+                                    else str(clock["age_seconds"]) + " seconds")
+                        parts.append("<li><code>" + esc(name) + "</code>: " +
+                                     esc(clock["status"]) + " (" + esc(duration) + ")</li>")
+                    parts.append("</ul>")
+                if proposal["blockers"]:
+                    parts.append("<p><strong>Holds</strong></p><ul>")
+                    for blocker in proposal["blockers"]:
+                        parts.append(
+                            "<li><strong>" + esc(blocker["code"]) + ":</strong> " +
+                            esc(blocker["message"]) + "</li>"
+                        )
+                    parts.append("</ul>")
+                if proposal["required_evidence"]:
+                    parts.append(
+                        "<p><strong>Required evidence:</strong> " +
+                        esc(", ".join(proposal["required_evidence"])) + "</p>"
+                    )
+                parts.append(
+                    "<p class='muted'>Advisory only. No claim, retry, merge, deploy or runner action.</p></div>"
+                )
+            parts.append("</details>")
+        parts.append("</section>")
+    parts.append("</main><footer><p class='muted'>Never treat these cards as "
+                 "active-owner verification or permission to change runtime state."
+                 "</p></footer></body></html>\n")
+    return "".join(parts)
+
+
+# This intentionally consumes only the non-authorizing browser export from
+# the existing zCloud Activity product. It never converts a source observation
+# into a claim, owner approval, CI-green assertion, retry or merge entitlement.
+CASE_HOLD_FLAGS = frozenset({
+    "claims_verified", "review_verified", "exact_head_required_ci_verified",
+    "branch_protection_verified", "action_executed",
+    "claim", "retry", "merge", "deploy",
+})
+CASE_PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,55}$")
+CASE_ISSUE_URL = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]*$"
+)
+CASE_PR_URL = re.compile(
+    r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]*$"
+)
+CASE_PR_RELATIONSHIPS = frozenset({"closing_keyword_only", "text_reference_only"})
+CASE_PR_LINK_STATES = frozenset({"unlinked", "draft", "referenced"})
+
+
+def evaluate_recovery_case(data):
+    """One bounded, explicitly HOLD-only multi-source operator handoff."""
+    if type(data) is not dict or data.get("schema") != "zsentinel-portfolio-recovery-case-v1":
+        raise PolicyInputError("unsupported recovery case source schema")
+    flags = data.get("authorization")
+    if type(flags) is not dict or not CASE_HOLD_FLAGS <= set(flags) or any(
+        flags[key] is not False for key in CASE_HOLD_FLAGS
+    ):
+        raise PolicyInputError("recovery case must explicitly deny all action authority")
+    project = data.get("selected_project")
+    if type(project) is not str or (project != "all" and not CASE_PROJECT.fullmatch(project)):
+        raise PolicyInputError("invalid recovery case project scope")
+    now_utc = datetime.now(UTC)
+    generated = _timestamp(data.get("generated_at_utc"))
+    if generated > now_utc + timedelta(minutes=2):
+        raise PolicyInputError("recovery case timestamp is in the future")
+    issues, recovery = data.get("issues"), data.get("queue_recovery")
+    case_old = now_utc - generated > timedelta(hours=6)
+    if (type(issues) is not list or len(issues) > 100 or type(recovery) is not dict
+            or type(recovery.get("workorders")) is not list
+            or len(recovery["workorders"]) > 64):
+        raise PolicyInputError("invalid or unbounded recovery case")
+    coverage = data.get("source_coverage")
+    issue_coverage = coverage.get("issues") if type(coverage) is dict else None
+    if (type(issue_coverage) is not dict
+            or type(issue_coverage.get("sample_truncated")) is not bool
+            or type(issue_coverage.get("selected_issue_count")) is not int
+            or issue_coverage["selected_issue_count"] != len(issues)):
+        raise PolicyInputError("missing or contradictory issue sample coverage")
+    issue_source_at = issue_coverage.get("observed_at")
+    if issue_source_at is not None:
+        issue_source_at = _timestamp(issue_source_at)
+        if (issue_source_at > generated + timedelta(minutes=2)
+                or issue_source_at > now_utc + timedelta(minutes=2)):
+            raise PolicyInputError(
+                "issue observation is future-dated or postdates recovery case")
+    issue_source_stale = (
+        issue_source_at is None or case_old
+        or now_utc - issue_source_at > timedelta(hours=6)
+    )
+    issue_truncated = issue_coverage["sample_truncated"]
+    seen = set()
+    orders = []
+    for item in issues:
+        if type(item) is not dict:
+            raise PolicyInputError("invalid issue case")
+        pid, number, priority = item.get("project"), item.get("number"), item.get("priority")
+        url = item.get("url")
+        if (type(pid) is not str or not CASE_PROJECT.fullmatch(pid)
+                or project != "all" and pid != project
+                or type(number) is not int or not 1 <= number <= 100000000
+                or priority not in ("P0", "P1")
+                or type(url) is not str or not CASE_ISSUE_URL.fullmatch(url)
+                or not url.endswith("/issues/" + str(number))
+                or item.get("claim_verified") is not False
+                or item.get("ready_for_claim") is not False
+                or item.get("observed_status") not in (
+                    "sampled_open", "historically_open_not_reobserved")
+                or type(item.get("source_uncertain")) is not bool):
+            raise PolicyInputError("invalid or authorizing issue evidence")
+        refs = item.get("referenced_prs")
+        if type(refs) is not list or len(refs) > 3:
+            raise PolicyInputError("invalid issue PR references")
+        # A PR reference is only meaningful within the same canonical repo as
+        # the issue. A valid-looking foreign repo URL must never be offered as
+        # the existing repair for this issue.
+        issue_repo = url.rsplit("/issues/", 1)[0]
+        urls = [url]
+        candidates = []
+        for pr in refs:
+            if (type(pr) is not dict or type(pr.get("number")) is not int
+                    or not 1 <= pr["number"] <= 100000000
+                    or type(pr.get("url")) is not str
+                    or not CASE_PR_URL.fullmatch(pr["url"])
+                    or not pr["url"].endswith("/pull/" + str(pr["number"]))
+                    or pr["url"].rsplit("/pull/", 1)[0] != issue_repo
+                    or pr["url"] in urls
+                    or type(pr.get("draft")) is not bool
+                    or pr.get("relationship") not in CASE_PR_RELATIONSHIPS
+                    or pr.get("claim_verified") is not False
+                    or pr.get("fix_verified") is not False):
+                raise PolicyInputError("invalid or authorized PR reference")
+            urls.append(pr["url"])
+            candidates.append({
+                "number": pr["number"], "url": pr["url"],
+                "draft_at_source": pr["draft"],
+                "relationship_at_source": pr["relationship"],
+                "current_pr_state_verified": False,
+                "current_claim_verified": False,
+                "merge_authorized": False,
+            })
+        expected_link = (
+            "unlinked" if not candidates else
+            "draft" if all(item["draft_at_source"] for item in candidates)
+            else "referenced"
+        )
+        if item.get("link_status") not in CASE_PR_LINK_STATES or (
+                item["link_status"] != expected_link):
+            raise PolicyInputError("issue PR link status contradicts sampled references")
+        identity = (pid, "issue-" + str(number))
+        if identity in seen:
+            raise PolicyInputError("duplicate issue in recovery case")
+        seen.add(identity)
+        historical = item["observed_status"] != "sampled_open"
+        source_uncertain = (
+            historical or item["source_uncertain"] or issue_source_stale or issue_truncated
+        )
+        merge_first = (
+            "non_draft_reference" if expected_link == "referenced" else
+            "draft_only_reference" if expected_link == "draft" else
+            "no_sampled_pr_reference"
+        )
+        owner_next = (
+            "refresh_issue_source_first" if source_uncertain else
+            "check_existing_nondraft_pr_and_exact_head_gates_first"
+            if merge_first == "non_draft_reference" else
+            "finish_existing_draft_pr_with_owner_first"
+            if merge_first == "draft_only_reference" else
+            "verify_absence_of_existing_product_pr_before_new_work"
+        )
+        orders.append({
+            "project_id": pid, "incident_id": identity[1],
+            "input_indexes": [], "proposed_actions": ["inspect_existing_prs"],
+            "owner": None, "decision": "HOLD",
+            "problem_codes": (["historical_issue_not_reobserved" if historical else
+                               "source_only_open_issue",
+                               "worker_claim_unverified"] +
+                              (["case_source_over_six_hours_old"] if case_old else []) +
+                              (["issue_source_stale_or_unknown"] if issue_source_stale else []) +
+                              (["issue_sample_truncated"] if issue_truncated else [])),
+            "required_evidence": ["current_notion_worker_queue_ownership",
+                                  "current_github_issue_and_pr_state",
+                                  "exact_head_required_ci_and_review"],
+            "source_urls": urls,
+            "candidate_prs": candidates,
+            "candidate_count": len(candidates),
+            "pr_source_triage": merge_first,
+            "candidate_status_is_historical": True,
+            "next_step": owner_next,
+            "human_review_required": True,
+            "actions_executed": False,
+            "priority": priority,
+        })
+    cov = coverage
+    if type(cov) is not dict or type(cov.get("queue_retry")) is not dict:
+        raise PolicyInputError("missing queue recovery coverage")
+    retry_cov = cov["queue_retry"]
+    covered = retry_cov.get("selected_project_covered")
+    retry_stale = retry_cov.get("source_stale")
+    if type(retry_stale) is not bool or type(retry_cov.get("sample_complete")) is not bool:
+        raise PolicyInputError("queue source freshness or coverage status missing")
+    queue_incomplete = not retry_cov["sample_complete"]
+    queue_observed = None
+    if covered is True:
+        try:
+            queue_observed = _timestamp(retry_cov.get("observed_at"))
+        except PolicyInputError as exc:
+            raise PolicyInputError("covered queue source has no valid observation") from exc
+        # The export cannot contain a queue observation from after its own
+        # generation clock. The source's stale hint can only increase caution:
+        # its snapshot timestamp independently determines actual age.
+        if (queue_observed > generated + timedelta(minutes=2)
+                or queue_observed > now_utc + timedelta(minutes=2)):
+            raise PolicyInputError(
+                "queue observation is future-dated or postdates recovery case")
+        retry_stale = (
+            retry_stale or case_old
+            or now_utc - queue_observed > timedelta(hours=6)
+        )
+    if type(covered) is not bool or (not covered and recovery["workorders"]):
+        raise PolicyInputError("contradictory queue recovery source coverage")
+    if type(recovery.get("workorder_count")) is not int or not 0 <= recovery["workorder_count"] <= 500:
+        raise PolicyInputError("invalid recovery workorder count")
+    if type(recovery.get("workorders_truncated")) is not bool:
+        raise PolicyInputError("missing recovery workorder truncation")
+    if recovery["workorder_count"] < len(recovery["workorders"]) or (
+        recovery["workorder_count"] > len(recovery["workorders"])
+        and recovery["workorders_truncated"] is not True
+    ):
+        raise PolicyInputError("inconsistent bounded workorder sample")
+    for item in recovery["workorders"]:
+        if type(item) is not dict:
+            raise PolicyInputError("invalid queue workorder")
+        pid, priority = item.get("project"), item.get("priority")
+        if (type(pid) is not str or not CASE_PROJECT.fullmatch(pid)
+                or project != "all" and pid != project
+                or priority not in ("P0", "P1", "P2", "P3")
+                or item.get("claim_verified") is not False
+                or item.get("action_authorized") is not False):
+            raise PolicyInputError("invalid queue workorder scope or authority")
+        for key in ("observed_high_attempt_items", "observed_queued_high_attempt_items",
+                    "observed_owned_high_attempt_items",
+                    "expired_active_lease_rows_in_group"):
+            if type(item.get(key)) is not int or not 0 <= item[key] <= 100000:
+                raise PolicyInputError("invalid recovery count")
+        if (item["observed_high_attempt_items"] < 1
+                or item["observed_queued_high_attempt_items"] +
+                   item["observed_owned_high_attempt_items"] != item["observed_high_attempt_items"]):
+            raise PolicyInputError("contradictory recovery counts")
+        ident = (pid, "queue-" + priority)
+        if ident in seen:
+            raise PolicyInputError("duplicate project/priority recovery group")
+        seen.add(ident)
+        orders.append({
+            "project_id": pid, "incident_id": ident[1],
+            "input_indexes": [], "proposed_actions": ["inspect_claim_churn"],
+            "owner": None, "decision": "HOLD",
+            "problem_codes": (["high_claim_attempts_observed",
+                               "live_owner_and_failure_cause_unverified"] +
+                              (["queue_snapshot_stale"] if retry_stale else []) +
+                               (["queue_source_incomplete"] if queue_incomplete else []) +
+                               (["queue_sample_truncated"] if recovery["workorders_truncated"] else [])),
+            "required_evidence": ["current_queue_lease_and_worker_owner",
+                                  "failure_classification_and_retry_budget",
+                                  "authorized_runtime_owner"],
+            "source_urls": [],
+            "next_step": ("refresh_queue_source_then_verify_owner" if (
+                retry_stale or queue_incomplete or recovery["workorders_truncated"]
+            ) else "verify_live_owner_before_recovery"),
+            "human_review_required": True,
+            "actions_executed": False, "priority": priority,
+        })
+    if not orders:
+        raise PolicyInputError("case contains no issue or queue workorders; "
+                               "missing bounded sources cannot clear backlog")
+    orders.sort(key=lambda x: (
+        {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[x["priority"]],
+        0 if x["incident_id"].startswith("issue-") else 1,
+        {"non_draft_reference": 0, "draft_only_reference": 1,
+         "no_sampled_pr_reference": 2}.get(x.get("pr_source_triage"), 3),
+        x["project_id"], x["incident_id"],
+    ))
+    return {
+        "schema_version": 1, "policy": "zsentinel-recovery-case-handoff-v1",
+        "evaluated_at_utc": now_utc.isoformat().replace("+00:00", "Z"),
+        "source_generated_at_utc": generated.isoformat().replace("+00:00", "Z"),
+        "source_case_stale": case_old,
+        "source_issues_observed_at_utc": (
+            issue_source_at.isoformat().replace("+00:00", "Z")
+            if issue_source_at is not None else None
+        ),
+        "source_issues_stale": issue_source_stale,
+        "source_issues_truncated": issue_truncated,
+        "source_queue_complete": not queue_incomplete if covered else None,
+        "source_queue_truncated": recovery["workorders_truncated"] if covered else None,
+        "source_queue_observed_at_utc": (
+            queue_observed.isoformat().replace("+00:00", "Z")
+            if queue_observed is not None else None
+        ),
+        "source_queue_stale": retry_stale if covered else None,
+        "source_project_scope": project,
+        "incident_count": len(orders), "request_count": len(orders),
+        "decision_counts": {"HOLD": len(orders), "READY_FOR_HUMAN_REVIEW": 0},
+        "owner_workorders": orders,
+        "sampled_existing_pr_triage": {
+            status: sum(item.get("pr_source_triage") == status for item in orders)
+            for status in ("non_draft_reference", "draft_only_reference",
+                           "no_sampled_pr_reference")
+        },
+        "advisory_only": True, "evidence_independently_verified": False,
+        "actions_executed": False,
+        "authority": {
+            "claim_acquired": False, "ci_retried": False,
+            "merge_executed": False, "deployment_executed": False,
+            "runner_restarted": False,
+            "queue_resumed": False,
+        },
+    }
+
+
+def select_case_view(report, *, project=None, through_priority="P3", issue_number=None):
+    """Bounded display-only projection, never a claim or backlog-clear verdict."""
+    if project is not None and (
+        type(project) is not str or not CASE_PROJECT.fullmatch(project)
+    ):
+        raise PolicyInputError("view project must be a canonical project slug")
+    if issue_number is not None:
+        if (type(issue_number) is not int or not 1 <= issue_number <= 100000000
+                or project is None):
+            raise PolicyInputError(
+                "single issue selection requires --view-project and a valid issue number"
+            )
+    priorities = ("P0", "P1", "P2", "P3")
+    if through_priority not in priorities:
+        raise PolicyInputError("view priority must be P0, P1, P2 or P3")
+    source_scope = report["source_project_scope"]
+    if project is not None and source_scope != "all" and project != source_scope:
+        raise PolicyInputError("project outside original case source scope")
+    rank = priorities.index(through_priority)
+    items = [item for item in report["owner_workorders"]
+             if (project is None or item["project_id"] == project)
+             and (issue_number is None or
+                  item["incident_id"] == "issue-" + str(issue_number))
+             and priorities.index(item["priority"]) <= rank]
+    if not items:
+        raise PolicyInputError(
+            "no workorders in selected historical slice; absence cannot clear live backlog"
+        )
+    # Make a projection only. The original source coverage is never rewritten
+    # as a full new scan, even when the view happens to retain every row.
+    view = dict(report)
+    view["owner_workorders"] = items
+    view["incident_count"] = len(items)
+    view["request_count"] = len(items)
+    view["decision_counts"] = {"HOLD": len(items), "READY_FOR_HUMAN_REVIEW": 0}
+    view["sampled_existing_pr_triage"] = {
+        status: sum(item.get("pr_source_triage") == status for item in items)
+        for status in ("non_draft_reference", "draft_only_reference",
+                       "no_sampled_pr_reference")
+    }
+    view["source_case_view"] = {
+        "selected_project": project or "all-in-source",
+        "through_priority": through_priority,
+        "selected_issue_number": issue_number,
+        "source_total_incidents": report["incident_count"],
+        "hidden_by_view": report["incident_count"] - len(items),
+        "projection_only": True,
+        "backlog_clear_verified": False,
+        "independent_source_verification": False,
+    }
+    return view
+
+
+def markdown(report):
+    lines = [
+        "# zSentinel recovery policy decision",
+        "",
+        "- Project: " + report["project_id"],
+        "- Incident: " + report["incident_id"],
+        "- Proposed action: " + report["action"],
+        "- Decision: **" + report["decision"] + "**",
+        "- Recommended next step: " + report["recommended_next_step"],
+        "- Recommendation code: " + report["recommended_next_step_code"],
+        "- Source observation: " + report["observed_at_utc"],
+        "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
+        "- Evidence independently verified: no",
+        "- Action executed: no",
+        "",
+    ]
+    if report.get("source_clock_observations_unverified"):
+        lines.extend(["## Queue/claim source clocks (operator-supplied; unverified)", ""])
+        for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+            duration = ("unknown" if clock["age_seconds"] is None
+                        else str(clock["age_seconds"]) + " seconds")
+            lines.append("- " + name + ": " + clock["status"] + " (" + duration + ")")
+        lines.append("")
+    if report["blockers"]:
+        lines.extend(["## Holds to resolve", ""])
+        lines.extend("- " + item["code"] + " — " + item["message"]
+                     for item in report["blockers"])
+    else:
+        lines.extend([
+            "## Remaining release boundary",
+            "",
+            "The supplied fields meet this local policy profile. This is not approval or execution; "
+            "the real owner, GitHub exact-head checks, branch protection and runtime release gates remain authoritative.",
+        ])
+    if report["required_evidence"]:
+        lines.extend(["", "## Required evidence", ""])
+        lines.extend("- " + field for field in report["required_evidence"])
+    lines.extend([
+        "",
+        "## Side-effect boundary",
+        "",
+        "No claim, retry, merge, deployment or runner operation was performed.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+
+def policy_html(report):
+    """Render one policy decision as a static, offline, script-free HTML card."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    decision = report["decision"]
+    held = decision == "HOLD"
+    parts = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+        "<title>zSentinel recovery policy decision</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;background:#f8fafc;color:#172538}section{background:white;border:1px solid #ccd5e0;border-left:5px solid #a75a14;border-radius:.5rem;padding:1rem;margin:1rem 0;overflow-wrap:anywhere}section.ready{border-left-color:#286454}h1{font-size:1.6rem}h2{font-size:1.1rem}li{margin:.5rem 0}a{color:#1458a1}code{overflow-wrap:anywhere}.muted{color:#4a596f}</style>",
+        "</head><body><header><h1>zSentinel recovery policy decision</h1>",
+        "<p><strong>Advisory only.</strong> Supplied evidence is not independently verified and no action was executed.</p></header>",
+        "<section" + ("" if held else " class='ready'") + "><h2>Decision: " + esc(decision) + "</h2><ul>",
+        "<li>Project: <strong>" + esc(report["project_id"]) + "</strong></li>",
+        "<li>Incident: <strong>" + esc(report["incident_id"]) + "</strong></li>",
+        "<li>Proposed action: <strong>" + esc(report["action"]) + "</strong></li>",
+        "<li>Recommended next step: " + esc(report["recommended_next_step"]) + "</li>",
+        "<li>Recommendation code: <code>" + esc(report["recommended_next_step_code"]) + "</code></li>",
+        "<li>Source observed (UTC): " + esc(report["observed_at_utc"]) + "</li>",
+        "<li>Source age at evaluation: " + esc(report["source_age_seconds"]) + " seconds</li>",
+        "<li>Source: <a href='" + esc(report["source_url"]) + "'>" + esc(report["source_url"]) + "</a></li>",
+        "</ul></section>",
+    ]
+    if report.get("source_clock_observations_unverified"):
+        parts.append("<section><h2>Queue/claim source clocks (unverified)</h2><ul>")
+        for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+            duration = ("unknown" if clock["age_seconds"] is None
+                        else str(clock["age_seconds"]) + " seconds")
+            parts.append("<li><code>" + esc(name) + "</code>: " +
+                         esc(clock["status"]) + " (" + esc(duration) + ")</li>")
+        parts.append("</ul></section>")
+    if report["blockers"]:
+        parts.extend(["<section><h2>Holds to resolve</h2><ul>"])
+        for item in report["blockers"]:
+            parts.append("<li><strong>" + esc(item["code"]) + ":</strong> " +
+                         esc(item["message"]) + "</li>")
+        parts.append("</ul></section>")
+    else:
+        parts.append(
+            "<section class='ready'><h2>Remaining release boundary</h2>"
+            "<p>The supplied fields meet this local policy profile. This is not approval or execution; "
+            "current owner authorization and applicable GitHub/release gates remain authoritative.</p></section>"
+        )
+    if report["required_evidence"]:
+        parts.append("<section><h2>Required evidence</h2><ul>")
+        for field in report["required_evidence"]:
+            parts.append("<li><code>" + esc(field) + "</code></li>")
+        parts.append("</ul></section>")
+    parts.extend([
+        "<section><h2>Side-effect boundary</h2>",
+        "<p>Evidence independently verified: <strong>no</strong>. "
+        "Claim, retry, merge, deployment and runner operation performed: <strong>no</strong>.</p></section>",
+        "<footer><p class='muted'>Refresh current source evidence before acting. A policy decision is not a release authorization.</p></footer>",
+        "</body></html>\n",
+    ])
+    return "".join(parts)
+
+
+def markdown_batch(batch):
+    lines = [
+        "# zSentinel recovery policy batch",
+        "",
+        "- Evaluated at: " + batch["evaluated_at_utc"],
+        "- Requests: " + str(batch["request_count"]),
+        "- HOLD: " + str(batch["decision_counts"]["HOLD"]),
+        "- Ready for human review: " + str(batch["decision_counts"]["READY_FOR_HUMAN_REVIEW"]),
+        "- Evidence independently verified: no",
+        "- Actions executed: no",
+        "",
+        "## Incident-owner workorders (advisory)",
+        "",
+        workorders_text(batch),
+        "",
+        "## Per-proposal evidence",
+        "",
+    ]
+    lines.extend([
+        "## Incident desk (HOLD first, source-bound)",
+        "",
+        "This offline worklist does not prove owner availability or permission to act.",
+        "",
+    ])
+    for incident in batch["incident_triage"]:
+        lines.extend([
+            "### " + incident["project_id"] + " / " + incident["incident_id"],
+            "",
+            "- Decision: **" + incident["decision"] + "**",
+            "- Proposed alternatives: " + ", ".join(incident["proposed_actions"]),
+            "- Proposal indices (zero-based): " + ", ".join(
+                str(index) for index in incident["request_indices"]),
+            "- Next human step: " + incident["next_step"],
+            "- Owner hint (not independently verified): " +
+                (incident["operator_owner_hint"] or "UNKNOWN"),
+            "- Owner hints conflict: " +
+                ("yes" if incident["owner_hints_conflict"] else "no"),
+            "- Blockers: " + (", ".join(incident["blocker_codes"]) or "none"),
+            "- Required evidence: " +
+                (", ".join(incident["required_evidence"]) or "none"),
+            "- Claim/merge/deploy authorized: no",
+            "",
+        ])
+        for source in incident["source_urls"]:
+            lines.append("- Source: <code>" + html.escape(source, quote=True) + "</code>")
+        lines.append("")
+    lines.extend(["## Detailed proposals", ""])
+
+    for item in batch["results"]:
+        report = item["report"]
+        lines.extend([
+            "## " + str(item["index"] + 1) + ". " + report["project_id"] + " / " + report["incident_id"],
+            "",
+            "- Proposed action: **" + report["action"] + "**",
+            "- Decision: **" + report["decision"] + "**",
+            "- Recommended next step: " + report["recommended_next_step"],
+            "- Recommendation code: " + report["recommended_next_step_code"],
+            "- Source observation: " + report["observed_at_utc"],
+            "- Source: <code>" + html.escape(report["source_url"], quote=True) + "</code>",
+            "- Source age: " + str(report["source_age_seconds"]) + " seconds",
+            "- Evidence independently verified: no",
+            "- Action executed: no",
+            "",
+        ])
+        if report.get("source_clock_observations_unverified"):
+            lines.extend(["### Queue/claim source clocks (operator-supplied; unverified)", ""])
+            for name, clock in sorted(report["source_clock_observations_unverified"].items()):
+                duration = ("unknown" if clock["age_seconds"] is None
+                            else str(clock["age_seconds"]) + " seconds")
+                lines.append("- " + name + ": " + clock["status"] + " (" + duration + ")")
+            lines.append("")
+        if report["blockers"]:
+            lines.extend(["### Holds to resolve", ""])
+            lines.extend(
+                "- " + entry["code"] + " — " + entry["message"]
+                for entry in report["blockers"]
+            )
+        else:
+            lines.extend([
+                "### Remaining boundary",
+                "",
+                "The supplied fields meet the local policy profile; this is not approval or execution.",
+            ])
+        if report["required_evidence"]:
+            lines.extend(["", "### Required evidence", ""])
+            lines.extend("- " + field for field in report["required_evidence"])
+        lines.append("")
+    lines.extend([
+        "## Side-effect boundary",
+        "",
+        "The batch is advisory only. No claim, retry, merge, deployment or runner operation was performed.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def template_request(action, project_id, incident_id, source_url, owner):
+    if type(action) is not str or action not in ACTIONS:
+        raise PolicyInputError("action must be one of: " + ", ".join(sorted(ACTIONS)))
+    if type(project_id) is not str or not SLUG.fullmatch(project_id):
+        raise PolicyInputError("project_id must be a bounded ASCII identifier")
+    if type(incident_id) is not str or not SLUG.fullmatch(incident_id):
+        raise PolicyInputError("incident_id must be a bounded ASCII identifier")
+    source = _source_url(source_url)
+    if owner is not None and (type(owner) is not str or not SLUG.fullmatch(owner)):
+        raise PolicyInputError("owner must be null or a bounded ASCII identifier")
+    evidence = {field: None for field in sorted(EVIDENCE_FIELDS)}
+    return {
+        "schema_version": 1,
+        "action": action,
+        "project_id": project_id,
+        "incident_id": incident_id,
+        "observed_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source_url": source,
+        "owner": owner,
+        "evidence": evidence,
+    }
+
+
+def merge_review_template_from_case(case_report, *, project, issue_number, pr_number):
+    """Source-pinned, empty merge-policy request from a sampled repair PR.
+
+    This is an operator convenience only. No source observation authorizes
+    merge; the copied original issue timestamp prevents a fresh template
+    from disguising stale historical evidence as a new provider reading.
+    """
+    if type(pr_number) is not int or not 1 <= pr_number <= 100000000:
+        raise PolicyInputError("review PR number must be a positive canonical integer")
+    if type(issue_number) is not int or type(project) is not str:
+        raise PolicyInputError("prepare-merge-review requires project and issue")
+    selected = select_case_view(
+        case_report, project=project, issue_number=issue_number
+    )
+    issue = selected["owner_workorders"][0]
+    matches = [row for row in issue.get("candidate_prs", [])
+               if row["number"] == pr_number]
+    if len(matches) != 1:
+        raise PolicyInputError(
+            "PR was not sampled for selected issue; recheck current GitHub first"
+        )
+    source_observed = case_report["source_issues_observed_at_utc"]
+    if source_observed is None:
+        raise PolicyInputError(
+            "issue observation timestamp is unknown; refresh source before review"
+        )
+    request = template_request(
+        "merge_pr", project, "pr-" + str(pr_number),
+        matches[0]["url"], None,
+    )
+    # The evaluated policy subsequently checks source age and exact-head CI,
+    # independent review, branch protection and owner authorization. A
+    # historic draft/non-draft flag must never prefill these evidence fields.
+    request["observed_at_utc"] = source_observed
+    return request
+
+
+
+MERGE_REVIEW_CHECKS = (
+    ("active_claim", "No active worker or owner claim remains (none)."),
+    ("pr_base_sync", "The PR base SHA matches the current default-branch HEAD (current)."),
+    ("pr_history_sync", "The exact PR head is ahead of its base and behind-by is zero (ahead)."),
+    ("exact_head", "The reviewed commit is the current exact PR head (verified)."),
+    ("required_ci", "Every mandatory check is green on that exact head (green)."),
+    ("independent_review", "An independent reviewer has approved (approved)."),
+    ("branch_protection", "Normal GitHub branch protection is satisfied."),
+    ("unresolved_review_threads", "No unresolved review threads remain (0)."),
+    ("merged_main", "The PR is confirmed open and not already merged (no)."),
+    ("owner_authorized", "The authorized PR owner explicitly approves integration (true)."),
+)
+
+
+def merge_review_packet_from_case(case_report, *, project, issue_number,
+                                  pr_number, format_name):
+    """Render a sampled PR merge-review request without granting merge authority."""
+    request = merge_review_template_from_case(
+        case_report, project=project, issue_number=issue_number,
+        pr_number=pr_number,
+    )
+    selected = select_case_view(
+        case_report, project=project, issue_number=issue_number,
+    )["owner_workorders"][0]
+    candidates = [row for row in selected.get("candidate_prs", [])
+                  if row["number"] == pr_number]
+    if len(candidates) != 1 or not selected.get("source_urls"):
+        raise PolicyInputError("sampled issue/PR source identity is incomplete")
+    candidate = candidates[0]
+    issue_url = selected["source_urls"][0]
+    pr_url = candidate["url"]
+    issue_observed = case_report["source_issues_observed_at_utc"]
+    case_generated = case_report["source_generated_at_utc"]
+    request_json = json.dumps(
+        request, ensure_ascii=False, indent=2, sort_keys=True
+    )
+    if format_name == "json":
+        return request_json + "\n"
+
+    draft_label = (
+        "DRAFT at source snapshot" if candidate["draft_at_source"]
+        else "non-draft at source snapshot"
+    )
+    if format_name == "markdown":
+        tick = chr(96)
+        lines = [
+            "# zSentinel — merge-review request",
+            "",
+            "**HOLD · historical candidate only. This packet does not authorize a merge.**",
+            "",
+            "- Project: " + project,
+            "- Priority: " + selected["priority"],
+            "- Original issue: [#" + str(issue_number) + "](" + issue_url + ")",
+            "- Sampled candidate PR: [#" + str(pr_number) + "](" + pr_url + ")",
+            "- PR state in saved source: " + draft_label,
+            "- Relationship in saved source: " + candidate["relationship_at_source"],
+            "- Issue source observed (UTC): " + str(issue_observed or "UNKNOWN"),
+            "- Case exported (UTC): " + str(case_generated or "UNKNOWN"),
+            "",
+            "## Required live owner checks",
+            "",
+            "Re-read GitHub and the current Notion/worker ownership inventory. "
+            "The saved source is navigation evidence only; do not infer current status from it.",
+            "",
+        ]
+        lines.extend(
+            "- [ ] " + label + " Evidence field: " + tick + field + tick + "."
+            for field, label in MERGE_REVIEW_CHECKS
+        )
+        lines.extend([
+            "",
+            "## Fail-closed policy request",
+            "",
+            "The JSON below deliberately leaves every evidence value null. "
+            "In particular, active_claim must be independently observed as none; "
+            "unknown or active claims block merge review.",
+            "",
+            chr(96) * 3 + "json",
+            request_json,
+            chr(96) * 3,
+            "",
+            "**Boundary:** no claim, CI retry, merge, deployment, runner restart or other action was performed.",
+            "",
+        ])
+        return "\n".join(lines)
+
+    if format_name == "html":
+        esc = lambda value: html.escape(str(value), quote=True)
+        parts = [
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+            "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+            "<title>zSentinel merge-review request</title>",
+            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:920px;margin:2rem auto;padding:0 1rem;color:#172538;background:#f8fafc}section{background:white;border:1px solid #ccd5e0;border-left:5px solid #a75a14;border-radius:.5rem;padding:1rem;margin:1rem 0;overflow-wrap:anywhere}h1{font-size:1.6rem}h2{font-size:1.1rem}li{margin:.6rem 0}a{color:#1458a1}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f5f9;padding:1rem;border-radius:.4rem}.muted{color:#4a596f}</style>",
+            "</head><body><header><h1>zSentinel — merge-review request</h1>",
+            "<p><strong>HOLD · historical candidate only.</strong> This packet does not authorize a merge.</p></header>",
+            "<section><h2>Source identity</h2><ul>",
+            "<li>Project: <strong>" + esc(project) + "</strong></li>",
+            "<li>Priority: <strong>" + esc(selected["priority"]) + "</strong></li>",
+            "<li>Original issue: <a href='" + esc(issue_url) + "'>#" + str(issue_number) + "</a></li>",
+            "<li>Sampled candidate PR: <a href='" + esc(pr_url) + "'>#" + str(pr_number) + "</a></li>",
+            "<li>Saved PR state: " + esc(draft_label) + "</li>",
+            "<li>Saved relationship: " + esc(candidate["relationship_at_source"]) + "</li>",
+            "<li>Issue source observed (UTC): " + esc(issue_observed or "UNKNOWN") + "</li>",
+            "<li>Case exported (UTC): " + esc(case_generated or "UNKNOWN") + "</li>",
+            "</ul><p class='muted'>Saved links are navigation evidence only. Re-read current GitHub and current Notion/worker ownership before acting.</p></section>",
+            "<section><h2>Required live owner checks</h2><ul>",
+        ]
+        for field, label in MERGE_REVIEW_CHECKS:
+            parts.append("<li><strong>" + esc(label) + "</strong> <code>" +
+                         esc(field) + "</code></li>")
+        parts.extend([
+            "</ul><p>Any unknown or active claim blocks merge review. Every check must be backed by current, independently observed evidence.</p></section>",
+            "<section><h2>Fail-closed JSON policy request</h2>",
+            "<p>Every evidence value is null by design. Complete it only from current source evidence; do not infer from the saved PR snapshot.</p>",
+            "<details><summary>Show JSON request</summary><pre>" + esc(request_json) + "</pre></details></section>",
+            "<footer><p class='muted'>No claim, CI retry, merge, deployment, runner restart or other action was performed.</p></footer>",
+            "</body></html>\n",
+        ])
+        return "".join(parts)
+    raise PolicyInputError("merge-review packet format must be json, markdown or html")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Explain whether a proposed recovery action is ready for human review; never execute it."
+    )
+    parser.add_argument("--input", help="one bounded JSON request file path, or - for stdin")
+    parser.add_argument("--batch-input", help="bounded JSON array of 1–25 independent requests, file path or - for stdin")
+    parser.add_argument("--case-input", help="private zSentinel portfolio recovery-case JSON export, file path or -")
+    parser.add_argument("--live-issue-url",
+                        help="read one canonical Zennay GitHub issue and its existing PRs directly; no saved case required")
+    parser.add_argument("--live-pr-url",
+                        help="read one exact Zennay GitHub PR with stable HEAD/default-branch and bounded check/review observations; advisory only")
+    parser.add_argument("--live-inbox-repo",
+                        help="bounded read-only P0/P1-first recent issue inbox for one Zennay/<repo>")
+    parser.add_argument("--portfolio-repo", action="append",
+                        help="repeat 2–6 canonical repos for one private P0-first portfolio desk")
+    parser.add_argument("--portfolio-previous-snapshot",
+                        help="prior private portfolio JSON for source-conservative visible-card comparison")
+    parser.add_argument("--portfolio-snapshot-output", type=Path,
+                        help="second private .json artifact from the SAME bounded portfolio GitHub read")
+    parser.add_argument("--portfolio-verify-missing-live", action="store_true",
+                        help="opt-in at most six missing-issue GitHub detail GETs")
+    parser.add_argument("--portfolio-recheck-limit", type=int, default=3,
+                        help="max 1..6 extra GitHub detail reads, requires opt-in")
+    parser.add_argument("--portfolio-view", choices=(
+        "all", "explicit-critical", "critical-and-title-hints",
+    ), default="all", help="source-only portfolio issue display focus")
+    parser.add_argument("--inbox-page", type=int, default=1,
+                        help="bounded issue inbox display page 1–5 (live inbox only)")
+    parser.add_argument("--inbox-all-sampled-csv", action="store_true",
+                        help="one-source-read private CSV containing all sampled issues, max 210")
+    parser.add_argument("--template", choices=sorted(ACTIONS),
+                        help="emit a fresh, fail-closed JSON request template")
+    parser.add_argument("--project-id", help="project slug used by --template")
+    parser.add_argument("--incident-id", help="incident slug used by --template")
+    parser.add_argument("--source-url", help="canonical HTTPS GitHub/Notion source used by --template")
+    parser.add_argument("--owner", help="known owner slug used by --template; omit if unknown")
+    parser.add_argument("--view-project", help="select one source-bound project for --case-input only")
+    parser.add_argument("--view-issue", type=int, help="select one issue number, requires --view-project")
+    parser.add_argument("--prepare-merge-review", action="store_true",
+                        help="create HOLD-by-default policy request for a sampled existing PR; case-input only")
+    parser.add_argument("--candidate-pr-number", type=int,
+                        help="sampled issue repair PR number, for --prepare-merge-review")
+    parser.add_argument("--live-candidates", action="store_true",
+                        help="read up to 3 source-linked live PRs for one issue; advisory only")
+    parser.add_argument("--live-focus-pr", type=int,
+                        help="read one exact historically saved or newly discovered PR number; --live-candidates only")
+    parser.add_argument("--discover-existing", "--discover-unlinked",
+                        dest="discover_unlinked", action="store_true",
+                        help="opt-in bounded open-PR discovery alongside historical issue references; advisory only")
+    parser.add_argument("--through-priority", choices=("P0", "P1", "P2", "P3"),
+                        help="show up to this severity in --case-input (default P3)")
+    parser.add_argument("--format", choices=("json", "markdown", "workorders", "html", "csv"), default="json")
+    parser.add_argument("--output", type=Path,
+                        help="Optional new private 0600 file; owner-controlled directory; extension must match format")
+    parser.add_argument("--fail-on-hold", action="store_true", help="return exit code 2 when a valid evaluation contains any HOLD")
+    parser.add_argument("--max-age-minutes", type=int, default=60,
+                        help="maximum accepted observation age (1..1440; default 60)")
+    args = parser.parse_args(argv)
+    if args.live_pr_url:
+        if (any((args.input, args.batch_input, args.case_input, args.live_issue_url,
+                 args.live_inbox_repo, args.portfolio_repo,
+                 args.portfolio_previous_snapshot, args.portfolio_snapshot_output,
+                 args.portfolio_verify_missing_live, args.live_candidates,
+                 args.live_focus_pr is not None, args.discover_unlinked,
+                 args.template, args.project_id, args.incident_id, args.source_url,
+                 args.owner, args.view_project, args.view_issue is not None,
+                 args.prepare_merge_review, args.candidate_pr_number is not None,
+                 args.through_priority, args.inbox_all_sampled_csv, args.fail_on_hold))
+                or args.portfolio_view != "all" or args.portfolio_recheck_limit != 3
+                or args.inbox_page != 1 or args.max_age_minutes != 60
+                or args.format not in ("json", "markdown", "html")):
+            parser.error("--live-pr-url is a standalone advisory JSON/Markdown/HTML mode")
+        try:
+            from zsentinel_pr_merge_preflight import (
+                observe_exact_pr, as_markdown as pr_preflight_markdown,
+                as_html as pr_preflight_html,
+            )
+            from zsentinel_pr_live_read import GitHubReadError
+            preflight = observe_exact_pr(
+                args.live_pr_url, token=os.environ.get("GITHUB_TOKEN") or None,
+            )
+            output = (
+                pr_preflight_html(preflight) if args.format == "html"
+                else pr_preflight_markdown(preflight) if args.format == "markdown"
+                else json.dumps(preflight, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live PR preflight exceeds output bound")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live PR preflight: " + str(exc), file=sys.stderr)
+            return 2
+    if args.portfolio_view != "all" and not args.portfolio_repo:
+        parser.error("--portfolio-view requires --portfolio-repo")
+    if args.portfolio_previous_snapshot and not args.portfolio_repo:
+        parser.error("--portfolio-previous-snapshot requires --portfolio-repo")
+    if args.portfolio_snapshot_output and not args.portfolio_repo:
+        parser.error("--portfolio-snapshot-output requires --portfolio-repo")
+    if args.portfolio_verify_missing_live and not (
+            args.portfolio_repo and args.portfolio_previous_snapshot):
+        parser.error("--portfolio-verify-missing-live requires repos and previous snapshot")
+    if not args.portfolio_verify_missing_live and args.portfolio_recheck_limit != 3:
+        parser.error("--portfolio-recheck-limit requires --portfolio-verify-missing-live")
+    if args.portfolio_verify_missing_live and not 1 <= args.portfolio_recheck_limit <= 6:
+        parser.error("--portfolio-recheck-limit must be 1..6")
+    if args.portfolio_repo and (
+        not args.output or args.live_inbox_repo or args.live_issue_url
+        or args.input or args.batch_input or args.case_input or args.template
+        or args.live_candidates or args.discover_unlinked
+        or args.view_project or args.view_issue is not None
+        or args.through_priority is not None or args.prepare_merge_review
+        or args.candidate_pr_number is not None
+        or args.live_focus_pr is not None or args.inbox_page != 1
+        or args.inbox_all_sampled_csv or args.project_id
+        or args.incident_id or args.source_url or args.owner
+        or args.fail_on_hold or args.max_age_minutes != 60
+        or args.format not in ("json", "markdown", "html", "csv")
+    ):
+        parser.error(
+            "--portfolio-repo is standalone with required private --output"
+        )
+    if args.discover_unlinked and not args.live_candidates:
+        parser.error("--discover-existing requires --live-candidates")
+    if args.live_focus_pr is not None and (
+            not (args.live_candidates or args.live_issue_url) or
+            not 1 <= args.live_focus_pr <= 100000000):
+        parser.error("--live-focus-pr requires --live-candidates or --live-issue-url and a positive PR number")
+    if args.live_candidates:
+        if (args.live_issue_url or not args.case_input or not args.view_project or args.view_issue is None
+                or args.prepare_merge_review or args.candidate_pr_number is not None
+                or args.through_priority is not None or args.fail_on_hold
+                or args.format not in ("json", "markdown", "html")):
+            parser.error(
+                "--live-candidates requires --case-input, --view-project, "
+                "--view-issue and --format json|markdown|html; no conflicting action modes"
+            )
+    if args.inbox_page != 1 and not args.live_inbox_repo:
+        parser.error("--inbox-page requires --live-inbox-repo")
+    if args.inbox_all_sampled_csv and (
+            not args.live_inbox_repo or args.inbox_page != 1
+            or args.format != "csv" or not args.output):
+        parser.error(
+            "--inbox-all-sampled-csv requires --live-inbox-repo, "
+            "--format csv, private --output and default --inbox-page"
+        )
+    if not 1 <= args.inbox_page <= 5:
+        parser.error("--inbox-page must be between 1 and 5")
+    if args.live_inbox_repo:
+        if (any((args.live_issue_url, args.case_input, args.input,
+                 args.batch_input, args.template, args.live_candidates,
+                 args.discover_unlinked, args.view_project,
+                 args.view_issue is not None, args.through_priority,
+                 args.prepare_merge_review, args.candidate_pr_number,
+                 args.live_focus_pr is not None, args.project_id,
+                 args.incident_id, args.source_url, args.owner,
+                 args.fail_on_hold))
+                or args.format not in ("json", "markdown", "html", "csv")
+                or (args.format == "csv" and not args.output)):
+            parser.error(
+                "--live-inbox-repo requires JSON/Markdown/HTML or private --format csv --output" 
+            )
+    if args.live_issue_url:
+        if (any((args.case_input, args.input, args.batch_input, args.template,
+                 args.live_candidates, args.discover_unlinked, args.view_project,
+                 args.view_issue is not None, args.through_priority,
+                 args.prepare_merge_review, args.candidate_pr_number,
+                 args.project_id, args.incident_id, args.source_url, args.owner,
+                 args.fail_on_hold))
+                or args.format not in ("json", "markdown", "html")):
+            parser.error(
+                "--live-issue-url is a standalone read-only JSON/Markdown/HTML mode"
+            )
+    if args.prepare_merge_review:
+        if (not args.case_input or not args.view_project or args.view_issue is None
+                or args.candidate_pr_number is None
+                or args.format not in ("json", "markdown", "html") or args.fail_on_hold
+                or args.through_priority is not None):
+            parser.error(
+                "--prepare-merge-review requires --case-input, --view-project, "
+                "--view-issue, --candidate-pr-number and --format json|markdown|html"
+            )
+    elif args.candidate_pr_number is not None:
+        parser.error("--candidate-pr-number requires --prepare-merge-review")
+    if not args.case_input and (
+        args.view_project or args.through_priority or args.view_issue is not None
+    ):
+        parser.error("--view-project/--view-issue/--through-priority require --case-input")
+    if args.view_issue is not None and not args.view_project:
+        parser.error("--view-issue requires --view-project")
+    if not 1 <= args.max_age_minutes <= 1440:
+        parser.error("--max-age-minutes must be between 1 and 1440")
+    if args.portfolio_repo:
+        try:
+            from zsentinel_portfolio_issue_desk import (
+                observe_portfolio, write_private_portfolio_outputs,
+            )
+            previous = None
+            if args.portfolio_previous_snapshot:
+                from zsentinel_portfolio_history import (
+                    load_previous_snapshot, compare_snapshots,
+                )
+                previous = load_previous_snapshot(args.portfolio_previous_snapshot)
+                if (previous["repositories_requested"] != args.portfolio_repo or
+                        previous["display_view"] != args.portfolio_view):
+                    raise PolicyInputError("previous snapshot requires same repo order and view")
+            report = observe_portfolio(
+                args.portfolio_repo,
+                token=os.environ.get("GITHUB_TOKEN") or None,
+                view=args.portfolio_view,
+            )
+            if previous is not None:
+                report["comparison"] = compare_snapshots(previous, report)
+                if args.portfolio_verify_missing_live:
+                    from zsentinel_issue_recheck import recheck_missing_live
+                    report["comparison"] = recheck_missing_live(
+                        report["comparison"],
+                        token=os.environ.get("GITHUB_TOKEN") or None,
+                        max_reads=args.portfolio_recheck_limit,
+                        source_read_admitted=not report["provider_stopped_early"],
+                    )
+            write_private_portfolio_outputs(
+                report, format_name=args.format, output=args.output,
+                snapshot_output=args.portfolio_snapshot_output,
+            )
+            return 0
+        except (OSError, UnicodeError, ValueError, PolicyInputError) as exc:
+            print("zSentinel portfolio: " + str(exc), file=sys.stderr)
+            return 2
+    if args.template:
+        if args.input or args.batch_input or args.case_input:
+            parser.error("--template cannot be used with --input or --batch-input")
+        if not all((args.project_id, args.incident_id, args.source_url)):
+            parser.error("--template requires --project-id, --incident-id and --source-url")
+        if args.format != "json":
+            parser.error("--template emits JSON only")
+        if args.fail_on_hold:
+            parser.error("--fail-on-hold requires --input or --batch-input")
+        try:
+            report = template_request(args.template, args.project_id, args.incident_id,
+                                      args.source_url, args.owner)
+            output = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("template exceeds 128 KiB")
+            _emit_output(output, args.output, "json")
+            return 0
+        except (OSError, UnicodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if args.live_inbox_repo:
+        try:
+            from zsentinel_live_issue_inbox import (
+                observe_repo_inbox, markdown as issue_inbox_markdown,
+                html_view as issue_inbox_html,
+                workorders_csv as issue_inbox_csv,
+            )
+            from zsentinel_pr_live_read import GitHubReadError
+            report = observe_repo_inbox(
+                args.live_inbox_repo, token=os.environ.get("GITHUB_TOKEN") or None,
+                display_page=args.inbox_page,
+                display_all_sample=args.inbox_all_sampled_csv,
+            )
+            output = (
+                issue_inbox_html(report) if args.format == "html"
+                else issue_inbox_markdown(report) if args.format == "markdown"
+                else issue_inbox_csv(
+                    report, compact_all=args.inbox_all_sampled_csv
+                ) if args.format == "csv"
+                else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live inbox output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live inbox: " + str(exc), file=sys.stderr)
+            return 2
+    if args.live_issue_url:
+        try:
+            from zsentinel_pr_live_read import (
+                observe_live_issue, markdown as live_issue_markdown,
+                owner_html as live_issue_html, GitHubReadError,
+            )
+            report = observe_live_issue(
+                args.live_issue_url, token=os.environ.get("GITHUB_TOKEN") or None,
+                focus_pr_number=args.live_focus_pr,
+            )
+            output = (
+                live_issue_html(report) if args.format == "html"
+                else live_issue_markdown(report) if args.format == "markdown"
+                else json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            )
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("live issue output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 0
+        except (OSError, UnicodeError, GitHubReadError, PolicyInputError) as exc:
+            print("zSentinel live issue: " + str(exc), file=sys.stderr)
+            return 2
+    if args.case_input:
+        if args.input or args.batch_input:
+            parser.error("--case-input cannot be combined with other input modes")
+        if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+            parser.error("template identity options require --template")
+        try:
+            raw = _read_input(args.case_input)
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
+            report = evaluate_recovery_case(data)
+            if args.live_candidates:
+                from zsentinel_pr_live_read import (
+                    observe_candidate_prs,
+                    markdown as live_candidates_markdown,
+                    owner_html as live_candidates_html,
+                    GitHubReadError,
+                )
+                selected = select_case_view(
+                    report, project=args.view_project, issue_number=args.view_issue,
+                )["owner_workorders"][0]
+                try:
+                    live = observe_candidate_prs(
+                        selected, token=os.environ.get("GITHUB_TOKEN") or None,
+                        source_case=report,
+                        discover_unlinked=args.discover_unlinked,
+                        focus_pr_number=args.live_focus_pr,
+                    )
+                except GitHubReadError as exc:
+                    raise PolicyInputError("live PR source: " + str(exc)) from exc
+                output = (
+                    live_candidates_html(live) if args.format == "html"
+                    else live_candidates_markdown(live) if args.format == "markdown"
+                    else json.dumps(live, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+                )
+                if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                    raise PolicyInputError("live PR output exceeds 128 KiB")
+                _emit_output(output, args.output, args.format)
+                return 0
+            if args.prepare_merge_review:
+                output = merge_review_packet_from_case(
+                    report, project=args.view_project,
+                    issue_number=args.view_issue, pr_number=args.candidate_pr_number,
+                    format_name=args.format,
+                )
+                if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                    raise PolicyInputError("output exceeds 128 KiB")
+                _emit_output(output, args.output, args.format)
+                return 0
+            if args.view_project or args.through_priority or args.view_issue is not None:
+                report = select_case_view(
+                    report, project=args.view_project,
+                    through_priority=args.through_priority or "P3",
+                    issue_number=args.view_issue,
+                )
+            output = (workorders_csv(report) if args.format == "csv" else
+                      workorders_html(report) if args.format == "html" else
+                      case_markdown(report) if args.format == "markdown" else
+                      workorders_text(report) if args.format == "workorders" else
+                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            if len(output.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] else 0
+        except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if args.batch_input:
+        if args.input:
+            parser.error("--input and --batch-input cannot be used together")
+        if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+            parser.error("template identity options require --template")
+        try:
+            raw = _read_input(args.batch_input)
+            data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                              parse_constant=_reject_constant)
+            report = evaluate_batch(data, args.max_age_minutes)
+            output = (workorders_csv(report) if args.format == "csv" else
+                      workorders_html(report) if args.format == "html" else
+                      workorders_text(report) if args.format == "workorders" else
+                      markdown_batch(report) if args.format == "markdown" else
+                      json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            encoded = output.encode("utf-8")
+            if len(encoded) > MAX_OUTPUT_BYTES:
+                raise PolicyInputError("output exceeds 128 KiB")
+            _emit_output(output, args.output, args.format)
+            return 2 if args.fail_on_hold and report["decision_counts"]["HOLD"] > 0 else 0
+        except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
+            print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+            return 2
+    if not args.input:
+        parser.error("either --input, --batch-input, --case-input or --template is required")
+    if args.format in ("workorders", "csv"):
+        parser.error("--format workorders/csv requires --batch-input or --case-input")
+    if any((args.project_id, args.incident_id, args.source_url, args.owner)):
+        parser.error("template identity options require --template")
+    try:
+        raw = _read_input(args.input)
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
+                          parse_constant=_reject_constant)
+        report = evaluate(data, args.max_age_minutes)
+        output = (
+            markdown(report) if args.format == "markdown" else
+            policy_html(report) if args.format == "html" else
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        )
+        encoded = output.encode("utf-8")
+        if len(encoded) > MAX_OUTPUT_BYTES:
+            raise PolicyInputError("output exceeds 128 KiB")
+        _emit_output(output, args.output, args.format)
+        return 2 if args.fail_on_hold and report["decision"] == "HOLD" else 0
+    except (OSError, UnicodeError, json.JSONDecodeError, PolicyInputError) as exc:
+        print("zSentinel recovery policy: " + str(exc), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
