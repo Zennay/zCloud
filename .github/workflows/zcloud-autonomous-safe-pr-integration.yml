@@ -19,7 +19,9 @@ jobs:
   integrate:
     name: Autonomous development integration
     if: github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, zcloud, vps]
+    # GitHub API-only safe integrator; no production VPS state or secrets.
+    # Keep owner/main/replay gates intact on an ephemeral hosted runner.
+    runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
       - name: Refuse replay and untrusted dispatch before checkout or GitHub API
