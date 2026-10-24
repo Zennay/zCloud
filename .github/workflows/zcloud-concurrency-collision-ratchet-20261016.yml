@@ -1,0 +1,138 @@
+name: zCloud concurrency cancellation collision admission (hosted)
+# No VPS or mutation authority; admission remains source-only and deny-first.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_concurrency_group_collision_ratchet_20261016.py"
+      - "tests/test_zcloud_concurrency_group_collision_ratchet_20261016.py"
+permissions:
+  contents: read
+concurrency:
+  # Source-only proof has no mutable shared state; unique run identity avoids
+  # any pending-run replacement across pull_request revisions.
+  group: zcloud-collision-admission-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify trusted same-repository PR without checkout
+        shell: bash
+        env:
+          ACTUAL_REPO: ${{ github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "$EVENT" = "pull_request"
+          test "$ACTUAL_REPO" = "Zennay/zCloud"
+          test "$BASE_REPO" = "$ACTUAL_REPO"
+          test "$HEAD_REPO" = "$ACTUAL_REPO"
+          test "$GITHUB_BASE_REF" = "main"
+  source-only:
+    needs: [provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Immutable head checkout without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Verify canonical base and exact checkout
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD"
+          git cat-file -e "$BASE^{commit}"
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current" = "$BASE"
+      - name: Real Git policy regression and cancellation-collision ratchet
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.3'
+          python3 -m unittest -v tests.test_zcloud_concurrency_group_collision_ratchet_20261016
+          python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD"
+          # Show only hashed group IDs, workflow paths and UNREVIEWED owner fields.
+          # This is an audit queue, never review/deploy authorization.
+          receipt="$(python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD" --inventory-json)"
+          # An inventory is deliberately NOT a release/merge approval; reject
+          # any drift in the emitted receipt before printing it for owners.
+          python3 -c '
+          import json, os, re, sys
+          d = json.load(sys.stdin)
+          required = ("reviewed", "merge_authorized", "production_mutation_authorized")
+          if any(d.get(field) is not False for field in required):
+              raise SystemExit("inventory unexpectedly asserts authority")
+          if d.get("base_commit_sha") != os.environ["BASE"] or d.get("head_commit_sha") != os.environ["HEAD"]:
+              raise SystemExit("inventory SHA does not match exact PR source")
+          if d.get("legacy_group_count") != len(d.get("group_summaries", [])):
+              raise SystemExit("inventory group counts are incoherent")
+          if d.get("legacy_collision_count") != len(d.get("review_items", [])):
+              raise SystemExit("inventory pair counts are incoherent")
+          if d.get("legacy_opaque_expression_count") != len(d.get("unresolved_expression_reviews", [])):
+              raise SystemExit("unresolved-expression review count is incoherent")
+          pair_counts = {}
+          for pair in d["review_items"]:
+              group = pair.get("group_sha256", "")
+              if not re.fullmatch(r"[0-9a-f]{64}", group):
+                  raise SystemExit("review pair group identity is not hashed")
+              members = pair.get("members", [])
+              if len(members) != 2:
+                  raise SystemExit("review pair has malformed members")
+              pair_counts[group] = pair_counts.get(group, 0) + 1
+              for member in members:
+                  if not re.fullmatch(r"\.github/workflows/[A-Za-z0-9_./-]+\.ya?ml",
+                                      member.get("workflow_path", "")):
+                      raise SystemExit("review contains unsafe workflow path")
+                  digest = member.get("cancel_expression_sha256")
+                  if member.get("cancel_in_progress") == "dynamic":
+                      if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                          raise SystemExit("dynamic cancel expression has no redacted fingerprint")
+                  elif digest != "":
+                      raise SystemExit("static cancellation unexpectedly contains expression hash")
+          if len(pair_counts) != d["legacy_group_count"]:
+              raise SystemExit("group count disagrees with collision identities")
+          for group in d["group_summaries"]:
+              if group.get("pair_count") != pair_counts.get(group.get("group_sha256")):
+                  raise SystemExit("review group pair counts disagree")
+              if (group.get("reviewed") is not False or
+                  group.get("production_mutation_authorized") is not False):
+                  raise SystemExit("review group unexpectedly asserts authority")
+          if d.get("no_new_opaque_expressions") is not True:
+              raise SystemExit("new opaque concurrency expression requires owner review")
+          remaining = d.get("candidate_opaque_expression_count")
+          if type(remaining) is not int or remaining < 0:
+              raise SystemExit("invalid candidate opaque expression count")
+          if d.get("static_expression_coverage_complete") is not (remaining == 0):
+              raise SystemExit("static expression coverage must be explicit")
+          if any(item.get("owner") != "UNASSIGNED" or
+                 item.get("reviewer") != "UNASSIGNED" or
+                 item.get("disposition") != "UNREVIEWED"
+                 for item in d["unresolved_expression_reviews"]):
+              raise SystemExit("opaque review inventory contains unproven owner decisions")
+          if any(item.get("reviewed") is not False or
+                 item.get("production_mutation_authorized") is not False
+                 for item in d["group_summaries"]):
+              raise SystemExit("inventory group claims unauthorized review")
+          print("ZCLOUD_COLLISION_INVENTORY_DENY_ONLY_VALID=1")
+          ' <<<"$receipt"
+          printf '%s\n' "$receipt"
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current" = "$BASE"
+          echo "ZCLOUD_COLLISION_SOURCE_ONLY_GREEN=1"
