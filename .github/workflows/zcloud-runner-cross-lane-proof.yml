@@ -11,6 +11,11 @@ on:
       - ".github/workflows/zcloud-vps-execution-probe.yml"
       - "tests/test_zcloud_cross_runner_manual_trust_20261014.py"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Confirm the exact current main commit for owner-only VPS inspection"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -52,7 +57,8 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
-      github.run_attempt == 1
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
@@ -60,6 +66,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA: ${{ github.sha }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -68,6 +75,8 @@ jobs:
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
           test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
           test "$(hostname -s)" = "vps-bb300bba"
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           current_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
