@@ -181,6 +181,51 @@ class GovernedExecTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_readonly_live_pool_recovers_known_stopped_expired_heavy_group(self):
+        # A prior same-boot supervised job finished; its expired row
+        # remains in SQLite until an authorized writer prunes it.
+        # A diagnostic GET should report available capacity WITHOUT
+        # pruning that row or mistaking a tuple for an invalid record.
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO resource_leases ("
+            "project_id,owner_id,pool,workload_class,cpu_soft_cores,"
+            "memory_soft_mb,acquired_at,lease_until,metadata_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "ftmo", "finished-heavy", "heavy", "research-heavy",
+                1.0, 1024, "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:01:00+00:00",
+                json.dumps({
+                    "executor": "zcloud-governed-exec",
+                    "host_boot_id": "current-boot",
+                    "pid": 43210,
+                }),
+            ),
+        )
+        conn.commit()
+        try:
+            with mock.patch.object(governed, "_uses_live_governor_authority", return_value=True):
+                with mock.patch.object(governed, "_legacy_haxlab_training_active", return_value=False):
+                    with mock.patch.object(governed, "_local_boot_identity", return_value="current-boot"):
+                        with mock.patch.object(governed, "_process_group_has_live_members", return_value=False):
+                            snapshot = governed.inspect_pool(self.db, "ftmo")
+            heavy = snapshot["pool_snapshot"]["heavy"]
+            self.assertEqual(0, heavy["admitted"])
+            self.assertEqual(1, heavy["remaining"])
+            self.assertIs(heavy["expired_heavy_recovery_unresolved"], False)
+            self.assertEqual(1, heavy["effective_remaining"])
+            self.assertFalse(snapshot["admission_granted"])
+            self.assertEqual(
+                1, conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE owner_id='finished-heavy'"
+                ).fetchone()[0],
+                "read-only snapshot modified an expired lease",
+            )
+        finally:
+            conn.close()
+
     def test_isolated_canary_snapshot_does_not_claim_foreign_heavy_recovery(self):
         conn = self._connect()
         conn.commit()
