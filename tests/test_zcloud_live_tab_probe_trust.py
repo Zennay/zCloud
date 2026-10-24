@@ -56,7 +56,18 @@ class LiveTabProbeTrustTests(unittest.TestCase):
     def test_pr_checks_are_hosted_only(self):
         hosted = _job("hosted-policy-regression")
         inspect = _job("inspect")
-        self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'push'", hosted)
+        # Preserve the stronger same-repository/owner admission in the
+        # source-only hosted job rather than demanding an older, less
+        # restrictive plain PR-or-push condition.
+        self.assertIn(
+            "if: (github.event_name == 'pull_request' || github.event_name == 'push')",
+            hosted,
+        )
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            hosted,
+        )
+        self.assertIn("github.actor == 'Zennay'", hosted)
         self.assertIn("runs-on: ubuntu-latest", hosted)
         self.assertNotIn("self-hosted", hosted)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", inspect)
