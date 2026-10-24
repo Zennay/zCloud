@@ -40,7 +40,7 @@ jobs:
   source-admission:
     name: Reject forked or non-canonical source before checkout
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - name: Verify event provenance (no checkout or VPS access)
@@ -65,7 +65,7 @@ jobs:
     name: Reject new writer lock debt; list known production conflicts
     needs: source-admission
     if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
-    runs-on: [self-hosted, zcloud, vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout exact immutable repository source

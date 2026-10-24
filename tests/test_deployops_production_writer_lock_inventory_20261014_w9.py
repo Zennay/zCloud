@@ -178,11 +178,14 @@ class ProductionWriterInventoryTests(unittest.TestCase):
         name = "zcloud-emergency-addon-hot-reload.yml"
         current = text(name)
         assert "  activate:\n" in current
-        remediated = current.replace("    runs-on: [self-hosted, zcloud, vps]",
+        # Insert the remediation into the *actual* live writer job.
+        # The preceding proof/validation job can also use self-hosted
+        # runners, so replacing the first runs-on is not a valid fixture.
+        remediated = current.replace("  activate:\n",
+                                     "  activate:\n"
                                      "    concurrency:\n"
                                      "      group: zcloud-production-deploy\n"
-                                     "      cancel-in-progress: false\n"
-                                     "    runs-on: [self-hosted, zcloud, vps]", 1)
+                                     "      cancel-in-progress: false\n", 1)
         self.assertEqual("remediated", audit_mod.inspect_source(name, remediated)["risk"])
 
     def test_duplicate_or_missing_workflow_roots_fail_closed(self):
