@@ -143,6 +143,60 @@ class GovernedExecTests(unittest.TestCase):
             ):
                 governed._assert_database_identity(canonical, original_id)
 
+    def test_readonly_live_pool_reports_expired_heavy_recovery_as_unavailable(self):
+        # A foreign expired heavy lease must not create false "free heavy"
+        # availability in the UI. The inspector cannot mutate SQLite.
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO resource_leases ("
+            "project_id,owner_id,pool,workload_class,cpu_soft_cores,"
+            "memory_soft_mb,acquired_at,lease_until,metadata_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "ftmo", "foreign-heavy", "heavy", "research-heavy",
+                1.0, 1024, "2020-01-01T00:00:00+00:00",
+                "2020-01-01T00:01:00+00:00",
+                json.dumps({"pid": 43210, "host_boot_id": "foreign-boot"}),
+            ),
+        )
+        conn.commit()
+        try:
+            with mock.patch.object(governed, "_uses_live_governor_authority", return_value=True):
+                with mock.patch.object(governed, "_legacy_haxlab_training_active", return_value=False):
+                    with mock.patch.object(governed, "_local_boot_identity", return_value="local-boot"):
+                        snapshot = governed.inspect_pool(self.db, "ftmo")
+            heavy = snapshot["pool_snapshot"]["heavy"]
+            self.assertEqual(0, heavy["admitted"])
+            self.assertEqual(1, heavy["remaining"])
+            self.assertTrue(heavy["expired_heavy_recovery_unresolved"])
+            self.assertEqual(0, heavy["effective_remaining"])
+            self.assertFalse(snapshot["admission_granted"])
+            self.assertEqual(
+                1, conn.execute(
+                    "SELECT COUNT(*) FROM resource_leases "
+                    "WHERE owner_id='foreign-heavy'"
+                ).fetchone()[0],
+                "readonly inspection pruned a recovery record",
+            )
+        finally:
+            conn.close()
+
+    def test_isolated_canary_snapshot_does_not_claim_foreign_heavy_recovery(self):
+        conn = self._connect()
+        conn.commit()
+        conn.close()
+        with mock.patch.object(governed, "_uses_live_governor_authority", return_value=False):
+            with mock.patch.object(governed, "_legacy_haxlab_training_active") as legacy:
+                with mock.patch.object(governed, "_expired_heavy_group_active") as recovery:
+                    snapshot = governed.inspect_pool(self.db, "ftmo")
+        heavy = snapshot["pool_snapshot"]["heavy"]
+        self.assertIsNone(heavy["expired_heavy_recovery_unresolved"])
+        self.assertEqual(1, heavy["effective_remaining"])
+        self.assertFalse(snapshot["canonical_live_authority"])
+        self.assertFalse(snapshot["admission_granted"])
+        legacy.assert_not_called()
+        recovery.assert_not_called()
+
     def test_busy_heavy_pool_fails_closed_before_child_starts(self):
         conn = self._connect()
         self.assertTrue(runtime.acquire_resource(conn, "ftmo", "holder")["acquired"])
