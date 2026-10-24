@@ -40,6 +40,9 @@
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  // One bounded composer repair episode per verified queue assignment.
+  const COMPOSER_IDLE_REPAIR_MS=45000;
+  let missingComposerSince=0,composerRepairAttempted=false,composerRepairQueueId="";
   const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
     sending||awaiting||generating()?"true":"false");
   // An explicit Force owns one command ID and may only be delivered to its
@@ -54,13 +57,63 @@
   }
   let resetRoute=null;
   let promptAt=0,awaitingAt=0,baseline="",baselineAssistantCount=0,next=false,lastBlock="",lastCommand=0;
+  // Preserve the last real generation-progress time across ordinary status
+  // events in this document; never turn a heartbeat into fake progress.
+  let lastProgressAt=null,lastProgressQueueId="",lastProgressConversation="";
+  // The normal in-page reply loop may continue a queue, but a full reload
+  // loses all reply/ack evidence. Retain only the previously dispatched queue
+  // identity in this tab, never the private prompt or its answer.
+  const SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue";
+  const PERSISTENT_SENT_QUEUE_KEY="zcloud-v2-last-dispatched-queue:"+id;
+  let sentInThisDocument=false;
+  function sentQueueFromReceipt(raw,workerBound=false){
+    if(raw===null||raw===undefined)return null;
+    if(typeof raw!=="string"||raw.length>320)return false;
+    try{
+      const seen=JSON.parse(raw);
+      if(!seen||typeof seen!=="object"||Array.isArray(seen)||
+         typeof seen.worker!=="string"||typeof seen.queue!=="string"||
+         !seen.worker||!seen.queue)return false;
+      // sessionStorage is tab-scoped, and can legitimately retain an older
+      // project's marker when a controller reassigns the tab. The GM key is
+      // per worker: a mismatched identity there is corrupt, never clearance.
+      return seen.worker===id?seen.queue:(workerBound?false:null);
+    }catch(_){return false}
+  }
+  function sameQueueWasSentBeforeReload(queueId){
+    // The session witness survives a reload in the same tab. The separate
+    // userscript-private witness survives a replacement tab / browser restart.
+    // Never interpret unreadable or malformed evidence as proof of safety.
+    try{
+      if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+        return true;
+      const local=sentQueueFromReceipt(sessionStorage.getItem(SENT_QUEUE_KEY));
+      const persistent=sentQueueFromReceipt(GM_getValue(PERSISTENT_SENT_QUEUE_KEY,null),true);
+      return local===false||persistent===false||
+        local===queueId||persistent===queueId;
+    }catch(_){return true}
+  }
   let reportedConversation=sessionStorage.getItem("zcloud-v2-reported-conversation")||"";
   let chatAt=Number(sessionStorage.getItem("zcloud-v2-chat-at")||0);
   if(!chatAt||chatAt>Date.now())chatAt=Date.now();
   sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
   const label=el=>String(el?.getAttribute?.("aria-label")||el?.getAttribute?.("aria-valuetext")||el?.innerText||el?.textContent||"").trim();
   const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&r.width>0&&r.height>0};
-  const generating=()=>!!document.querySelector('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]');
+  // A visible DOM node is not necessarily an interactive composer. Treat native
+  // disabled/readonly state and ARIA/inert wrappers as unavailable.
+  const composerReady=el=>{
+    if(!visible(el)||el.disabled===true||el.readOnly===true||
+       el.matches?.(":disabled")||
+       el.getAttribute("aria-disabled")==="true"||
+       el.getAttribute("aria-readonly")==="true"||
+       el.closest?.('[aria-disabled="true"],[aria-readonly="true"],[inert]'))return false;
+    const tag=String(el.tagName||"").toUpperCase();
+    return el.isContentEditable===true||
+      ((tag==="TEXTAREA"||tag==="INPUT")&&!el.disabled&&!el.readOnly);
+  };
+  // Responsive portals can retain a hidden old stop button. Only the visible
+  // control indicates that the assigned conversation is currently generating.
+  const generating=()=>[...document.querySelectorAll('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"]')].some(visible);
   const reply=()=>{const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')];return a.length?String(a[a.length-1].innerText||a[a.length-1].textContent||"").trim():""};
   const conversation=()=>location.pathname.match(/^\/c\/([0-9a-f-]{20,})/i)?.[1]||"";
   const assistantCount=()=>document.querySelectorAll('[data-message-author-role="assistant"]').length;
@@ -73,19 +126,36 @@
     }));
   }
   async function status(event,extra={}){
-    if(!target)return;
+    if(!target)return false;
     const at=new Date().toISOString();
-    try{await api("/runner-status","POST",{
-      projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
-      workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
-      queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
-      target:location.href,targetConversation:conversation(),title:document.title,
-      event,at,progressAt:at,generating:generating(),sending,
-      assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.5",...extra
-    })}catch(_){}
+    const queueId=String(target?.queue_item?.queue_id||"");
+    const conversationId=conversation();
+    if(queueId!==lastProgressQueueId||conversationId!==lastProgressConversation){
+      lastProgressAt=null;
+      lastProgressQueueId=queueId;
+      lastProgressConversation=conversationId;
+    }
+    if(event==="generation-progress"||event==="generation-finished")lastProgressAt=at;
+    try{
+      await api("/runner-status","POST",{
+        projectId:id,baseProjectId:target.base_project_id||id.split("::w")[0],
+        workerSlot:target.worker_slot||1,globalWorkerSlot:target.global_worker_slot||1,
+        queueItem:target.queue_item?.queue_id||"",projectName:target.name||id,
+        target:location.href,targetConversation:conversationId,title:document.title,
+        event,at,generating:generating(),sending,
+        assistantCharacters:reply().length,runner:"violentmonkey",
+        provider:"chatgpt",runnerVersion:"2.0.5",...extra,progressAt:lastProgressAt
+      });
+      return true;
+    }catch(_){return false}
   }
-  async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
+  async function blocked(reason){
+    if(lastBlock===reason)return;
+    // Offline /runner-status is not an acknowledged blocker receipt. Retry
+    // on an existing later poll rather than permanently hiding a P0 stop.
+    // Keep one acknowledged reason per queue; never spawn retry timers.
+    if(await status("send-blocked",{reason}))lastBlock=reason;
+  }
   function high(){
     // The live composer attribute is authoritative: a checked menu item
     // elsewhere must never override an explicitly Medium/Low composer.
@@ -134,11 +204,73 @@
       'button[data-testid="new-chat-button"]'].flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible)||null;
   }
   function failedConversation(){
-    const t=String((document.querySelector("main")||document.body)?.innerText||"").toLowerCase();
+    // Never treat a quoted error in an actual conversation as an error page.
+    // A terminal load failure has no usable composer and no visible chat turns.
+    const main=document.querySelector("main");
+    if(!main||composerReady(composer()))return false;
+    if([...main.querySelectorAll('[data-message-author-role],[data-testid="conversation-turn"]')].some(visible))
+      return false;
+    const t=String(main.innerText||"").trim().toLowerCase();
+    if(!t||t.length>2000)return false; // Large pages are not a bounded error screen.
     return /could not load (?:this )?(?:chatgpt )?conversation|conversation not found|gesprek kon niet worden geladen/.test(t);
   }
   async function newChat(reason){
     if(generating()||sending||awaiting)return false;
+    // Conversation rotation is an irreversible browser action too. Do not
+    // hide a prior accepted dispatch while its command ACK is unresolved.
+    if(commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked(commandAckStorageInvalid?"command-ack-ledger-unavailable":
+        "command-ack-pending-no-new-send");
+      return false;
+    }
+    // Poll can spend time awaiting DOM/API work before reaching this action.
+    // Bind the click to the exact still-authorized assignment and the same
+    // conversation/route observed when rotation was requested.
+    const assignment=target;
+    const queueId=String(assignment?.queue_item?.queue_id||"");
+    const slot=Number(assignment?.global_worker_slot||0);
+    const baseProjectId=String(assignment?.base_project_id||id.split("::w")[0]);
+    const workerSlot=Number(assignment?.worker_slot||1);
+    const prompt=String(assignment?.prompt||"").trim();
+    const route=location.pathname;
+    const conversationId=conversation();
+    if(!ready(assignment)||assignment.project_id!==id||!queueId||!slot){
+      await blocked("new-chat-assignment-not-ready");return true;
+    }
+    let snapshot;
+    try{snapshot=await api("/runner-targets")}
+    catch(_){await blocked("new-chat-lease-unavailable");return true}
+    const current=snapshot.projects?.[id];
+    if(!ready(current)||current.project_id!==id||
+       String(current.queue_item?.queue_id||"")!==queueId||
+       Number(current.global_worker_slot||0)!==slot||
+       String(current.base_project_id||id.split("::w")[0])!==baseProjectId||
+       Number(current.worker_slot||1)!==workerSlot||
+       String(current.prompt||"").trim()!==prompt||
+       !ready(target)||target.project_id!==id||
+       String(target.queue_item?.queue_id||"")!==queueId||
+       Number(target.global_worker_slot||0)!==slot||
+       String(target.base_project_id||id.split("::w")[0])!==baseProjectId||
+       Number(target.worker_slot||1)!==workerSlot||
+       String(target.prompt||"").trim()!==prompt||
+       location.pathname!==route||conversation()!==conversationId||
+       generating()||sending||awaiting||resetRoute!==null||
+       commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked("new-chat-context-changed-before-click");return true;
+    }
+    // A replacement tab may have no in-memory dispatch history while the
+    // worker-private may-have-sent witness still identifies this queue.
+    // Preserve that potentially accepted original execution even if the
+    // current composer is empty: no rotation or auto-retry on lost evidence.
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(queueId)){
+      await blocked("previous-queue-send-after-reload-manual-review");return true;
+    }
+    // An operator may have started typing during the asynchronous lease
+    // refresh. A browser rotation must not erase this independent draft.
+    const editor=composer();
+    if(visible(editor)&&composerText(editor).trim()){
+      await blocked("new-chat-unsent-draft-preserved");return true;
+    }
     const button=newChatButton();
     if(!button){await blocked("new-chat-button-missing");return false}
     resetRoute=location.pathname;
@@ -148,23 +280,106 @@
     await status("conversation-reset-requested",{reason});
     return true;
   }
-  const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
-  const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
+  function resetComposerRepair(queueId=""){
+    // A new queue assignment needs its own operator blocker receipt. The
+    // previous assignment's last reason must not suppress an identical issue
+    // in this distinct lease, but do not emit duplicate events on each poll.
+    if(composerRepairQueueId!==queueId)lastBlock="";
+    missingComposerSince=0;
+    composerRepairAttempted=false;
+    composerRepairQueueId=queueId;
+  }
+  async function recoverIdleComposer(nowMs=Date.now()){
+    const queueId=String(target?.queue_item?.queue_id||"");
+    if(!queueId||!ready(target)||target?.project_id!==id){
+      resetComposerRepair();return false;
+    }
+    if(composerRepairQueueId!==queueId)resetComposerRepair(queueId);
+    // A full reload erased the in-page generation history. Do not even
+    // click New chat during a missing-composer episode when this tab has
+    // already submitted the same queue; preserve the original evidence.
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(queueId)){
+      await blocked("previous-queue-send-after-reload-manual-review");
+      return true;
+    }
+    if(composerReady(composer())){
+      if(missingComposerSince>0){
+        lastBlock="";
+        await status("composer-restored",{reason:"composer-visible-on-owned-worker"});
+      }
+      resetComposerRepair(queueId);
+      return false;
+    }
+    // Never reset after sending, during a response, while the SPA is
+    // transitioning, or if a new assignment is not verified. This is not
+    // general permission to change an existing conversation.
+    if(sending||awaiting||generating()){
+      missingComposerSince=0;
+      return false;
+    }
+    if(resetRoute!==null)return false;
+    // A confirmed terminal conversation-load error has its own guarded
+    // recovery later in poll(). Do not let the missing-composer grace return
+    // early and permanently hide that stronger, existing recovery signal.
+    if(failedConversation())return false;
+    // Hold all prompt sends until the composer returns or one safe repair
+    // has been requested; do not keep retrying fill() against a missing DOM.
+    if(!missingComposerSince){missingComposerSince=nowMs;return true}
+    if(composerRepairAttempted||nowMs-missingComposerSince<COMPOSER_IDLE_REPAIR_MS)
+      return true;
+    composerRepairAttempted=true;
+    if(promptAt>0||everGenerating||conversation()||location.pathname!=="/"){
+      await blocked("composer-missing-manual-recovery-required");
+      return true;
+    }
+    // The tab is already on an empty/new-chat route, and this worker has
+    // never dispatched a prompt. A single existing SPA New chat action is
+    // allowed; never navigate/reload an existing chat or repeat the action.
+    const started=await newChat("composer-missing-before-first-send");
+    if(!started)await blocked("composer-missing-operator-action-required");
+    return true;
+  }
+  const composer=()=>{
+    // Prefer an actually editable candidate over disabled responsive duplicates.
+    const selectors=['#prompt-textarea','[contenteditable="true"][role="textbox"]','textarea'];
+    const candidates=[];
+    for(const selector of selectors)for(const el of document.querySelectorAll(selector))
+      if(!candidates.includes(el))candidates.push(el);
+    // A disabled/read-only field containing text may hold a human draft. Keep it
+    // visible to the guard instead of silently switching to another editor.
+    const blockedDraft=candidates.find(el=>visible(el)&&!composerReady(el)&&
+      String(el.value??el.innerText??el.textContent??"").trim());
+    if(blockedDraft)return blockedDraft;
+    const ready=candidates.find(composerReady);
+    if(ready)return ready;
+    const shown=candidates.find(visible);
+    return shown||document.querySelector(selectors.join(","));
+  };
+  const sendButton=()=>[...document.querySelectorAll('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]')].find(visible)||null;
+  const composerText=box=>String(box?.value??box?.innerText??box?.textContent??"")
+    .replace(/\r\n?/g,"\n").trim();
   async function fill(text){
-    const box=composer();if(!visible(box))return false;
+    const box=composer();if(!composerReady(box))return "missing";
+    const wanted=String(text).replace(/\r\n?/g,"\n").trim();
+    // Never overwrite a human draft or a previous assignment's unsent text.
+    // Check again here because ensureHigh() can spend seconds in UI menus.
+    const previous=composerText(box);
+    if(previous&&previous!==wanted)return "draft-preserved";
     box.focus({preventScroll:true});
     if(box.tagName==="TEXTAREA"||box.tagName==="INPUT"){
       const proto=box.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
       const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;
       if(setter)setter.call(box,text);else box.value=text;
       box.dispatchEvent(new Event("input",{bubbles:true}));
-    }else{
+    }else if(previous!==wanted){
       document.execCommand("selectAll",false,null);
       document.execCommand("insertText",false,text);
       box.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:text}));
     }
     await sleep(350);
-    return !!String(box.value||box.innerText||box.textContent||"").trim();
+    // Earlier a merely nonempty (possibly stale) draft authorized Send.
+    // A source-equivalent exact value is required before lease revalidation.
+    return composerText(box)===wanted?"ready":"text-not-confirmed";
   }
   function ready(t){
     if(!t||t.active!==true||t.assignment_ready!==true||t.desired_state==="paused"||t.desired_state==="draining")return false;
@@ -234,31 +449,163 @@
   }
   async function send(reason){
     if(sending||awaiting||generating()||!target||!ready(target))return false;
+    // A pending browser command-result receipt remains a live upstream
+    // uncertainty. Ordinary automatic next-prompt dispatch must obey it too.
+    if(commandAckStorageInvalid||pendingCommandAcks.size>0){
+      await blocked(commandAckStorageInvalid?"command-ack-ledger-unavailable":
+        "command-ack-pending-no-new-send");
+      return false;
+    }
+    const dispatchedQueue=String(target.queue_item.queue_id);
+    const dispatchedSlot=Number(target.global_worker_slot);
+    if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
+      await blocked("previous-queue-send-after-reload-manual-review");
+      return false;
+    }
     if(!(await forceAllowed())){await blocked("force-tab-handoff-required");return false}
     const fullPrompt=String(target.prompt||"").trim();if(!fullPrompt)return false;
     const prompt=promptForThisTurn(fullPrompt);
+    // An operator's existing draft is never permission to replace it with
+    // an automated queue prompt, even before the Thinking menu opens.
+    const initialComposer=composer();
+    if(visible(initialComposer)){
+      const draft=composerText(initialComposer);
+      if(draft&&draft!==prompt){await blocked("composer-draft-preserved");return false}
+    }
     sending=true;markBusy();
     try{
       if(!(await ensureHigh())){await blocked("high-not-verified");return false}
-      if(!(await fill(prompt))){await blocked("composer-missing");return false}
+      const editor=await fill(prompt);
+      if(editor!=="ready"){
+        await blocked(editor==="missing"?"composer-missing":
+          editor==="draft-preserved"?"composer-draft-preserved":"composer-text-not-confirmed");
+        return false;
+      }
       // Recheck after asynchronous UI work; settings/allocation can change.
       if(!high()){await blocked("high-changed-before-send");return false}
       const fresh=await api("/runner-targets");
-      if(!ready(fresh.projects?.[id])||fresh.projects[id].queue_item.queue_id!==target.queue_item.queue_id){
+      const current=fresh.projects?.[id];
+      // A queue ID alone is not proof that the assignment still authorizes
+      // this exact prompt. A same-queue edit, slot move or owner change
+      // during the Thinking/editor wait must not dispatch stale instructions.
+      if(!ready(current)||current.project_id!==id||target.project_id!==id||
+         current.queue_item.queue_id!==dispatchedQueue||
+         target.queue_item?.queue_id!==dispatchedQueue||
+         String(current.prompt||"").trim()!==fullPrompt||
+         String(target.prompt||"").trim()!==fullPrompt||
+         Number(current.global_worker_slot)!==dispatchedSlot||
+         Number(target.global_worker_slot)!==dispatchedSlot){
         await blocked("assignment-changed-before-send");return false;
       }
       const button=sendButton();
       if(!visible(button)||button.disabled||button.getAttribute("aria-disabled")==="true"){
         await blocked("send-button-unavailable");return false;
       }
+      // Human edits or late SPA transitions can happen while checking the
+      // current queue lease. Never send a stale or partially replaced draft.
+      const currentEditor=composer();
+      // The composer may become disabled while the fresh lease read is in flight.
+      if(!composerReady(currentEditor)||composerText(currentEditor)!==prompt){
+        await blocked("composer-changed-before-send");return false;
+      }
+      // Close the gap between the earlier queue preflight and the actual
+      // irreversible click: another owned tab may have sent this queue
+      // during the async Thinking/editor/runner-target round trip.
+      if(!sentInThisDocument&&sameQueueWasSentBeforeReload(dispatchedQueue)){
+        await blocked("previous-queue-send-after-reload-manual-review");
+        return false;
+      }
+      // Persist a conservative may-have-sent marker BEFORE the irreversible
+      // click. If storage fails, do not send; do not erase or auto-ack the
+      // original queue after a browser restart.
+      try{
+        const receipt=JSON.stringify({worker:id,queue:dispatchedQueue});
+        if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+          throw Error("userscript storage not available");
+        // The persistent marker closes the replacement-tab loophole. It
+        // contains only the queue and worker identity, never task text.
+        GM_setValue(PERSISTENT_SENT_QUEUE_KEY,receipt);
+        sessionStorage.setItem(SENT_QUEUE_KEY,receipt);
+      }catch(_){await blocked("dispatch-ledger-unavailable");return false}
       baseline=reply();baselineAssistantCount=assistantCount();button.click();promptAt=Date.now();awaitingAt=promptAt;
+      sentInThisDocument=true;
       awaiting=true;everGenerating=false;next=false;lastBlock="";
       noteFullContextSent(fullPrompt,prompt);
       await status("prompt-sent",{reason,thinkingEffort:"high"});
       return true;
     }finally{sending=false;markBusy()}
   }
+  // A successfully submitted browser command and its zCloud receipt are
+  // different operations. Keep only pending acknowledgements in private
+  // userscript storage so browser restart cannot turn a lost ACK into Send.
+  const MAX_PENDING_COMMAND_ACKS=16;
+  const COMMAND_ACK_KEY="zcloud-v2-pending-command-acks:"+id;
+  const COMMAND_COMPLETED_RESULT="single-tab worker v2 action";
+  const COMMAND_REFUSED_RESULT="v2 preserved tab; in-tab rotation limited to error or one-hour idle";
+  let commandAckStorageInvalid=false;
+  function loadCommandAcks(){
+    try{
+      if(typeof GM_getValue!=="function"||typeof GM_setValue!=="function")
+        throw Error("missing private userscript storage");
+      const saved=GM_getValue(COMMAND_ACK_KEY,null);
+      if(saved===null)return new Map();
+      if(typeof saved!=="string"||saved.length>4096)throw Error("invalid receipt size");
+      const rows=JSON.parse(saved);
+      if(!Array.isArray(rows)||rows.length>MAX_PENDING_COMMAND_ACKS)
+        throw Error("invalid receipt list");
+      const receipts=new Map();
+      for(const row of rows){
+        if(!Array.isArray(row)||row.length!==2||
+           !Number.isSafeInteger(row[0])||row[0]<=0||
+           (row[1]!=="completed"&&row[1]!=="failed")||
+           receipts.has(row[0]))throw Error("invalid receipt");
+        receipts.set(row[0],{
+          status:row[1],
+          result:row[1]==="completed"?COMMAND_COMPLETED_RESULT:COMMAND_REFUSED_RESULT
+        });
+      }
+      return receipts;
+    }catch(_){
+      commandAckStorageInvalid=true;
+      return new Map();
+    }
+  }
+  const pendingCommandAcks=loadCommandAcks();
+  function persistCommandAcks(){
+    try{
+      if(commandAckStorageInvalid||pendingCommandAcks.size>MAX_PENDING_COMMAND_ACKS)
+        throw Error("receipt ledger unavailable");
+      const contents=JSON.stringify([...pendingCommandAcks].map(
+        ([commandId,receipt])=>[commandId,receipt.status]));
+      GM_setValue(COMMAND_ACK_KEY,contents);
+      if(GM_getValue(COMMAND_ACK_KEY,null)!==contents)
+        throw Error("receipt was not confirmed in private storage");
+      return true;
+    }catch(_){
+      commandAckStorageInvalid=true;
+      return false;
+    }
+  }
+  async function flushCommandAcks(){
+    if(commandAckStorageInvalid)return false;
+    for(const [commandId,receipt] of pendingCommandAcks){
+      try{
+        await api("/runner-command-result","POST",{
+          command_id:commandId,status:receipt.status,result:receipt.result
+        });
+      }catch(_){return false}
+      pendingCommandAcks.delete(commandId);
+      if(!persistCommandAcks())return false;
+    }
+    return true;
+  }
   async function commands(){
+    // Retry only the original receipt on an existing heartbeat. An unknown
+    // private ledger is NEVER evidence that a queued Send may be repeated.
+    if(commandAckStorageInvalid){
+      await blocked("command-ack-ledger-unavailable");return;
+    }
+    if(!(await flushCommandAcks()))return;
     let result;try{result=await api("/runner-commands")}catch(_){return}
     const incoming=(result.commands||[]).filter(c=>c&&Number(c.id||0)>lastCommand&&
       (c.project_id===id||(c.project_id===target?.base_project_id&&
@@ -270,20 +617,35 @@
       if(!["start","force_start","push","new_chat"].includes(action))continue;
       if(command.force===true && String(command.id)!==forceTicket)continue;
       if(awaiting||generating()||sending)continue;
-      // Legacy watchdogs queue new_chat after a stale heartbeat, which used
-      // to steal a tab straight after Send. In v2, ONLY a visible load error
-      // or the 1-hour idle policy may reset the conversation.
+      if(pendingCommandAcks.size>=MAX_PENDING_COMMAND_ACKS){
+        await blocked("command-ack-backlog-manual-review");return;
+      }
+      const commandId=Number(command.id);
+      if(!Number.isSafeInteger(commandId)||commandId<=lastCommand)continue;
+      // Legacy new_chat cannot steal an active tab. Its failed receipt is
+      // durable before the API update; never click a fresh chat for it.
       if(action==="new_chat"){
-        try{await api("/runner-command-result","POST",{
-          command_id:command.id,status:"failed",
-          result:"v2 preserved tab; in-tab rotation limited to error or one-hour idle"
-        });lastCommand=Number(command.id)}catch(_){}
+        lastCommand=commandId;
+        pendingCommandAcks.set(commandId,{
+          status:"failed",result:COMMAND_REFUSED_RESULT
+        });
+        if(!persistCommandAcks()){
+          await blocked("command-ack-ledger-unavailable");return;
+        }
+        if(!(await flushCommandAcks()))return;
         continue;
       }
       if(!(await send("database-"+action)))continue;
-      try{await api("/runner-command-result","POST",{
-        command_id:command.id,status:"completed",result:"single-tab worker v2 action"
-      });lastCommand=Number(command.id)}catch(_){}
+      // The Send outcome may be unknown remotely. Save only the already
+      // performed browser action, not the prompt, before posting its ACK.
+      lastCommand=commandId;
+      pendingCommandAcks.set(commandId,{
+        status:"completed",result:COMMAND_COMPLETED_RESULT
+      });
+      if(!persistCommandAcks()){
+        await blocked("command-ack-ledger-unavailable");return;
+      }
+      if(!(await flushCommandAcks()))return;
     }
   }
   async function poll(){
@@ -295,7 +657,12 @@
     try{
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
+      // Receipt-only recovery must run even if this tab's old queue is now
+      // paused, rotated or missing its composer. Never require a new Send.
+      if(pendingCommandAcks.size>0&&!commandAckStorageInvalid)
+        await flushCommandAcks();
       if(!ready(actual)){
+        resetComposerRepair();
         // An open browser tab is not an authorized dispatch. Report the
         // missing queue/slot contract instead of silently looking healthy.
         if(actual && actual.active===true && actual.desired_state!=="paused" &&
@@ -310,6 +677,9 @@
         return;
       }
       await status("heartbeat",{reason:"worker-v2-check-30s"});
+      // Before any initial dispatch, give the web composer a bounded render
+      // grace period. The repair branch is one-shot and fail-closed.
+      if(await recoverIdleComposer())return;
       const cid=conversation();
       if(cid && cid!==reportedConversation) {
         reportedConversation=cid;
@@ -324,9 +694,13 @@
         await status("generation-progress");return;
       }
       if(resetRoute!==null){
-        if(failedConversation()||!visible(composer())||
+        if(failedConversation()||!composerReady(composer())||
            (location.pathname===resetRoute&&/^\/c\//.test(resetRoute))){
-          await blocked("new-chat-transition-pending");return;
+          // Only one in-tab UI transition was requested. Escalate a stale
+          // transition to its operator, without clicking New chat again.
+          await blocked(Date.now()-chatAt>=COMPOSER_IDLE_REPAIR_MS?
+            "new-chat-transition-operator-action-required":"new-chat-transition-pending");
+          return;
         }
         resetRoute=null;
         chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
@@ -335,11 +709,16 @@
       // pending generation timeout. It must be handled BEFORE the awaiting
       // guard, otherwise a failed page remains stuck forever.
       if(failedConversation()){
-        if(awaiting){
-          awaiting=false;everGenerating=false;next=false;
-          await status("generation-aborted",{reason:"conversation-load-failed"});
+        // A failed old /c/ page may hide a prompt already accepted before
+        // this userscript loaded. Never click New chat and resend that same
+        // queue item merely because the browser lost the reply surface.
+        // Only an unsent, blank new-chat route can use automatic recovery.
+        if(awaiting||everGenerating||promptAt>0||conversation()||
+           location.pathname!=="/"){
+          await blocked("conversation-load-failed-manual-review");
+          return;
         }
-        await newChat("could-not-load-conversation");
+        await newChat("could-not-load-conversation-before-send");
         return;
       }
       const result=reply();
@@ -350,12 +729,13 @@
         }else if(Date.now()-awaitingAt<120000){return}
         else if(Date.now()-awaitingAt<300000){await blocked("generation-unconfirmed-no-duplicate");return}
         else{
-          const box=composer(),draft=String(box?.value||box?.innerText||box?.textContent||"").trim();
-          if(!visible(box)||(draft&&draft!==String(target.prompt||"").trim())){
-            await blocked("stalled-send-preserved-draft");return;
-          }
-          awaiting=false;everGenerating=false;
-          await newChat("generation-never-started-five-minutes");
+          // Five minutes without DOM-confirmed generation is still an
+          // UNKNOWN execution outcome: the server may have accepted Send
+          // before the browser lost its reply surface. Do not start New
+          // chat or resubmit the same queued prompt on elapsed time alone.
+          // Keep awaiting so a late reply can still be observed and the
+          // operator can adjudicate the original dispatch.
+          await blocked("generation-unconfirmed-manual-review-no-retry");
           return;
         }
       }else if(everGenerating){
