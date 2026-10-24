@@ -9,6 +9,11 @@ on:
       - "tests/test_artifact_retention_hosted_proof_20261014.py"
       - ".github/workflows/zcloud-artifact-retention-audit.yml"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: Exact current main commit SHA for owner-only VPS proof
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -89,7 +94,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          report="$RUNNER_TEMP/zcloud-artifact-retention-audit.json"
+          mkdir -p artifacts
+          report="artifacts/zcloud-artifact-retention-audit.json"
           python3 scripts/zcloud_artifact_retention_audit.py --repo-root . --max-days 30 | tee "$report"
           REPORT="$report" python3 - <<'PY'
           import json
@@ -111,7 +117,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zcloud-artifact-retention-audit-${{ github.run_id }}
-          path: ${{ runner.temp }}/zcloud-artifact-retention-audit.json
+          path: artifacts/zcloud-artifact-retention-audit.json
           if-no-files-found: error
           retention-days: 14
 
@@ -124,7 +130,9 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      github.event.inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -138,6 +146,8 @@ jobs:
 
       - name: Check exact current main and permanent runner before source audit
         shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
@@ -149,6 +159,7 @@ jobs:
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
           test "$current_main" = "$GITHUB_SHA"
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(id -un)" = "ubuntu"
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
