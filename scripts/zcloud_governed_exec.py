@@ -1432,6 +1432,10 @@ def inspect_pool(db_path: Path, project_id: str) -> dict:
     from urllib.parse import quote
     uri = "file:" + quote(str(target.resolve(strict=True)), safe="/") + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=5)
+    # Expired-lease reconciliation uses named fields (metadata_json).
+    # Without Row, a tuple lookup throws TypeError and the inspector
+    # falsely reports every expired heavy record as unrecoverable.
+    conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA query_only=ON")
         now = datetime.now(timezone.utc).isoformat()
