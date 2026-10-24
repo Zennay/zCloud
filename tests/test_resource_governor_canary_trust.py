@@ -57,7 +57,7 @@ class ResourceGovernorCanaryTrustTests(unittest.TestCase):
             "branches: [worker/cloud-resource-governor-vps-canary-20261004, main]",
             text,
         )
-        self.assertIn("  pull_request:\\n", text)
+        self.assertIn("  pull_request:", text)
         self.assertEqual(text.count("      - tests/test_zcloud_governed_exec.py"), 2)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
 
