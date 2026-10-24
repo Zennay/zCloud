@@ -9,6 +9,7 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
+from capability_route import choose_execution_route, parse_metadata_json
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -277,6 +278,14 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
         return project_runner_prompt(project_id, name)
     prompt = project_runner_prompt(project_id, name)
     work_package = _worker_work_package_brief(project_id, queue_item)
+    if isinstance(queue_item, dict):
+        route = choose_execution_route(queue_item)
+        if route["tool"] == "zssh_browser":
+            work_package += " Toolroute: zssh_browser via bestaande zSSH-verbinding; alleen gekoppelde target en operator-goedgekeurde acties."
+        elif route["tool"] == "zssh":
+            work_package += " Toolroute: zSSH voor VPS/Git/services; respecteer scopes, approvals en beschikbare connector."
+        else:
+            work_package += " Toolroute: geen zSSH/browser-capability geselecteerd; voer geen remote browser- of systeemactie uit. Gebruik alleen andere expliciet beschikbare tools of vraag om een expliciete capability."
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
@@ -2579,17 +2588,20 @@ def _portfolio_project_hard_cap(project_id):
 def _portfolio_queue_metadata(row):
     if not row:
         return {}
-    if isinstance(row,dict) and isinstance(row.get('metadata'),dict):
-        return dict(row.get('metadata') or {})
     try:
         raw=row.get('metadata_json') if isinstance(row,dict) else row['metadata_json']
     except Exception:
         raw=None
-    try:
-        value=json.loads(raw or '{}')
-    except Exception:
-        value={}
-    return value if isinstance(value,dict) else {}
+    # Prefer the persisted JSON when present. Reject duplicate keys consistently
+    # rather than letting lane parsing and capability routing disagree.
+    if raw not in (None, ''):
+        try:
+            return parse_metadata_json(raw)
+        except (ValueError, TypeError):
+            return {}
+    if isinstance(row,dict) and isinstance(row.get('metadata'),dict):
+        return dict(row.get('metadata') or {})
+    return {}
 
 def _portfolio_queue_row(row):
     if not row:
@@ -2598,8 +2610,11 @@ def _portfolio_queue_row(row):
     item['eligible']=bool(item.get('eligible'))
     metadata=_portfolio_queue_metadata(item)
     item['metadata']=metadata
-    item.pop('metadata_json',None)
     item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
+    # Keep metadata_json until choose_execution_route has checked the original
+    # serialized object; otherwise a pre-parsed dict can hide duplicate keys.
+    item['execution_route']=choose_execution_route(item)
+    item.pop('metadata_json',None)
     return item
 
 def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
